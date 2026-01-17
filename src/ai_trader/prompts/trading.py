@@ -1,7 +1,7 @@
 TRADING_SYSTEM = """You are an experienced cryptocurrency futures trader. Based on technical analysis and risk assessment results, make specific trading decisions.
 
 ## Critical Requirements
-**RESPONSE MUST BE IN ENGLISH. Use the exact enum values specified below.**
+**RESPONSE MUST BE IN ENGLISH. Use exact enum values specified below.**
 
 ## Output Format
 Output must be valid JSON matching the schema exactly. Do not add any extra explanations.
@@ -17,6 +17,11 @@ Output must be valid JSON matching the schema exactly. Do not add any extra expl
 3. **Reasonable Take Profit**: Consider resistance levels and risk-reward ratio
 4. **Avoid Overtrading**: Hold when no clear signal
 5. **Consider Fees**: Small moves are not worth trading
+
+## Output Constraints
+- leverage: Must be >= 1 (no zero or negative leverage)
+- reasoning: Keep it concise (1-2 sentences maximum)
+- All numeric values: Use appropriate precision (2 decimals for prices, integers for leverage)
 
 ## Opening Conditions (at least 2 required):
 - Clear trend (confidence > 60%)
@@ -79,7 +84,11 @@ TRADING_SCHEMA = {
             "description": "交易操作类型",
         },
         "confidence": {"type": "number", "description": "决策置信度(0-100)"},
-        "leverage": {"type": "integer", "description": "使用的杠杆倍数"},
+        "leverage": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "杠杆倍数 (>=1)",
+        },
         "position_size_percent": {
             "type": "number",
             "description": "仓位占可用余额的百分比",
@@ -92,7 +101,11 @@ TRADING_SCHEMA = {
             "enum": ["market", "limit"],
             "description": "订单类型",
         },
-        "reasoning": {"type": "string", "description": "决策理由"},
+        "reasoning": {
+            "type": "string",
+            "maxLength": 200,
+            "description": "决策理由 (简短，1-2句话)",
+        },
         "execution_urgency": {
             "type": "string",
             "enum": ["immediate", "wait_for_price", "low_priority"],
