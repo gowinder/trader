@@ -3,7 +3,7 @@
 from ..models.market import MarketData, Kline
 from ..models.decision import TechnicalAnalysisResult
 from ..prompts.technical import TECHNICAL_USER, TECHNICAL_SYSTEM, TECHNICAL_SCHEMA
-from .llm_client import LLMClient
+from .client import LLMClient
 from typing import List
 
 

@@ -6,7 +6,8 @@ import time
 import json
 import os
 import httpx
-from typing import Optional, Dict, Any, List
+import asyncio
+from typing import Optional, Dict, Any, List, Union
 from ..config import config
 from ..utils.logger import logger
 
@@ -21,12 +22,12 @@ class WeexClient:
         self.passphrase = config.weex_passphrase
 
         # Configure proxy from .env if set
+        proxy = None
         if config.proxy_url:
-            os.environ["HTTP_PROXY"] = config.proxy_url
-            os.environ["HTTPS_PROXY"] = config.proxy_url
+            proxy = config.proxy_url
             logger.info(f"Using proxy from .env: {config.proxy_url}")
 
-        self._client = httpx.AsyncClient(timeout=30.0)
+        self._client = httpx.AsyncClient(timeout=30.0, proxy=proxy)
 
     def _sign(self, timestamp: str, method: str, path: str, body: str = "") -> str:
         """生成 HMAC-SHA256 签名，然后 Base64 编码
@@ -218,8 +219,16 @@ class WeexClient:
 
     async def set_leverage(self, symbol: str, leverage: int) -> bool:
         """设置杠杆"""
-        path = "/capi/v2/account/setLeverage"
-        body = json.dumps({"symbol": symbol, "leverage": str(leverage)})
+        path = "/capi/v2/account/leverage"
+        # marginMode: 1=Cross, 3=Isolated
+        body = json.dumps(
+            {
+                "symbol": symbol,
+                "marginMode": 1,  # Cross mode
+                "longLeverage": str(leverage),
+                "shortLeverage": str(leverage),
+            }
+        )
         try:
             r = await self._client.post(
                 f"{self.base_url}{path}",
@@ -227,7 +236,7 @@ class WeexClient:
                 content=body,
             )
             data = r.json()
-            success = data.get("code") == "00000"
+            success = data.get("code") == "200" or data.get("code") == "00000"
             if not success:
                 logger.warning(f"Set leverage failed: {data}")
             return success
@@ -246,28 +255,79 @@ class WeexClient:
         take_profit: Optional[float] = None,
     ) -> Dict[str, Any]:
         """创建订单"""
-        path = "/capi/v2/trade/placeOrder"
+        # 生成唯一的 client_oid
+        import uuid
+
+        client_oid = str(uuid.uuid4())[:40]
+
+        # 映射 side 到 type
+        # 1: Open long, 2: Open short, 3: Close long, 4: Close short
+        side_to_type = {
+            "open_long": "1",
+            "open_short": "2",
+            "close_long": "3",
+            "close_short": "4",
+        }
+
+        # 映射 order_type 到 order_type
+        # 0: Normal, 1: Post-Only, 2: Fill-Or-Kill, 3: Immediate Or Cancel
+        type_to_order_type = {
+            "market": "0",
+            "limit": "0",  # 普通限价单
+        }
+
+        # match_price: 0=限价, 1=市价
+        match_price = "1" if order_type == "market" else "0"
+
         body_dict = {
             "symbol": symbol,
-            "side": side,
-            "orderType": order_type,
+            "client_oid": client_oid,
             "size": str(size),
+            "type": side_to_type.get(side, "1"),
+            "order_type": type_to_order_type.get(order_type, "0"),
+            "match_price": match_price,
         }
+
+        # 市价单不需要价格，但限价单需要
+        if order_type == "limit" and price is None:
+            raise ValueError("Price is required for limit orders")
+
         if price:
-            body_dict["price"] = str(price)
+            body_dict["price"] = str(round(price, 2))
         if stop_loss:
-            body_dict["stopLossPrice"] = str(stop_loss)
+            body_dict["presetStopLossPrice"] = str(round(stop_loss, 2))
         if take_profit:
-            body_dict["takeProfitPrice"] = str(take_profit)
+            body_dict["presetTakeProfitPrice"] = str(round(take_profit, 2))
 
         body = json.dumps(body_dict)
         try:
+            # 正确的端点
+            path = "/capi/v2/order/placeOrder"
             r = await self._client.post(
                 f"{self.base_url}{path}",
                 headers=self._headers("POST", path, body),
                 content=body,
             )
+            logger.debug(f"Create order response status: {r.status_code}")
+            logger.debug(f"Create order response body: {r.text[:500]}")
+
+            if r.status_code >= 400:
+                logger.error(
+                    f"Create order failed with status {r.status_code}: {r.text}"
+                )
+                raise Exception(f"HTTP {r.status_code}: {r.text}")
+
+            if not r.text.strip():
+                logger.error("Create order returned empty response")
+                raise Exception("Empty response from API")
+
             return r.json()
+        except json.JSONDecodeError as e:
+            response_text = r.text if "r" in locals() else "N/A"
+            logger.error(
+                f"Failed to decode JSON response: {e}, response: {response_text[:500]}"
+            )
+            raise
         except Exception as e:
             logger.error(f"Failed to create order: {e}")
             raise

@@ -8,7 +8,7 @@ from .exchange.weex_client import WeexClient
 from .exchange.order import OrderManager
 from .exchange.position import PositionManager
 from .data.market_data import MarketDataManager
-from .ai.llm_client import LLMClient
+from .ai.client import LLMClient
 from .ai.decision import DecisionEngine
 from .reporter import Reporter
 
@@ -133,8 +133,9 @@ class Scheduler:
 
             # Final check and execution
             if quantity > 0:
-                # Round to lot size (e.g. 0.001)
-                quantity = round(quantity, 4)  # TODO: get precision from exchange info
+                # WeEx requires stepSize of 0.1 for cmt_bnbusdt
+                # Round to 1 decimal place to match exchange requirement
+                quantity = round(quantity, 1)
 
                 order_id = await self.order_mgr.execute_order(
                     decision, symbol, quantity

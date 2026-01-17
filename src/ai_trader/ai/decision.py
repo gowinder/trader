@@ -4,7 +4,7 @@ from typing import Optional, Tuple
 from ..models.market import MarketData
 from ..models.order import Position
 from ..models.decision import TradingDecision, TechnicalAnalysisResult, RiskAssessment
-from .llm_client import LLMClient
+from .client import LLMClient
 from .analyzer import MarketAnalyzer
 from ..prompts.risk import RISK_USER, RISK_SYSTEM, RISK_SCHEMA
 from ..prompts.trading import TRADING_USER, TRADING_SYSTEM, TRADING_SCHEMA
@@ -107,6 +107,9 @@ class DecisionEngine:
         if pos:
             pos_info = f"方向: {pos.side}, 数量: {pos.size}, 均价: {pos.entry_price}, 盈亏: {pos.unrealized_pnl}"
 
+        # Limit key_observations to top 3 to save tokens
+        obs_str = str(tech.key_observations[:3]) if tech.key_observations else "[]"
+
         user_prompt = TRADING_USER.format(
             trend=tech.trend,
             trend_confidence=tech.trend_confidence,
@@ -115,7 +118,7 @@ class DecisionEngine:
             resistance_levels=tech.resistance_levels,
             volume_trend=tech.volume_trend,
             pattern=tech.pattern,
-            key_observations=tech.key_observations,
+            key_observations=obs_str,
             risk_level=risk.risk_level,
             risk_score=risk.risk_score,
             recommended_leverage=risk.recommended_leverage,
