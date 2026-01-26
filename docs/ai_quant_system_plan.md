@@ -300,11 +300,14 @@ flowchart LR
     PATTERN_CHECK -->|是| QUANT_PRIO
     PATTERN_CHECK -->|否| HOLD[观望]
 
-    BOOST --> WEIGHT[应用权重<br/>QUANT_WEIGHT:LLM_WEIGHT]
+    BOOST --> WEIGHT[应用权重<br/>QUANT:LLM:SENTIMENT]
     QUANT_PRIO --> WEIGHT
     LLM_PRIO --> WEIGHT
 
-    WEIGHT --> FINAL[最终决策]
+    WEIGHT --> SENTIMENT{情绪分析<br/>开启?}
+    SENTIMENT -->|是| SENTIMENT_ADJ[情绪调节<br/>一致性/背离/风险]
+    SENTIMENT -->|否| FINAL[最终决策]
+    SENTIMENT_ADJ --> FINAL
     HOLD --> FINAL
 
     subgraph 输出
@@ -3695,8 +3698,8 @@ class SentimentCache:
 
 ```python
 # 情绪分析配置
-sentiment_enabled: bool = True
-sentiment_weight: float = 0.15  # 在最终决策中的权重
+sentiment_enabled: bool = False  # 默认关闭，开启需配置API Key
+sentiment_weight: float = 0.15  # 在最终决策中的权重（开启时生效）
 sentiment_cache_ttl: int = 15   # 缓存有效期（分钟）
 rapidapi_twitter_key: str = ""
 cryptopanic_api_key: str = ""
@@ -3755,15 +3758,18 @@ WEEX_PASSPHRASE=...
 
 # ============= 决策模式 =============
 DECISION_MODE=hybrid  # quant_only / llm_only / hybrid
-QUANT_WEIGHT=0.5  # 量化信号权重（0-1）
-LLM_WEIGHT=0.5    # LLM信号权重（0-1）
+# 默认权重: 量化50% + LLM35% + 情绪15% = 100%
+# 情绪关闭时自动归一化: 量化50/(50+35)=58.8%, LLM35/(50+35)=41.2%
+QUANT_WEIGHT=0.50
+LLM_WEIGHT=0.35
+SENTIMENT_WEIGHT=0.15
 
 # ============= 策略选择 =============
 ENABLED_STRATEGIES=trend_following,mean_reversion,breakout
 
 # ============= 情绪分析 =============
-SENTIMENT_ENABLED=true
-SENTIMENT_WEIGHT=0.15
+# 情绪分析默认关闭，开启需配置API Key
+SENTIMENT_ENABLED=false
 SENTIMENT_CACHE_TTL=15
 RAPIDAPI_TWITTER_KEY=your_rapidapi_key
 CRYPTOPANIC_API_KEY=your_cryptopanic_key
@@ -3903,18 +3909,28 @@ CRYPTOPANIC_API_KEY=your_cryptopanic_key
 **推荐方案**: **可配置权重（默认量化为主）**
 
 理由：
-- 初期量化权重0.7，LLM权重0.3
+- 初期量化权重0.7，LLM权重0.3（情绪关闭时）
 - 根据Testnet表现动态调整
 - 极端情况：可完全切换到纯量化或纯LLM模式
 
-配置示例：
+配置示例（情绪关闭）：
 ```bash
 DECISION_MODE=hybrid
 QUANT_WEIGHT=0.7
 LLM_WEIGHT=0.3
+SENTIMENT_ENABLED=false  # 情绪关闭，权重自动归一化为 70%/30%
 
 # 冲突解决规则
 CONFLICT_RESOLUTION=quant_priority_on_trend  # 趋势明确时量化优先
+```
+
+配置示例（情绪开启）：
+```bash
+DECISION_MODE=hybrid
+QUANT_WEIGHT=0.55
+LLM_WEIGHT=0.30
+SENTIMENT_WEIGHT=0.15
+SENTIMENT_ENABLED=true  # 总和=1.0，无需归一化
 ```
 
 ### 4. 实施节奏

@@ -1,0 +1,196 @@
+# AI量化交易系统升级 开发任务清单
+
+> 根据 ai_quant_system_plan.md 自动生成
+> 生成时间：2026-01-26 17:30:00
+
+## 总览
+
+- 总 Phase 数：5
+- 预估任务数：45
+- 测试策略：单元测试 + 集成测试 + Testnet实盘验证
+
+---
+
+## Phase 1: CCXT集成（7天）
+
+### 目标
+引入CCXT统一交易所接口，替换自定义WEEX实现，为多交易所支持打基础。
+
+### 任务清单
+- [ ] 调研CCXT对WEEX的支持情况，输出 `docs/ccxt_weex_research.md`
+- [ ] 设计交易所抽象层 `src/ai_trader/exchange/base.py`（BaseExchange、AccountInfo、Ticker、Position等模型）
+- [ ] 实现CCXT适配器 `src/ai_trader/exchange/ccxt_adapter.py`（数据格式转换、统一异常处理）
+- [ ] 重构WeexClient继承BaseExchange，支持CCXT fallback
+- [ ] 配置系统升级 `src/ai_trader/config.py`（新增exchange_type、use_ccxt、trading_mode等配置）
+- [ ] 实现各交易所独立凭证管理 `get_exchange_credentials()` 方法
+- [ ] 实现工厂函数 `create_exchange_client()` 支持多交易所切换
+- [ ] 添加依赖 `ccxt>=4.2.0` 到 pyproject.toml
+
+### 测试任务
+- [ ] 单元测试：BaseExchange模型字段验证
+- [ ] 单元测试：CCXTAdapter数据格式转换正确性
+- [ ] 集成测试：CCXT模式与原生WEEX行为一致性对比
+- [ ] 集成测试：验证延迟增加<100ms
+
+---
+
+## Phase 2: 模拟交易环境（8天）
+
+### 目标
+接入Binance/Bybit Testnet，搭建无风险验证环境。
+
+### 任务清单
+- [ ] 调研Binance/Bybit Testnet，输出 `docs/testnet_research.md`
+- [ ] 实现BinanceAdapter `src/ai_trader/exchange/binance_adapter.py`（Testnet URL配置、双向持仓模式、保证金模式）
+- [ ] 环境切换配置（trading_mode、testnet_exchange、testnet_api_key等）
+- [ ] 工厂函数增强：Testnet白名单校验（仅允许binance、bybit）
+- [ ] 实现Testnet模式下的安全校验（不支持的交易所抛出ValueError）
+- [ ] 配置testnet专用API凭证隔离
+
+### 测试任务
+- [ ] 单元测试：BinanceAdapter Testnet URL配置
+- [ ] 集成测试：Binance Testnet完整交易流程（数据获取→决策→下单）
+- [ ] 集成测试：Testnet K线数据与live一致性
+- [ ] 端到端测试：Testnet运行1周无异常
+
+---
+
+## Phase 3: 专业交易员流程（11天）
+
+### 目标
+研究专业交易员逻辑，结构化为AI可执行模块（多时间框架、仓位管理、风控体系）。
+
+### 任务清单
+- [ ] 调研专业交易员流程，输出 `docs/professional_trading_research.md`
+- [ ] 实现多时间框架分析 `src/ai_trader/data/multi_timeframe.py`（TimeframeAnalysis、MultiTimeframeData、MultiTimeframeManager）
+- [ ] 实现趋势判断逻辑（MA排列+MACD确认）
+- [ ] 实现支撑阻力位计算
+- [ ] 实现仓位管理模块 `src/ai_trader/risk/position_manager.py`（固定比例法、金字塔加仓、移动止损）
+- [ ] 实现 `calculate_initial_position()` 方法
+- [ ] 实现 `should_add_position()` 方法（含original_stop_loss参数）
+- [ ] 实现 `calculate_trailing_stop()` 方法
+- [ ] 实现 `check_daily_loss_limit()` 方法
+- [ ] 实现规则引擎 `src/ai_trader/rules/rule_engine.py`（可选）
+- [ ] 实现交易日志系统 `src/ai_trader/analytics/trade_journal.py`
+- [ ] 增强AI Prompt加入多时间框架分析、仓位管理、交易纪律约束
+
+### 测试任务
+- [ ] 单元测试：仓位计算公式正确性
+- [ ] 单元测试：金字塔加仓条件判断
+- [ ] 单元测试：移动止损逻辑
+- [ ] 集成测试：多时间框架数据并行获取
+- [ ] 集成测试：历史回测验证仓位管理效果
+- [ ] 端到端测试：Testnet运行2周观察效果
+
+---
+
+## Phase 4: 量化策略模型集成（16天）
+
+### 目标
+引入传统量化策略，实现K线形态识别、市场状态分类、混合决策系统。
+
+### 任务清单
+- [ ] 添加依赖 `pandas-ta>=0.3.14`、`scipy>=1.11.0` 到 pyproject.toml
+- [ ] 实现K线形态识别 `src/ai_trader/strategies/pattern_recognition.py`（锤子线、吞没、十字星、早晨/黄昏之星、双顶/双底）
+- [ ] 实现 `detect_hammer()` 方法
+- [ ] 实现 `detect_doji()` 方法
+- [ ] 实现 `detect_engulfing()` 方法
+- [ ] 实现 `detect_star_pattern()` 方法
+- [ ] 实现 `detect_double_pattern()` 方法
+- [ ] 实现市场状态分类 `src/ai_trader/strategies/market_classifier.py`（ADX计算、状态分类）
+- [ ] 实现 `calculate_adx()` 方法
+- [ ] 实现 `_classify_state()` 方法（强趋势/弱趋势/震荡/突破/横盘）
+- [ ] 实现策略库 `src/ai_trader/strategies/strategy_base.py`（TradingStrategy基类、Signal模型）
+- [ ] 实现趋势跟随策略 `TrendFollowingStrategy`
+- [ ] 实现均值回归策略 `MeanReversionStrategy`
+- [ ] 实现突破策略 `BreakoutStrategy`
+- [ ] 实现策略注册表 `STRATEGY_REGISTRY`
+- [ ] 实现策略选择器 `src/ai_trader/strategies/strategy_selector.py`（根据市场状态选择策略、聚合多策略信号）
+- [ ] 实现 `AggregatedSignal` 模型（含 `is_valid_for_trading()` 验证）
+- [ ] 实现混合决策引擎 `src/ai_trader/ai/decision.py`（HybridDecisionEngine）
+- [ ] 实现归一化权重配置 `get_normalized_weights()` 方法
+- [ ] 实现双重确认逻辑（量化+LLM一致时提高置信度）
+- [ ] 实现冲突解决逻辑（强趋势量化优先、震荡LLM优先、冲突观望）
+- [ ] 实现回测框架 `src/ai_trader/backtest/engine.py`（BacktestEngine、BacktestResult）
+- [ ] 实现 `generate_report()` 回测报告生成
+
+### 测试任务
+- [ ] 单元测试：K线形态识别准确率>70%（人工标注数据集）
+- [ ] 单元测试：市场状态分类准确率>75%
+- [ ] 单元测试：各策略信号生成逻辑
+- [ ] 集成测试：策略选择器多策略聚合
+- [ ] 集成测试：混合决策引擎信号融合
+- [ ] 历史回测：1年历史数据验证，胜率>55%，盈亏比>1:1.5
+- [ ] 对比测试：纯LLM vs 纯量化 vs 混合模式
+- [ ] 端到端测试：混合决策模式Testnet运行7天无异常
+
+---
+
+## Phase 5: 情绪分析集成（5天）
+
+### 目标
+引入实时社交媒体/新闻情绪分析，作为决策参考因素。
+
+### 任务清单
+- [ ] 实现数据源接口 `src/ai_trader/sentiment/data_sources.py`（TwitterSource、CryptoPanicSource）
+- [ ] 实现情绪分析器 `src/ai_trader/sentiment/analyzer.py`（SentimentAnalyzer、SentimentResult）
+- [ ] 设计情绪分析Prompt模板
+- [ ] 实现情绪缓存与限流 `src/ai_trader/sentiment/cache.py`（15分钟缓存TTL）
+- [ ] 集成情绪分析到混合决策引擎（sentiment_weight权重）
+- [ ] 实现情绪调节规则（极端恐慌/贪婪、风险事件、背离预警）
+- [ ] 配置情绪分析开关与API Key（默认关闭）
+
+### 测试任务
+- [ ] 单元测试：情绪分析Prompt解析
+- [ ] 单元测试：缓存TTL逻辑
+- [ ] 集成测试：API限流正常工作
+- [ ] 对比测试：有/无情绪分析效果对比
+- [ ] 回测验证：情绪信号有效性
+
+---
+
+## 完成标准
+
+每个 phase 完成标准：
+- ✅ 所有任务项标记为完成 `[x]`
+- ✅ 所有测试通过
+- ✅ Code review 无阻塞性问题
+- ✅ 文档更新完整
+
+## 验证检查点
+
+### Phase 1 验证
+- [ ] 所有现有单元测试通过
+- [ ] CCXT模式与原生WEEX行为一致
+- [ ] 延迟增加<100ms
+
+### Phase 2 验证
+- [ ] Binance Testnet完整交易流程成功
+- [ ] Testnet K线数据与live一致
+- [ ] 账户资金隔离确认
+
+### Phase 3 验证
+- [ ] 多时间框架数据获取正常
+- [ ] 仓位管理逻辑回测验证
+- [ ] 交易日志完整记录
+
+### Phase 4 验证
+- [ ] K线形态识别准确率>70%
+- [ ] 市场状态分类准确率>75%
+- [ ] 混合决策模式Testnet运行7天无异常
+- [ ] 回测胜率>55%，盈亏比>1:1.5
+
+### Phase 5 验证
+- [ ] API限流正常，无超限
+- [ ] 情绪分析优雅降级（API不可用不影响交易）
+- [ ] 情绪信号与技术面背离预警有效
+
+## 注意事项
+
+1. **顺序执行**：严格按 phase 顺序开发，不跨阶段
+2. **测试先行**：每个 phase 必须完成测试任务
+3. **增量提交**：每个 phase 完成后进行代码提交
+4. **文档同步**：及时更新 todo 状态和完成时间
+5. **Testnet优先**：正式上线前必须在Testnet验证
+6. **情绪分析默认关闭**：开启需配置API Key
+7. **权重归一化**：情绪关闭时自动归一化量化/LLM权重
