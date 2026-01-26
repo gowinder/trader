@@ -37,14 +37,43 @@ class TradingConfig(BaseSettings):
         env_file=".env", env_file_encoding="utf-8", extra="ignore"
     )
 
-    # 交易所配置
-    weex_api_key: str = Field(..., validation_alias="WEEX_API_KEY")
-    weex_api_secret: str = Field(..., validation_alias="WEEX_API_SECRET")
-    weex_passphrase: str = Field(..., validation_alias="WEEX_PASSPHRASE")
+    # 交易所配置（WEEX - 可选，仅在使用WEEX时需要）
+    weex_api_key: str = Field(default="", validation_alias="WEEX_API_KEY")
+    weex_api_secret: str = Field(default="", validation_alias="WEEX_API_SECRET")
+    weex_passphrase: str = Field(default="", validation_alias="WEEX_PASSPHRASE")
     weex_api_url: str = Field(default="https://api-contract.weex.com")
 
     # 代理配置
     proxy_url: str = Field(default="")
+
+    # ============= 交易所配置 =============
+    exchange_type: Literal["weex", "binance", "bybit", "okx"] = Field(
+        default="weex", validation_alias="EXCHANGE_TYPE"
+    )
+    use_ccxt: bool = Field(default=False, validation_alias="USE_CCXT")
+
+    # ============= 运行模式 =============
+    trading_mode: Literal["testnet", "live"] = Field(
+        default="live", validation_alias="TRADING_MODE"
+    )
+
+    # ============= Testnet配置 =============
+    testnet_exchange: str = Field(default="binance", validation_alias="TESTNET_EXCHANGE")
+    testnet_api_key: str = Field(default="", validation_alias="TESTNET_API_KEY")
+    testnet_api_secret: str = Field(default="", validation_alias="TESTNET_API_SECRET")
+
+    # ============= Binance配置 =============
+    binance_api_key: str = Field(default="", validation_alias="BINANCE_API_KEY")
+    binance_api_secret: str = Field(default="", validation_alias="BINANCE_API_SECRET")
+
+    # ============= Bybit配置 =============
+    bybit_api_key: str = Field(default="", validation_alias="BYBIT_API_KEY")
+    bybit_api_secret: str = Field(default="", validation_alias="BYBIT_API_SECRET")
+
+    # ============= OKX配置 =============
+    okx_api_key: str = Field(default="", validation_alias="OKX_API_KEY")
+    okx_api_secret: str = Field(default="", validation_alias="OKX_API_SECRET")
+    okx_passphrase: str = Field(default="", validation_alias="OKX_PASSPHRASE")
 
     # 交易对
     trading_symbol: str = Field(default="cmt_btcusdt")
@@ -106,6 +135,48 @@ class TradingConfig(BaseSettings):
             base_url=self.llm_base_url,
             timeout=self.llm_timeout,
         )
+
+    def get_exchange_credentials(self, exchange_type: str) -> dict:
+        """Get credentials for specified exchange
+
+        Args:
+            exchange_type: Exchange type (weex, binance, bybit, okx)
+
+        Returns:
+            Dict containing api_key, api_secret, and optionally passphrase
+
+        Raises:
+            ValueError: If exchange type is not configured
+        """
+        credentials_map = {
+            "weex": {
+                "api_key": self.weex_api_key,
+                "api_secret": self.weex_api_secret,
+                "passphrase": self.weex_passphrase,
+            },
+            "binance": {
+                "api_key": self.binance_api_key,
+                "api_secret": self.binance_api_secret,
+            },
+            "bybit": {
+                "api_key": self.bybit_api_key,
+                "api_secret": self.bybit_api_secret,
+            },
+            "okx": {
+                "api_key": self.okx_api_key,
+                "api_secret": self.okx_api_secret,
+                "passphrase": self.okx_passphrase,
+            },
+        }
+        creds = credentials_map.get(exchange_type)
+        if not creds or not creds.get("api_key") or not creds.get("api_secret"):
+            raise ValueError(f"未配置{exchange_type}的API凭证")
+        return creds
+
+    @property
+    def is_testnet(self) -> bool:
+        """Check if running in testnet mode"""
+        return self.trading_mode == "testnet"
 
 
 # Global config instance
