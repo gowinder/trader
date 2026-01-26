@@ -4,7 +4,7 @@ import asyncio
 from typing import Optional
 from .config import config
 from .utils.logger import logger
-from .exchange.weex_client import WeexClient
+from .exchange import create_exchange_client
 from .exchange.order import OrderManager
 from .exchange.position import PositionManager
 from .data.market_data import MarketDataManager
@@ -17,12 +17,13 @@ class Scheduler:
     """任务调度器"""
 
     def __init__(self):
-        self.weex = WeexClient()
+        # Use factory function to create exchange client based on config
+        self.exchange = create_exchange_client()
         self.llm = LLMClient()
 
-        self.market_mgr = MarketDataManager(self.weex)
-        self.order_mgr = OrderManager(self.weex)
-        self.position_mgr = PositionManager(self.weex)
+        self.market_mgr = MarketDataManager(self.exchange)
+        self.order_mgr = OrderManager(self.exchange)
+        self.position_mgr = PositionManager(self.exchange)
         self.decision_engine = DecisionEngine(self.llm)
         self.reporter = Reporter()
 
@@ -45,8 +46,8 @@ class Scheduler:
     async def stop(self):
         """停止调度器"""
         self.running = False
-        if hasattr(self, "weex") and self.weex:
-            await self.weex.close()
+        if hasattr(self, "exchange") and self.exchange:
+            await self.exchange.close()
         if hasattr(self, "llm") and self.llm:
             await self.llm.close()
         logger.info("Scheduler stopped")
@@ -64,26 +65,17 @@ class Scheduler:
             return
 
         position = await self.position_mgr.get_position(symbol)
-        account = await self.weex.get_account()
+        account = await self.exchange.get_account()  # Now returns AccountInfo model
 
-        # Parse account balance
-        balance = 0.0
-        equity = 0.0
+        # Extract account balance from AccountInfo
+        balance = account.available_balance
+        equity = account.total_equity
 
-        # Debug: Log raw account data
-        logger.debug(f"Account data raw: {account}")
-
-        # Account API returns {"account": {...}, "collateral": [...]} without "code" wrapper
-        collateral_list = account.get("collateral", [])
-        if collateral_list and isinstance(collateral_list, list):
-            logger.debug(f"Collateral list: {collateral_list}")
-
-            # Find USDT in collateral list
-            for item in collateral_list:
-                if item.get("coin") == "USDT":
-                    balance = float(item.get("amount", 0))
-                    equity = balance
-                    break
+        # Debug: Log account data
+        logger.debug(
+            f"Account data: equity={equity}, balance={balance}, "
+            f"margin_used={account.margin_used}, unrealized_pnl={account.unrealized_pnl}"
+        )
 
         if balance <= 0 or equity <= 0:
             logger.warning(
