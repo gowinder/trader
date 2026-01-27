@@ -129,6 +129,25 @@ class TradingConfig(BaseSettings):
         description="启用的策略列表",
     )
 
+    # ============= Phase 5: 情绪分析配置 =============
+    # 功能开关
+    enable_sentiment_analysis: bool = Field(
+        default=False, description="启用情绪分析（默认关闭，需要API Key）"
+    )
+
+    # API Keys (optional)
+    cryptopanic_api_key: str = Field(default="", validation_alias="CRYPTOPANIC_API_KEY")
+    newsapi_key: str = Field(default="", validation_alias="NEWSAPI_KEY")
+
+    # 情绪分析权重（仅在启用时生效）
+    sentiment_weight: float = Field(default=0.2, description="情绪分析权重")
+
+    # 缓存配置
+    sentiment_cache_ttl: int = Field(default=900, description="情绪缓存TTL（秒），默认15分钟")
+    sentiment_max_requests_per_hour: int = Field(
+        default=80, description="每小时最大API请求数（留20%余量）"
+    )
+
     # ============= 日志配置 =============
     log_level: str = Field(default="INFO")
     log_file: str = Field(default="logs/trading.log")
