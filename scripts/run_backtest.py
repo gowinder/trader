@@ -15,6 +15,7 @@ from ai_trader.backtest.engine import BacktestEngine, BacktestConfig
 from ai_trader.strategies.pattern_recognition import PatternRecognizer
 from ai_trader.strategies.market_classifier import MarketClassifier
 from ai_trader.strategies.strategy_selector import StrategySelector
+from ai_trader.strategies.signal_filter import SignalFilter
 from ai_trader.config import config
 
 
@@ -23,6 +24,7 @@ async def fetch_historical_data(
     start_date: datetime,
     end_date: datetime,
     interval: str = "1h",
+    use_real_data: bool = True,
 ) -> pd.DataFrame:
     """Fetch historical data from exchange
 
@@ -31,40 +33,57 @@ async def fetch_historical_data(
         start_date: Start date
         end_date: End date
         interval: Candle interval
+        use_real_data: Whether to use real data from Binance
 
     Returns:
         DataFrame with OHLCV data
     """
-    # TODO: Implement actual data fetching from exchange API
-    # For now, generate dummy data for demonstration
-    print(f"Fetching {symbol} data from {start_date} to {end_date}...")
+    if use_real_data:
+        # Use real data from Binance
+        print(f"Fetching real {symbol} data from Binance...")
+        from ai_trader.data.fetcher import CachedDataFetcher
 
-    # Generate date range
-    date_range = pd.date_range(start=start_date, end=end_date, freq=interval)
+        # Convert symbol format: BTCUSDT -> BTC/USDT
+        if "/" not in symbol:
+            symbol = f"{symbol[:-4]}/{symbol[-4:]}"
 
-    # Generate dummy OHLCV data
-    np = __import__("numpy")
-    close_prices = np.cumsum(np.random.randn(len(date_range))) * 100 + 50000
+        fetcher = CachedDataFetcher(cache_dir="data/cache")
+        df = fetcher.get_data(
+            symbol=symbol,
+            start_date=start_date,
+            end_date=end_date,
+            timeframe=interval,
+        )
+        print(f"✓ Loaded {len(df)} real candles from Binance")
+        return df
+    else:
+        # Generate dummy data (for testing)
+        print(f"⚠️  Generating dummy data for {symbol} (use --real-data for actual data)...")
+        date_range = pd.date_range(start=start_date, end=end_date, freq=interval)
 
-    data = {
-        "timestamp": date_range,
-        "open": close_prices + np.random.randn(len(date_range)) * 50,
-        "high": close_prices + np.abs(np.random.randn(len(date_range))) * 100,
-        "low": close_prices - np.abs(np.random.randn(len(date_range))) * 100,
-        "close": close_prices,
-        "volume": np.abs(np.random.randn(len(date_range))) * 1000 + 500,
-    }
+        np = __import__("numpy")
+        close_prices = np.cumsum(np.random.randn(len(date_range))) * 100 + 50000
 
-    df = pd.DataFrame(data)
-    print(f"Fetched {len(df)} candles")
-    return df
+        data = {
+            "timestamp": date_range,
+            "open": close_prices + np.random.randn(len(date_range)) * 50,
+            "high": close_prices + np.abs(np.random.randn(len(date_range))) * 100,
+            "low": close_prices - np.abs(np.random.randn(len(date_range))) * 100,
+            "close": close_prices,
+            "volume": np.abs(np.random.randn(len(date_range))) * 1000 + 500,
+        }
+
+        df = pd.DataFrame(data)
+        print(f"Generated {len(df)} dummy candles")
+        return df
 
 
-def generate_signals(df: pd.DataFrame) -> pd.DataFrame:
+def generate_signals(df: pd.DataFrame, enable_filters: bool = True) -> pd.DataFrame:
     """Generate trading signals from strategy
 
     Args:
         df: OHLCV data
+        enable_filters: Whether to enable signal filters
 
     Returns:
         DataFrame with signals
@@ -74,6 +93,7 @@ def generate_signals(df: pd.DataFrame) -> pd.DataFrame:
     # Initialize strategy components
     market_classifier = MarketClassifier()
     strategy_selector = StrategySelector(config.enabled_strategies)
+    signal_filter = SignalFilter(min_interval_hours=6) if enable_filters else None
 
     signals = []
 
@@ -111,6 +131,21 @@ def generate_signals(df: pd.DataFrame) -> pd.DataFrame:
         }
         action = action_map.get(signal.action.value, "hold")
 
+        # Apply filters if enabled
+        if enable_filters and action != "hold":
+            current_time = df.iloc[i]["timestamp"]
+
+            # Filter 1: Confidence threshold (55%)
+            if signal.confidence < 0.55:
+                action = "hold"
+            # Filter 2: Time-based filter (6h interval)
+            elif signal_filter:
+                allowed, reason = signal_filter.should_allow_signal(signal.action, current_time)
+                if not allowed:
+                    action = "hold"
+                else:
+                    signal_filter.record_trade(signal.action, current_time)
+
         signals.append(
             {
                 "action": action,
@@ -142,6 +177,8 @@ async def run_backtest(
     end_date: str = "2025-01-01",
     interval: str = "1h",
     initial_capital: float = 10000.0,
+    use_real_data: bool = True,
+    enable_filters: bool = False,
 ):
     """Run backtest
 
@@ -162,10 +199,11 @@ async def run_backtest(
     end = datetime.strptime(end_date, "%Y-%m-%d")
 
     # Fetch data
-    df = await fetch_historical_data(symbol, start, end, interval)
+    df = await fetch_historical_data(symbol, start, end, interval, use_real_data=use_real_data)
 
     # Generate signals
-    signals = generate_signals(df)
+    print("\nGenerating signals...")
+    signals = generate_signals(df, enable_filters=enable_filters)
 
     # Configure backtest
     bt_config = BacktestConfig(
@@ -277,6 +315,11 @@ async def main():
         action="store_true",
         help="Run mode comparison",
     )
+    parser.add_argument(
+        "--dummy-data",
+        action="store_true",
+        help="Use dummy data instead of real Binance data",
+    )
 
     args = parser.parse_args()
 
@@ -289,6 +332,7 @@ async def main():
             end_date=args.end,
             interval=args.interval,
             initial_capital=args.capital,
+            use_real_data=not args.dummy_data,  # Use real data by default
         )
 
 

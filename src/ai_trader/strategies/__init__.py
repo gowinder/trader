@@ -11,6 +11,7 @@ from .strategy_base import (
     BreakoutStrategy,
 )
 from .strategy_selector import StrategySelector, AggregatedSignal
+from .signal_filter import SignalFilter
 
 __all__ = [
     "PatternRecognizer",
@@ -28,4 +29,5 @@ __all__ = [
     "BreakoutStrategy",
     "StrategySelector",
     "AggregatedSignal",
+    "SignalFilter",
 ]

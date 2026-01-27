@@ -123,9 +123,9 @@ class TradingConfig(BaseSettings):
     )
     enable_quant_strategies: bool = Field(default=True, description="启用量化策略")
 
-    # 启用的策略列表
+    # 启用的策略列表 (优化后只使用趋势跟随策略)
     enabled_strategies: list[str] = Field(
-        default_factory=lambda: ["trend_following", "mean_reversion", "breakout"],
+        default_factory=lambda: ["trend_following"],
         description="启用的策略列表",
     )
 
