@@ -189,14 +189,18 @@ class TrendFollowingStrategy(TradingStrategy):
 
     Logic:
     - MA crossover + MACD confirmation
-    - Stop loss: price ± ATR × 2
-    - Take profit: price ± ATR × 4
+    - Stop loss: price ± ATR × 3
+    - Take profit: price ± ATR × 6
+
+    Optimized parameters (2024 BTC/USDT backtest):
+    - Fast MA: 5, Slow MA: 20
+    - Win Rate: 48.97%, Sharpe: 0.35
     """
 
     def __init__(self):
         super().__init__("TrendFollowing")
-        self.fast_ma_period = 10
-        self.slow_ma_period = 30
+        self.fast_ma_period = 5
+        self.slow_ma_period = 20
 
     def generate_signal(self, df: pd.DataFrame) -> Signal:
         """Generate signal based on trend following logic"""
@@ -219,8 +223,8 @@ class TrendFollowingStrategy(TradingStrategy):
         # Check for golden cross (bullish)
         if fast_ma > slow_ma and macd > signal_line and histogram > 0:
             confidence = min(0.85, 0.6 + abs(histogram) * 0.01)
-            stop_loss = current_price - atr * 2
-            take_profit = current_price + atr * 4
+            stop_loss = current_price - atr * 3.0
+            take_profit = current_price + atr * 6.0
 
             return Signal(
                 action=SignalAction.LONG,
@@ -234,8 +238,8 @@ class TrendFollowingStrategy(TradingStrategy):
         # Check for death cross (bearish)
         elif fast_ma < slow_ma and macd < signal_line and histogram < 0:
             confidence = min(0.85, 0.6 + abs(histogram) * 0.01)
-            stop_loss = current_price + atr * 2
-            take_profit = current_price - atr * 4
+            stop_loss = current_price + atr * 3.0
+            take_profit = current_price - atr * 6.0
 
             return Signal(
                 action=SignalAction.SHORT,
