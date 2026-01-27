@@ -54,12 +54,6 @@ class BinanceAdapter(BaseExchange):
             },
         }
 
-        # Override testnet URL
-        if testnet:
-            config["options"]["urls"] = {
-                "fapi": "https://testnet.binancefuture.com/fapi/v1"
-            }
-
         # Add proxy if provided
         if proxy:
             config["proxies"] = {
@@ -68,6 +62,11 @@ class BinanceAdapter(BaseExchange):
             }
 
         self.exchange = ccxt.binance(config)
+
+        # Enable sandbox mode for testnet
+        # Note: CCXT uses set_sandbox_mode() to configure testnet URLs
+        if testnet:
+            self.exchange.set_sandbox_mode(True)
 
         # Safe URL logging
         url_info = "testnet" if testnet else "production"
@@ -136,15 +135,19 @@ class BinanceAdapter(BaseExchange):
         try:
             ticker = await self.exchange.fetch_ticker(symbol)
 
+            # Helper to safely convert to float
+            def safe_float(value, default=0.0):
+                return float(value) if value is not None else default
+
             return Ticker(
                 symbol=ticker["symbol"],
-                last_price=float(ticker["last"]),
-                bid_price=float(ticker.get("bid", 0)),
-                ask_price=float(ticker.get("ask", 0)),
-                high_24h=float(ticker.get("high", 0)),
-                low_24h=float(ticker.get("low", 0)),
-                volume_24h=float(ticker.get("baseVolume", 0)),
-                change_24h=float(ticker.get("percentage", 0)),
+                last_price=safe_float(ticker.get("last") or ticker.get("close"), 0),
+                bid_price=safe_float(ticker.get("bid"), 0),
+                ask_price=safe_float(ticker.get("ask"), 0),
+                high_24h=safe_float(ticker.get("high"), 0),
+                low_24h=safe_float(ticker.get("low"), 0),
+                volume_24h=safe_float(ticker.get("baseVolume"), 0),
+                change_24h=safe_float(ticker.get("percentage"), 0),
                 timestamp=ticker.get("timestamp", 0),
             )
 
