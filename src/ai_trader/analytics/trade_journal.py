@@ -48,13 +48,16 @@ class TradeEntry:
 
     # Entry/Exit Prices
     entry_price: float
+
+    # Position Information (required fields before optional)
+    position_size: float  # In base currency (e.g., BTC)
+    position_value: float  # In quote currency (e.g., USDT)
+
+    # Optional Entry/Exit Prices
     exit_price: Optional[float] = None
     stop_loss_price: Optional[float] = None
     take_profit_price: Optional[float] = None
 
-    # Position Information
-    position_size: float  # In base currency (e.g., BTC)
-    position_value: float  # In quote currency (e.g., USDT)
     leverage: int = 1
 
     # Performance Metrics
@@ -131,11 +134,12 @@ class PerformanceMetrics:
     # Risk Metrics
     average_rr_ratio: float  # Average reward/risk ratio
     max_drawdown: float  # Maximum peak-to-trough decline
-    sharpe_ratio: Optional[float] = None  # Risk-adjusted return
 
     # Trade Quality
     average_hold_duration: float  # In hours
     average_confluence_score: float  # Multi-timeframe alignment quality
+
+    sharpe_ratio: Optional[float] = None  # Risk-adjusted return
 
     def to_dict(self) -> dict:
         """Convert to dictionary"""

@@ -77,7 +77,7 @@
 - [x] 实现 `check_daily_loss_limit()` 方法 ✓ 2026-01-26
 - [ ] 实现规则引擎 `src/ai_trader/rules/rule_engine.py`（可选）
 - [x] 实现交易日志系统 `src/ai_trader/analytics/trade_journal.py` ✓ 2026-01-26
-- [ ] 增强AI Prompt加入多时间框架分析、仓位管理、交易纪律约束
+- [x] 增强AI Prompt加入多时间框架分析、仓位管理、交易纪律约束 ✓ 2026-01-26
 
 ### 测试任务
 - [x] 单元测试：仓位计算公式正确性 ✓ 2026-01-26 (21个测试全部通过)
