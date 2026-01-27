@@ -112,9 +112,34 @@ class TradingConfig(BaseSettings):
     analysis_interval: int = Field(default=15)
     decision_interval: int = Field(default=60)
 
-    # 日志
+    # ============= Phase 4: 量化策略配置 =============
+    # 决策权重
+    quant_weight: float = Field(default=0.5, description="量化策略权重")
+    ai_weight: float = Field(default=0.5, description="AI决策权重")
+
+    # 功能开关
+    enable_pattern_recognition: bool = Field(
+        default=True, description="启用K线形态识别"
+    )
+    enable_quant_strategies: bool = Field(default=True, description="启用量化策略")
+
+    # 启用的策略列表
+    enabled_strategies: list[str] = Field(
+        default_factory=lambda: ["trend_following", "mean_reversion", "breakout"],
+        description="启用的策略列表",
+    )
+
+    # ============= 日志配置 =============
     log_level: str = Field(default="INFO")
     log_file: str = Field(default="logs/trading.log")
+
+    # 日志翻译配置
+    enable_log_translation: bool = Field(
+        default=False, description="启用日志自动翻译"
+    )
+    log_target_language: str = Field(
+        default="zh-CN", description="日志翻译目标语言 (zh-CN, ja, ko, etc.)"
+    )
 
     @field_validator("llm_provider")
     @classmethod
