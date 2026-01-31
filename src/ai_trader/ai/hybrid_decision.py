@@ -1,6 +1,7 @@
 """Hybrid decision engine with quantitative, AI, and sentiment analysis
 
 Phase 5: Integrated sentiment analysis into decision making
+Phase 6: Decision persistence to Dashboard database
 """
 
 from typing import Optional, Tuple
@@ -18,6 +19,7 @@ from ..sentiment.cache import SentimentCache
 from ..strategies.market_classifier import MarketClassifier
 from ..strategies.strategy_selector import StrategySelector
 from ..strategies.strategy_base import SignalAction
+from ..persistence import DatabaseManager, DecisionPersistenceService
 from ..config import config
 from ..utils.logger import logger
 
@@ -54,6 +56,11 @@ class HybridDecisionEngine(DecisionEngine):
         self.sentiment_analyzer: Optional[SentimentAnalyzer] = None
         if config.enable_sentiment_analysis:
             self._init_sentiment_analyzer()
+
+        # Phase 6: Decision persistence
+        self.db_manager: Optional[DatabaseManager] = None
+        self.persistence_service: Optional[DecisionPersistenceService] = None
+        self._persistence_initialized = False
 
     def _init_sentiment_analyzer(self):
         """Initialize sentiment analyzer with configured data sources"""
@@ -95,6 +102,29 @@ class HybridDecisionEngine(DecisionEngine):
 
         logger.info("Sentiment analyzer initialized")
 
+    async def _init_persistence(self):
+        """Initialize decision persistence service"""
+        if self._persistence_initialized:
+            return
+
+        if not config.enable_decision_persistence:
+            return
+
+        if not config.dashboard_database_url:
+            logger.warning("Dashboard database URL not configured, persistence disabled")
+            return
+
+        try:
+            self.db_manager = DatabaseManager(config.dashboard_database_url)
+            await self.db_manager.connect()
+            self.persistence_service = DecisionPersistenceService(self.db_manager)
+            self._persistence_initialized = True
+            logger.info("Decision persistence service initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize persistence service: {e}")
+            self.db_manager = None
+            self.persistence_service = None
+
     async def analyze_and_decide(
         self,
         market_data: MarketData,
@@ -130,6 +160,8 @@ class HybridDecisionEngine(DecisionEngine):
         Returns:
             Tuple of (decision, technical analysis, risk assessment)
         """
+        # Initialize persistence if enabled
+        await self._init_persistence()
 
         # Step 1: Technical analysis (AI)
         tech_result = await self.analyzer.analyze_technical(market_data)
@@ -208,6 +240,21 @@ class HybridDecisionEngine(DecisionEngine):
             consecutive_losses=consecutive_losses,
             emotional_state=emotional_state,
         )
+
+        # Step 6: Persist decision to database
+        if self.persistence_service:
+            try:
+                await self.persistence_service.save_decision(
+                    decision=decision,
+                    technical=tech_result,
+                    risk=risk_result,
+                    market_data=market_data,
+                    sentiment=sentiment_result,
+                    llm_provider=config.llm_provider,
+                    llm_model=config.llm_model,
+                )
+            except Exception as e:
+                logger.error(f"Failed to persist decision: {e}")
 
         return decision, tech_result, risk_result
 
@@ -381,3 +428,5 @@ class HybridDecisionEngine(DecisionEngine):
         """Close resources"""
         if self.sentiment_analyzer:
             await self.sentiment_analyzer.close()
+        if self.db_manager:
+            await self.db_manager.close()
