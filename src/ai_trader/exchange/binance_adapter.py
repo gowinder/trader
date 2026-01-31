@@ -54,11 +54,19 @@ class BinanceAdapter(BaseExchange):
             },
         }
 
-        # Add proxy if provided - use HTTP proxy instead of SOCKS
-        import os
-        http_proxy = proxy or os.getenv('HTTP_PROXY') or os.getenv('http_proxy')
-        if http_proxy:
-            config["aiohttp_proxy"] = http_proxy
+        # Add proxy if explicitly provided (do not auto-detect from env for testnet)
+        if proxy:
+            config["aiohttp_proxy"] = proxy
+        elif testnet:
+            # Explicitly disable proxy for testnet to prevent aiohttp auto-detection
+            config["aiohttp_proxy"] = None
+            config["aiohttp_trust_env"] = False
+        else:
+            # Only use env proxy for production, not testnet
+            import os
+            http_proxy = os.getenv('HTTP_PROXY') or os.getenv('http_proxy')
+            if http_proxy:
+                config["aiohttp_proxy"] = http_proxy
 
         self.exchange = ccxt.binance(config)
 
@@ -66,6 +74,14 @@ class BinanceAdapter(BaseExchange):
         # Note: CCXT uses set_sandbox_mode() to configure testnet URLs
         if testnet:
             self.exchange.set_sandbox_mode(True)
+            # Override spot testnet URLs to use futures testnet
+            # This avoids 451 errors from spot testnet geo-restrictions
+            if hasattr(self.exchange, 'urls') and isinstance(self.exchange.urls, dict):
+                api = self.exchange.urls.get('api', {})
+                if isinstance(api, dict):
+                    # Point spot endpoints to futures testnet to avoid geo-restrictions
+                    api['public'] = 'https://testnet.binancefuture.com/fapi/v1'
+                    api['private'] = 'https://testnet.binancefuture.com/fapi/v1'
 
         # Safe URL logging
         url_info = "testnet" if testnet else "production"
