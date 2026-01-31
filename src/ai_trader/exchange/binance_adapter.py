@@ -54,12 +54,11 @@ class BinanceAdapter(BaseExchange):
             },
         }
 
-        # Add proxy if provided
-        if proxy:
-            config["proxies"] = {
-                "http": proxy,
-                "https": proxy,
-            }
+        # Add proxy if provided - use HTTP proxy instead of SOCKS
+        import os
+        http_proxy = proxy or os.getenv('HTTP_PROXY') or os.getenv('http_proxy')
+        if http_proxy:
+            config["aiohttp_proxy"] = http_proxy
 
         self.exchange = ccxt.binance(config)
 

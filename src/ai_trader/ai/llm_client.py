@@ -16,7 +16,10 @@ class LLMClient:
         self.api_key = config.openrouter_api_key
         self.model = config.ai_model
         self.fallback = config.ai_fallback_model
-        self._client = httpx.AsyncClient(timeout=60.0)
+        # Use HTTP proxy instead of SOCKS proxy if available
+        import os
+        http_proxy = os.getenv('HTTP_PROXY') or os.getenv('http_proxy')
+        self._client = httpx.AsyncClient(timeout=60.0, proxy=http_proxy)
 
     async def chat(
         self,
