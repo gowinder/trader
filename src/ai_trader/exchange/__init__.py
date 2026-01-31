@@ -38,11 +38,12 @@ def create_exchange_client() -> BaseExchange:
 
         # Use dedicated adapters for better testnet support
         if exchange == "binance":
+            # Note: Do not pass proxy for testnet - Binance Futures Testnet should be accessed directly
             return BinanceAdapter(
                 api_key=config.testnet_api_key,
                 api_secret=config.testnet_api_secret,
                 testnet=True,
-                proxy=config.proxy_url or None,
+                proxy=None,  # Testnet doesn't need proxy, direct connection works
             )
         elif exchange == "bybit":
             # Bybit uses CCXT adapter with custom testnet URL
