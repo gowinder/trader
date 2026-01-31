@@ -153,7 +153,7 @@ class GeminiProvider(BaseLLMProvider):
             return self._parse_response(data, schema)
         except Exception as e2:
             logging.error(f"备用模型也失败: {e2}")
-            raise RuntimeError(f"All LLM models failed: Primary({e}), Fallback({e2})")
+            raise RuntimeError(f"All LLM models failed: Fallback({e2})")
 
     async def close(self):
         await self._client.aclose()

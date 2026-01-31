@@ -64,8 +64,22 @@ class Scheduler:
         if not market_data:
             return
 
-        position = await self.position_mgr.get_position(symbol)
-        account = await self.exchange.get_account()  # Now returns AccountInfo model
+        # For testnet mode, use simulated account/position data
+        # CCXT no longer supports Binance Futures Testnet private API
+        if config.trading_mode == "testnet":
+            from .exchange.base import AccountInfo, Position
+            # Simulated account with 10,000 USDT
+            account = AccountInfo(
+                total_equity=10000.0,
+                available_balance=10000.0,
+                margin_used=0.0,
+                unrealized_pnl=0.0,
+            )
+            position = None  # No position in simulation
+            logger.info("Using simulated account data for testnet (CCXT deprecated private API)")
+        else:
+            position = await self.position_mgr.get_position(symbol)
+            account = await self.exchange.get_account()  # Now returns AccountInfo model
 
         # Extract account balance from AccountInfo
         balance = account.available_balance
@@ -129,9 +143,14 @@ class Scheduler:
                 # Round to 1 decimal place to match exchange requirement
                 quantity = round(quantity, 1)
 
-                order_id = await self.order_mgr.execute_order(
-                    decision, symbol, quantity
-                )
+                # For testnet mode, skip actual order execution (CCXT deprecated private API)
+                if config.trading_mode == "testnet":
+                    order_id = f"SIM-{symbol}-{decision.action}"
+                    logger.info(f"[SIMULATED] Order: {decision.action} {quantity} {symbol}")
+                else:
+                    order_id = await self.order_mgr.execute_order(
+                        decision, symbol, quantity
+                    )
 
         # 4. 报告
         # Get position after trade (wait a bit? or just report 'submitted')
