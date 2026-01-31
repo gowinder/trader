@@ -148,6 +148,14 @@ class TradingConfig(BaseSettings):
         default=80, description="每小时最大API请求数（留20%余量）"
     )
 
+    # ============= Dashboard 数据库配置 =============
+    dashboard_database_url: str = Field(
+        default="", validation_alias="DASHBOARD_DATABASE_URL"
+    )
+    enable_decision_persistence: bool = Field(
+        default=False, description="启用决策数据持久化到 Dashboard 数据库"
+    )
+
     # ============= 日志配置 =============
     log_level: str = Field(default="INFO")
     log_file: str = Field(default="logs/trading.log")
