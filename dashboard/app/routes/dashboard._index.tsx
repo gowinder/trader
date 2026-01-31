@@ -16,6 +16,9 @@ import {
   YAxis,
   Tooltip,
   ResponsiveContainer,
+  Legend,
+  AreaChart,
+  Area,
 } from "recharts";
 
 export async function loader(_args: Route.LoaderArgs) {
@@ -119,6 +122,50 @@ export async function loader(_args: Route.LoaderArgs) {
     .orderBy(sql`count(*) DESC`)
     .limit(5);
 
+  // 获取每小时决策分布
+  const hourlyDistribution = await db
+    .select({
+      hour: sql<number>`EXTRACT(HOUR FROM ${decisions.createdAt})`,
+      count: sql<number>`count(*)`,
+    })
+    .from(decisions)
+    .groupBy(sql`EXTRACT(HOUR FROM ${decisions.createdAt})`)
+    .orderBy(sql`EXTRACT(HOUR FROM ${decisions.createdAt})`);
+
+  // 获取最近7天平均置信度趋势
+  const confidenceTrend = await db
+    .select({
+      date: sql<string>`DATE(${decisions.createdAt})`,
+      avgConfidence: sql<number>`AVG(${decisions.confidence})`,
+      count: sql<number>`count(*)`,
+    })
+    .from(decisions)
+    .where(gte(decisions.createdAt, sevenDaysAgo))
+    .groupBy(sql`DATE(${decisions.createdAt})`)
+    .orderBy(sql`DATE(${decisions.createdAt})`);
+
+  // 获取 LLM 提供商分布
+  const llmDistribution = await db
+    .select({
+      provider: decisions.llmProvider,
+      count: sql<number>`count(*)`,
+    })
+    .from(decisions)
+    .groupBy(decisions.llmProvider);
+
+  // 获取多空比例趋势
+  const longShortTrend = await db
+    .select({
+      date: sql<string>`DATE(${decisions.createdAt})`,
+      longCount: sql<number>`SUM(CASE WHEN ${decisions.action} LIKE '%long%' THEN 1 ELSE 0 END)`,
+      shortCount: sql<number>`SUM(CASE WHEN ${decisions.action} LIKE '%short%' THEN 1 ELSE 0 END)`,
+      holdCount: sql<number>`SUM(CASE WHEN ${decisions.action} = 'hold' THEN 1 ELSE 0 END)`,
+    })
+    .from(decisions)
+    .where(gte(decisions.createdAt, sevenDaysAgo))
+    .groupBy(sql`DATE(${decisions.createdAt})`)
+    .orderBy(sql`DATE(${decisions.createdAt})`);
+
   const stats = todayStatsData[0] || {
     totalTrades: 0,
     winningTrades: 0,
@@ -164,6 +211,30 @@ export async function loader(_args: Route.LoaderArgs) {
       symbol: d.symbol,
       count: Number(d.count),
     })),
+    hourlyDistribution: Array.from({ length: 24 }, (_, i) => {
+      const found = hourlyDistribution.find((h) => Number(h.hour) === i);
+      return {
+        hour: `${i.toString().padStart(2, "0")}:00`,
+        count: found ? Number(found.count) : 0,
+      };
+    }),
+    confidenceTrend: confidenceTrend.map((d) => ({
+      date: d.date,
+      avgConfidence: Math.round(Number(d.avgConfidence)),
+      count: Number(d.count),
+    })),
+    llmDistribution: llmDistribution
+      .filter((d) => d.provider)
+      .map((d) => ({
+        name: d.provider || "Unknown",
+        value: Number(d.count),
+      })),
+    longShortTrend: longShortTrend.map((d) => ({
+      date: d.date,
+      long: Number(d.longCount),
+      short: Number(d.shortCount),
+      hold: Number(d.holdCount),
+    })),
   };
 }
 
@@ -204,6 +275,8 @@ const CONFIDENCE_COLORS: Record<string, string> = {
 
 const SYMBOL_COLORS = ["#3b82f6", "#8b5cf6", "#ec4899", "#14b8a6", "#f59e0b"];
 
+const LLM_COLORS = ["#6366f1", "#8b5cf6", "#a855f7", "#d946ef", "#ec4899"];
+
 export default function DashboardIndex({ loaderData }: Route.ComponentProps) {
   const {
     todayStats,
@@ -214,6 +287,10 @@ export default function DashboardIndex({ loaderData }: Route.ComponentProps) {
     dailyTrend,
     confidenceDistribution,
     symbolDistribution,
+    hourlyDistribution,
+    confidenceTrend,
+    llmDistribution,
+    longShortTrend,
   } = loaderData;
 
   return (
@@ -391,6 +468,186 @@ export default function DashboardIndex({ loaderData }: Route.ComponentProps) {
                   </Pie>
                   <Tooltip />
                 </PieChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="flex h-[200px] items-center justify-center text-muted-foreground">
+                暂无数据
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Hourly Distribution & Confidence Trend */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        {/* Hourly Distribution */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">每小时决策分布</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {hourlyDistribution.some((h) => h.count > 0) ? (
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={hourlyDistribution}>
+                  <XAxis
+                    dataKey="hour"
+                    fontSize={10}
+                    tickFormatter={(v) => v.slice(0, 2)}
+                    interval={2}
+                  />
+                  <YAxis fontSize={12} allowDecimals={false} />
+                  <Tooltip
+                    labelFormatter={(v) => `时间: ${v}`}
+                    formatter={(v: number) => [`${v} 次`, "决策数"]}
+                  />
+                  <Bar dataKey="count" radius={[2, 2, 0, 0]}>
+                    {hourlyDistribution.map((entry, index) => (
+                      <Cell
+                        key={index}
+                        fill={
+                          entry.count > 5
+                            ? "#22c55e"
+                            : entry.count > 2
+                              ? "#eab308"
+                              : entry.count > 0
+                                ? "#3b82f6"
+                                : "#334155"
+                        }
+                      />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="flex h-[200px] items-center justify-center text-muted-foreground">
+                暂无数据
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Confidence Trend */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">置信度趋势 (7天)</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {confidenceTrend.length > 0 ? (
+              <ResponsiveContainer width="100%" height={200}>
+                <AreaChart data={confidenceTrend}>
+                  <XAxis
+                    dataKey="date"
+                    tickFormatter={(v) => v.slice(5)}
+                    fontSize={12}
+                  />
+                  <YAxis fontSize={12} domain={[0, 100]} />
+                  <Tooltip
+                    labelFormatter={(v) => `日期: ${v}`}
+                    formatter={(v: number, name: string) => [
+                      name === "avgConfidence" ? `${v}%` : `${v} 次`,
+                      name === "avgConfidence" ? "平均置信度" : "决策数",
+                    ]}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="avgConfidence"
+                    stroke="#8b5cf6"
+                    fill="#8b5cf6"
+                    fillOpacity={0.3}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="flex h-[200px] items-center justify-center text-muted-foreground">
+                暂无数据
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* LLM Distribution & Long/Short Trend */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        {/* LLM Provider Distribution */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">LLM 提供商分布</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {llmDistribution.length > 0 ? (
+              <ResponsiveContainer width="100%" height={200}>
+                <PieChart>
+                  <Pie
+                    data={llmDistribution}
+                    cx="50%"
+                    cy="50%"
+                    innerRadius={50}
+                    outerRadius={80}
+                    paddingAngle={2}
+                    dataKey="value"
+                    label={({ name, percent }) =>
+                      `${name} ${(percent * 100).toFixed(0)}%`
+                    }
+                    labelLine={false}
+                  >
+                    {llmDistribution.map((_, index) => (
+                      <Cell
+                        key={index}
+                        fill={LLM_COLORS[index % LLM_COLORS.length]}
+                      />
+                    ))}
+                  </Pie>
+                  <Tooltip />
+                </PieChart>
+              </ResponsiveContainer>
+            ) : (
+              <div className="flex h-[200px] items-center justify-center text-muted-foreground">
+                暂无数据
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Long/Short Trend */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">多空趋势 (7天)</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {longShortTrend.length > 0 ? (
+              <ResponsiveContainer width="100%" height={200}>
+                <BarChart data={longShortTrend}>
+                  <XAxis
+                    dataKey="date"
+                    tickFormatter={(v) => v.slice(5)}
+                    fontSize={12}
+                  />
+                  <YAxis fontSize={12} allowDecimals={false} />
+                  <Tooltip
+                    labelFormatter={(v) => `日期: ${v}`}
+                    formatter={(v: number, name: string) => {
+                      const labels: Record<string, string> = {
+                        long: "做多",
+                        short: "做空",
+                        hold: "观望",
+                      };
+                      return [`${v} 次`, labels[name] || name];
+                    }}
+                  />
+                  <Legend
+                    formatter={(value) => {
+                      const labels: Record<string, string> = {
+                        long: "做多",
+                        short: "做空",
+                        hold: "观望",
+                      };
+                      return labels[value] || value;
+                    }}
+                  />
+                  <Bar dataKey="long" stackId="a" fill="#22c55e" />
+                  <Bar dataKey="short" stackId="a" fill="#ef4444" />
+                  <Bar dataKey="hold" stackId="a" fill="#94a3b8" />
+                </BarChart>
               </ResponsiveContainer>
             ) : (
               <div className="flex h-[200px] items-center justify-center text-muted-foreground">
