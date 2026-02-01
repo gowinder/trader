@@ -1,4 +1,18 @@
 services:
+  # 数据库迁移服务 - 启动时自动运行迁移
+  db-migrate:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    container_name: trader-db-migrate
+    env_file:
+      - .env
+    command: ["npm", "run", "db:push"]
+    networks:
+      - trader-network
+    # 迁移完成后退出
+    restart: "no"
+
   trader:
     build:
       context: .
@@ -13,6 +27,9 @@ services:
       - ./run_output:/app/run_output
       - ./logs:/app/logs
       - ./data:/app/data
+    depends_on:
+      db-migrate:
+        condition: service_completed_successfully
     networks:
       - trader-network
 
@@ -31,7 +48,10 @@ services:
       - ./src:/app/src:ro
       - ./data:/app/data
     depends_on:
-      - dashboard
+      db-migrate:
+        condition: service_completed_successfully
+      dashboard:
+        condition: service_started
     networks:
       - trader-network
 
@@ -51,6 +71,9 @@ services:
     volumes:
       - ./data:/app/data:ro
       - ./logs:/app/logs:ro
+    depends_on:
+      db-migrate:
+        condition: service_completed_successfully
     networks:
       - trader-network
 
