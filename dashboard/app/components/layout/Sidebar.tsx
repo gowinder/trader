@@ -7,6 +7,7 @@ import {
   History,
   BarChart3,
   FlaskConical,
+  SlidersHorizontal,
   Settings,
   Bell,
   Power,
@@ -22,6 +23,7 @@ const navItems = [
   { to: "/dashboard/analytics", icon: BarChart3, label: "分析" },
   { to: "/dashboard/llm-usage", icon: Cpu, label: "LLM" },
   { to: "/dashboard/backtest", icon: FlaskConical, label: "回测" },
+  { to: "/dashboard/backtest-settings", icon: SlidersHorizontal, label: "回测设置" },
 ];
 
 const bottomItems = [

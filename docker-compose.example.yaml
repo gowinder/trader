@@ -1,0 +1,59 @@
+services:
+  trader:
+    build:
+      context: .
+      dockerfile: Dockerfile.trader
+    container_name: ai-trader
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./src:/app/src:ro
+      - ./trades:/app/trades
+      - ./run_output:/app/run_output
+      - ./logs:/app/logs
+      - ./data:/app/data
+    networks:
+      - trader-network
+
+  backtest-runner:
+    build:
+      context: .
+      dockerfile: Dockerfile.trader
+    container_name: ai-backtest-runner
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - PYTHONPATH=/app/src
+    command: ["python", "-m", "ai_trader.backtest.runner"]
+    volumes:
+      - ./src:/app/src:ro
+      - ./data:/app/data
+    depends_on:
+      - dashboard
+    networks:
+      - trader-network
+
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    container_name: trader-dashboard
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    environment:
+      - LLM_USAGE_DB=/app/data/llm_usage.db
+      - TRADER_LOG_FILE=/app/logs/trading.log
+    volumes:
+      - ./data:/app/data:ro
+      - ./logs:/app/logs:ro
+    networks:
+      - trader-network
+
+networks:
+  trader-network:
+    driver: bridge

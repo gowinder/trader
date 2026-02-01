@@ -272,6 +272,32 @@ export const backtestEquity = pgTable(
   })
 );
 
+// ==================== 回测调度配置 ====================
+
+export const backtestScheduleConfig = pgTable("backtest_schedule_config", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+
+  // 启用状态
+  enabled: boolean("enabled").notNull().default(false),
+
+  // 调度配置
+  scheduleType: varchar("schedule_type", { length: 20 }).notNull().default("manual"),  // manual, daily, weekly
+  scheduleCron: varchar("schedule_cron", { length: 50 }),  // cron 表达式 (可选)
+  scheduleHour: smallint("schedule_hour").default(0),  // 每日执行小时 (0-23)
+  scheduleDayOfWeek: smallint("schedule_day_of_week"),  // 每周执行日 (0-6, 0=周日)
+
+  // 回测参数
+  symbols: jsonb("symbols").notNull().default(["BTCUSDT"]),  // 交易对列表
+  timeframe: varchar("timeframe", { length: 10 }).notNull().default("1h"),
+  lookbackDays: smallint("lookback_days").notNull().default(30),  // 回测天数
+  initialCapital: decimal("initial_capital", { precision: 20, scale: 2 }).notNull().default("10000"),
+
+  // 策略配置
+  enableFilters: boolean("enable_filters").notNull().default(true),
+  strategies: jsonb("strategies").notNull().default(["trend_following"]),
+});
+
 // ==================== 相关性分析 ====================
 
 export const correlationCache = pgTable(
