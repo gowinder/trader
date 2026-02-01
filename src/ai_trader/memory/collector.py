@@ -2,18 +2,23 @@
 
 import json
 from datetime import datetime
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 from uuid import uuid4
 
+import logging
+
 from .models import TradeMemoryEntry
-from ..persistence.database import DatabaseManager
-from ..utils.logger import logger
+
+logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from ..persistence.database import DatabaseManager
 
 
 class TradeMemoryCollector:
     """收集交易数据到短期记忆"""
 
-    def __init__(self, db: DatabaseManager):
+    def __init__(self, db: "DatabaseManager"):
         self.db = db
         self._consecutive_losses = 0
 
