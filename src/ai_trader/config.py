@@ -156,6 +156,20 @@ class TradingConfig(BaseSettings):
         default=False, description="启用决策数据持久化到 Dashboard 数据库"
     )
 
+    # ============= 记忆与自优化配置 =============
+    enable_auto_optimization: bool = Field(
+        default=False, description="启用自动参数优化"
+    )
+    reflection_trade_count: int = Field(
+        default=10, description="触发复盘的交易数量"
+    )
+    short_term_memory_size: int = Field(
+        default=100, description="短期记忆保留笔数"
+    )
+    shadow_run_min_trades: int = Field(
+        default=10, description="影子运行最少交易数"
+    )
+
     # ============= 日志配置 =============
     log_level: str = Field(default="INFO")
     log_file: str = Field(default="logs/trading.log")
