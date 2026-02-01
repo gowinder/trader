@@ -1,0 +1,29 @@
+{
+  "openrouter": {
+    "deepseek/deepseek-v3.2": {"input": 0.14, "output": 0.28},
+    "deepseek/deepseek-chat": {"input": 0.14, "output": 0.28},
+    "deepseek/deepseek-coder": {"input": 0.14, "output": 0.28},
+    "anthropic/claude-3.5-sonnet": {"input": 3.0, "output": 15.0},
+    "openai/gpt-4o": {"input": 2.5, "output": 10.0},
+    "openai/gpt-4o-mini": {"input": 0.15, "output": 0.6},
+    "google/gemini-2.0-flash": {"input": 0.1, "output": 0.4},
+    "minimax/minimax-01": {"input": 0.2, "output": 1.1}
+  },
+  "gemini": {
+    "gemini-2.0-flash": {"input": 0, "output": 0},
+    "gemini-1.5-flash": {"input": 0, "output": 0},
+    "gemini-1.5-pro": {"input": 0, "output": 0}
+  },
+  "codex": {
+    "gpt-4o": {"input": 2.5, "output": 10.0},
+    "gpt-4o-mini": {"input": 0.15, "output": 0.6},
+    "o1": {"input": 15.0, "output": 60.0},
+    "o1-mini": {"input": 3.0, "output": 12.0}
+  },
+  "qwen": {
+    "qwen-max-latest": {"input": 0, "output": 0},
+    "qwen-max": {"input": 0, "output": 0},
+    "qwen-plus": {"input": 0, "output": 0},
+    "qwen-turbo": {"input": 0, "output": 0}
+  }
+}
