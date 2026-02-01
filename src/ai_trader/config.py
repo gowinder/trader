@@ -80,16 +80,16 @@ class TradingConfig(BaseSettings):
 
     # AI 配置 (旧版兼容) - 已废弃，使用 LLMConfig
     openrouter_api_key: str = Field(default="", validation_alias="OPENROUTER_API_KEY")
-    ai_model: str = Field(default="deepseek/deepseek-chat", validation_alias="AI_MODEL")
+    ai_model: str = Field(default="deepseek/deepseek-v3.2", validation_alias="AI_MODEL")
     ai_fallback_model: str = Field(
-        default="minimax/minimax-01", validation_alias="AI_FALLBACK_MODEL"
+        default="deepseek/deepseek-chat", validation_alias="AI_FALLBACK_MODEL"
     )
 
     # LLM Provider 配置 (新版)
     llm_provider: str = Field(default="openrouter", validation_alias="LLM_PROVIDER")
     llm_api_key: str = Field(default="", validation_alias="LLM_API_KEY")
     llm_model: str = Field(
-        default="deepseek/deepseek-chat", validation_alias="LLM_MODEL"
+        default="deepseek/deepseek-v3.2", validation_alias="LLM_MODEL"
     )
     llm_fallback_model: Optional[str] = Field(
         default=None, validation_alias="LLM_FALLBACK_MODEL"

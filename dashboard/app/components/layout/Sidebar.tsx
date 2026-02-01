@@ -10,6 +10,8 @@ import {
   Settings,
   Bell,
   Power,
+  ScrollText,
+  Cpu,
 } from "lucide-react";
 
 const navItems = [
@@ -18,10 +20,12 @@ const navItems = [
   { to: "/dashboard/decisions", icon: FileText, label: "决策" },
   { to: "/dashboard/positions", icon: History, label: "仓位" },
   { to: "/dashboard/analytics", icon: BarChart3, label: "分析" },
+  { to: "/dashboard/llm-usage", icon: Cpu, label: "LLM" },
   { to: "/dashboard/backtest", icon: FlaskConical, label: "回测" },
 ];
 
 const bottomItems = [
+  { to: "/dashboard/logs", icon: ScrollText, label: "日志" },
   { to: "/dashboard/alerts", icon: Bell, label: "告警" },
   { to: "/dashboard/control", icon: Power, label: "控制" },
   { to: "/dashboard/settings", icon: Settings, label: "设置" },
