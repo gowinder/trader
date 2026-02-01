@@ -12,6 +12,7 @@ from .providers.qwen_oauth import QwenOAuthProvider
 from .providers.gemini_oauth import GeminiOAuthProvider
 from .providers.codex_oauth import CodexOAuthProvider
 from .providers.openrouter import OpenRouterProvider
+from .providers.cli_provider import GeminiCLIProvider, QwenCLIProvider
 from ..config import config
 from ..utils.logger import logger
 
@@ -73,9 +74,11 @@ class LLMManager:
     def _create_provider(self, name: str, model: Optional[str] = None) -> BaseLLMProvider:
         """创建 Provider 实例"""
         if name == "qwen":
-            return QwenOAuthProvider(model=model or "qwen-max-latest")
+            # 使用 CLI Provider（更可靠）
+            return QwenCLIProvider(model=model or "qwen-max")
         elif name == "gemini":
-            return GeminiOAuthProvider(model=model or "gemini-2.0-flash")
+            # 使用 CLI Provider（OAuth scope 不足）
+            return GeminiCLIProvider(model=model or "gemini-2.0-flash")
         elif name == "codex":
             return CodexOAuthProvider(model=model or "gpt-4o")
         elif name == "openrouter":
@@ -96,13 +99,21 @@ class LLMManager:
 
     def _is_provider_available(self, provider_config: ProviderConfig) -> bool:
         """检查 provider 是否可用"""
+        import shutil
+
         # 检查冷却期
         if provider_config.cooldown_until > time.time():
             return False
 
-        # 检查 OAuth provider 的 token 可用性
-        if provider_config.name in ("qwen", "gemini", "codex"):
-            return self._token_manager.is_available(provider_config.name)
+        # CLI Provider - 检查命令是否存在
+        if provider_config.name == "qwen":
+            return shutil.which("qwen") is not None
+        elif provider_config.name == "gemini":
+            return shutil.which("gemini") is not None
+
+        # Codex OAuth - 检查 token 可用性
+        if provider_config.name == "codex":
+            return self._token_manager.is_available("codex")
 
         # OpenRouter 只要有 API key 就可用
         if provider_config.name == "openrouter":
