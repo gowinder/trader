@@ -75,8 +75,21 @@ class TradingConfig(BaseSettings):
     okx_api_secret: str = Field(default="", validation_alias="OKX_API_SECRET")
     okx_passphrase: str = Field(default="", validation_alias="OKX_PASSPHRASE")
 
-    # 交易对
+    # 交易对 (支持多个，逗号分隔)
     trading_symbol: str = Field(default="cmt_btcusdt")
+    trading_symbols: str = Field(
+        default="",
+        validation_alias="TRADING_SYMBOLS",
+        description="多交易对配置，逗号分隔，如 'BTC/USDT:USDT,ETH/USDT:USDT'"
+    )
+
+    @property
+    def symbols_list(self) -> list[str]:
+        """获取交易对列表"""
+        if self.trading_symbols:
+            return [s.strip() for s in self.trading_symbols.split(",") if s.strip()]
+        # 兼容旧版单交易对配置
+        return [self.trading_symbol]
 
     # AI 配置 (旧版兼容) - 已废弃，使用 LLMConfig
     openrouter_api_key: str = Field(default="", validation_alias="OPENROUTER_API_KEY")
@@ -142,10 +155,11 @@ class TradingConfig(BaseSettings):
     # 情绪分析权重（仅在启用时生效）
     sentiment_weight: float = Field(default=0.2, description="情绪分析权重")
 
-    # 缓存配置
-    sentiment_cache_ttl: int = Field(default=900, description="情绪缓存TTL（秒），默认15分钟")
+    # 缓存配置 (针对免费版 API 优化)
+    # CryptoPanic: 100 req/月, NewsAPI: 100 req/天
+    sentiment_cache_ttl: int = Field(default=3600, description="情绪缓存TTL（秒），默认1小时")
     sentiment_max_requests_per_hour: int = Field(
-        default=80, description="每小时最大API请求数（留20%余量）"
+        default=4, description="每小时最大API请求数（免费版保守设置）"
     )
 
     # ============= Dashboard 数据库配置 =============
@@ -169,6 +183,9 @@ class TradingConfig(BaseSettings):
     shadow_run_min_trades: int = Field(
         default=10, description="影子运行最少交易数"
     )
+    redis_url: str = Field(
+        default="redis://localhost:6379", description="Redis 连接 URL"
+    )
 
     # ============= 日志配置 =============
     log_level: str = Field(default="INFO")
@@ -186,7 +203,7 @@ class TradingConfig(BaseSettings):
     @classmethod
     def validate_provider(cls, v: str) -> str:
         """验证 Provider 类型"""
-        valid_providers = ["openrouter", "deepseek", "glm", "gemini"]
+        valid_providers = ["openrouter", "deepseek", "glm", "gemini", "qwen"]
         if v.lower() not in valid_providers:
             raise ValueError(f"无效的 LLM Provider: {v}. 支持的类型: {valid_providers}")
         return v.lower()
