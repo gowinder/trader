@@ -252,12 +252,57 @@ class BacktestRunner:
                     else:
                         signal_filter.record_trade(signal.action, current_time)
 
+            # Calculate default stop_loss and take_profit if not provided
+            stop_loss = signal.stop_loss
+            take_profit = signal.take_profit
+            entry_price = signal.entry_price
+
+            if action in ["open_long", "open_short"]:
+                current_price = df.iloc[i]["close"]
+
+                # Default entry price
+                if entry_price is None:
+                    entry_price = current_price
+
+                # Calculate ATR for default stop/tp
+                if "atr" in window_df.columns:
+                    atr = window_df["atr"].iloc[-1]
+                else:
+                    # Fallback: use recent high-low range as ATR proxy
+                    atr = (window_df["high"] - window_df["low"]).tail(14).mean()
+
+                if atr and atr > 0:
+                    if stop_loss is None:
+                        if "long" in action:
+                            stop_loss = current_price - (2.0 * atr)
+                        else:
+                            stop_loss = current_price + (2.0 * atr)
+
+                    if take_profit is None:
+                        if "long" in action:
+                            take_profit = current_price + (3.0 * atr)
+                        else:
+                            take_profit = current_price - (3.0 * atr)
+                else:
+                    # Fallback to percentage-based
+                    if stop_loss is None:
+                        if "long" in action:
+                            stop_loss = current_price * 0.98  # 2% stop
+                        else:
+                            stop_loss = current_price * 1.02
+
+                    if take_profit is None:
+                        if "long" in action:
+                            take_profit = current_price * 1.03  # 3% TP
+                        else:
+                            take_profit = current_price * 0.97
+
             signals.append({
                 "action": action,
                 "confidence": signal.confidence,
-                "entry_price": signal.entry_price,
-                "stop_loss": signal.stop_loss,
-                "take_profit": signal.take_profit,
+                "entry_price": entry_price,
+                "stop_loss": stop_loss,
+                "take_profit": take_profit,
             })
 
         return pd.DataFrame(signals)
