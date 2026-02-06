@@ -406,3 +406,464 @@ class DecisionPersistenceService:
             json.dumps(details) if details else None,
             ip_address,
         )
+
+    # ==================== 回测持久化 ====================
+
+    async def create_backtest(
+        self,
+        mode: str,
+        symbol: Optional[str],
+        start_date: str,
+        end_date: str,
+        initial_capital: float,
+    ) -> UUID:
+        """创建回测记录
+
+        Args:
+            mode: 回测模式 (single/multi)
+            symbol: 交易对 (单币种模式)
+            start_date: 开始日期 YYYY-MM-DD
+            end_date: 结束日期 YYYY-MM-DD
+            initial_capital: 初始资金
+
+        Returns:
+            回测 ID
+        """
+        from datetime import date as date_type
+
+        # 转换字符串为 date 对象
+        if isinstance(start_date, str):
+            start_date = date_type.fromisoformat(start_date)
+        if isinstance(end_date, str):
+            end_date = date_type.fromisoformat(end_date)
+
+        backtest_id = await self.db.fetchval(
+            """
+            INSERT INTO backtests (
+                mode, symbol, start_date, end_date,
+                initial_capital, status, progress
+            ) VALUES (
+                $1, $2, $3, $4, $5, 'running', 0
+            ) RETURNING id
+            """,
+            mode,
+            symbol,
+            start_date,
+            end_date,
+            initial_capital,
+        )
+        logger.info(f"回测已创建: {backtest_id}")
+        return backtest_id
+
+    async def update_backtest_progress(
+        self, backtest_id: UUID, progress: int
+    ) -> None:
+        """更新回测进度
+
+        Args:
+            backtest_id: 回测 ID
+            progress: 进度 (0-100)
+        """
+        await self.db.execute(
+            "UPDATE backtests SET progress = $1 WHERE id = $2",
+            progress,
+            backtest_id,
+        )
+
+    async def complete_backtest(
+        self,
+        backtest_id: UUID,
+        final_capital: float,
+        total_pnl: float,
+        total_trades: int,
+        winning_trades: int,
+        max_drawdown: float,
+        sharpe_ratio: float,
+        symbol_results: Optional[dict] = None,
+    ) -> None:
+        """完成回测并保存结果
+
+        Args:
+            backtest_id: 回测 ID
+            final_capital: 最终资金
+            total_pnl: 总盈亏
+            total_trades: 总交易数
+            winning_trades: 盈利交易数
+            max_drawdown: 最大回撤
+            sharpe_ratio: 夏普比率
+            symbol_results: 各交易对结果
+        """
+        await self.db.execute(
+            """
+            UPDATE backtests SET
+                status = 'completed',
+                progress = 100,
+                final_capital = $1,
+                total_pnl = $2,
+                total_trades = $3,
+                winning_trades = $4,
+                max_drawdown = $5,
+                sharpe_ratio = $6,
+                symbol_results = $7,
+                completed_at = NOW()
+            WHERE id = $8
+            """,
+            final_capital,
+            total_pnl,
+            total_trades,
+            winning_trades,
+            max_drawdown,
+            sharpe_ratio,
+            json.dumps(symbol_results) if symbol_results else None,
+            backtest_id,
+        )
+        logger.info(f"回测已完成: {backtest_id}, pnl={total_pnl}")
+
+    async def fail_backtest(
+        self, backtest_id: UUID, error_message: str
+    ) -> None:
+        """标记回测失败
+
+        Args:
+            backtest_id: 回测 ID
+            error_message: 错误信息
+        """
+        await self.db.execute(
+            """
+            UPDATE backtests SET
+                status = 'failed',
+                error_message = $1
+            WHERE id = $2
+            """,
+            error_message,
+            backtest_id,
+        )
+        logger.error(f"回测失败: {backtest_id}, error={error_message}")
+
+    async def save_backtest_trade(
+        self,
+        backtest_id: UUID,
+        symbol: str,
+        side: str,
+        entry_time: datetime,
+        entry_price: float,
+        exit_time: Optional[datetime],
+        exit_price: Optional[float],
+        pnl: Optional[float],
+        pnl_percent: Optional[float],
+        decision_snapshot: Optional[dict] = None,
+    ) -> UUID:
+        """保存回测交易记录
+
+        Args:
+            backtest_id: 回测 ID
+            symbol: 交易对
+            side: 方向 (long/short)
+            entry_time: 入场时间
+            entry_price: 入场价格
+            exit_time: 出场时间
+            exit_price: 出场价格
+            pnl: 盈亏
+            pnl_percent: 盈亏百分比
+            decision_snapshot: 决策快照
+
+        Returns:
+            交易记录 ID
+        """
+        trade_id = await self.db.fetchval(
+            """
+            INSERT INTO backtest_trades (
+                backtest_id, symbol, side, entry_time, entry_price,
+                exit_time, exit_price, pnl, pnl_percent, decision_snapshot
+            ) VALUES (
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+            ) RETURNING id
+            """,
+            backtest_id,
+            symbol,
+            side,
+            entry_time,
+            entry_price,
+            exit_time,
+            exit_price,
+            pnl,
+            pnl_percent,
+            json.dumps(decision_snapshot) if decision_snapshot else None,
+        )
+        return trade_id
+
+    async def save_backtest_equity(
+        self,
+        backtest_id: UUID,
+        timestamp: datetime,
+        total_equity: float,
+        symbol_equity: Optional[dict] = None,
+    ) -> None:
+        """保存回测权益曲线数据点
+
+        Args:
+            backtest_id: 回测 ID
+            timestamp: 时间戳
+            total_equity: 总权益
+            symbol_equity: 各交易对权益
+        """
+        await self.db.execute(
+            """
+            INSERT INTO backtest_equity (
+                backtest_id, timestamp, total_equity, symbol_equity
+            ) VALUES ($1, $2, $3, $4)
+            """,
+            backtest_id,
+            timestamp,
+            total_equity,
+            json.dumps(symbol_equity) if symbol_equity else None,
+        )
+
+    # ==================== LLM 使用记录 ====================
+
+    async def record_llm_usage(
+        self,
+        provider: str,
+        model: str,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+        total_tokens: int = 0,
+        cost_usd: float = 0.0,
+        latency_ms: int = 0,
+        success: bool = True,
+        error_message: Optional[str] = None,
+        decision_id: Optional[UUID] = None,
+    ) -> UUID:
+        """记录 LLM 调用
+
+        Args:
+            provider: LLM 提供商 (openrouter, codex, gemini, qwen)
+            model: 模型名称
+            input_tokens: 输入 token 数
+            output_tokens: 输出 token 数
+            total_tokens: 总 token 数
+            cost_usd: 费用（美元）
+            latency_ms: 延迟（毫秒）
+            success: 是否成功
+            error_message: 错误信息
+            decision_id: 关联的决策 ID
+
+        Returns:
+            记录 ID
+        """
+        if total_tokens == 0:
+            total_tokens = input_tokens + output_tokens
+
+        record_id = await self.db.fetchval(
+            """
+            INSERT INTO llm_usage (
+                provider, model, input_tokens, output_tokens, total_tokens,
+                cost_usd, latency_ms, success, error_message, decision_id
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            RETURNING id
+            """,
+            provider,
+            model,
+            input_tokens,
+            output_tokens,
+            total_tokens,
+            cost_usd,
+            latency_ms,
+            success,
+            error_message,
+            decision_id,
+        )
+        logger.debug(
+            f"Recorded LLM usage: {provider}/{model} "
+            f"tokens={total_tokens} cost=${cost_usd:.6f}"
+        )
+        return record_id
+
+    async def get_llm_usage_stats(
+        self,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+    ) -> dict:
+        """获取 LLM 使用统计
+
+        Args:
+            start_time: 开始时间
+            end_time: 结束时间
+
+        Returns:
+            统计数据
+        """
+        params = []
+        where_parts = []
+
+        if start_time:
+            where_parts.append(f"created_at >= ${len(params) + 1}")
+            params.append(start_time)
+        if end_time:
+            where_parts.append(f"created_at <= ${len(params) + 1}")
+            params.append(end_time)
+
+        where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
+
+        # 总体统计
+        row = await self.db.fetchrow(
+            f"""
+            SELECT
+                COUNT(*) as total_calls,
+                COALESCE(SUM(total_tokens), 0) as total_tokens,
+                COALESCE(SUM(cost_usd), 0) as total_cost_usd,
+                COALESCE(AVG(CASE WHEN success THEN 1.0 ELSE 0.0 END), 0) as success_rate,
+                COALESCE(AVG(latency_ms), 0) as avg_latency_ms
+            FROM llm_usage
+            {where_clause}
+            """,
+            *params,
+        )
+
+        # 今日费用
+        today = datetime.now().date()
+        today_cost = await self.db.fetchval(
+            """
+            SELECT COALESCE(SUM(cost_usd), 0)
+            FROM llm_usage
+            WHERE DATE(created_at) = $1
+            """,
+            today,
+        )
+
+        # 按 provider 统计
+        provider_rows = await self.db.fetch(
+            f"""
+            SELECT
+                provider,
+                COUNT(*) as calls,
+                COALESCE(SUM(total_tokens), 0) as tokens,
+                COALESCE(SUM(cost_usd), 0) as cost_usd
+            FROM llm_usage
+            {where_clause}
+            GROUP BY provider
+            """,
+            *params,
+        )
+
+        by_provider = {}
+        for r in provider_rows:
+            by_provider[r["provider"]] = {
+                "calls": r["calls"],
+                "tokens": r["tokens"],
+                "cost_usd": float(r["cost_usd"]),
+            }
+
+        return {
+            "total_calls": row["total_calls"],
+            "total_tokens": row["total_tokens"],
+            "total_cost_usd": float(row["total_cost_usd"]),
+            "today_cost_usd": float(today_cost),
+            "success_rate": float(row["success_rate"]) * 100,
+            "avg_latency_ms": float(row["avg_latency_ms"]),
+            "by_provider": by_provider,
+        }
+
+    async def get_llm_usage_records(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        provider: Optional[str] = None,
+    ) -> dict:
+        """获取 LLM 使用记录列表
+
+        Args:
+            limit: 返回数量
+            offset: 偏移量
+            provider: 按 provider 筛选
+
+        Returns:
+            记录列表和总数
+        """
+        params = []
+        where_clause = ""
+
+        if provider:
+            where_clause = "WHERE provider = $1"
+            params.append(provider)
+
+        # 获取记录
+        rows = await self.db.fetch(
+            f"""
+            SELECT
+                id, created_at, provider, model, input_tokens, output_tokens,
+                total_tokens, cost_usd, latency_ms, success, error_message
+            FROM llm_usage
+            {where_clause}
+            ORDER BY created_at DESC
+            LIMIT ${len(params) + 1} OFFSET ${len(params) + 2}
+            """,
+            *params,
+            limit,
+            offset,
+        )
+
+        # 获取总数
+        total = await self.db.fetchval(
+            f"SELECT COUNT(*) FROM llm_usage {where_clause}",
+            *params,
+        )
+
+        records = [
+            {
+                "id": str(r["id"]),
+                "timestamp": r["created_at"].isoformat(),
+                "provider": r["provider"],
+                "model": r["model"],
+                "input_tokens": r["input_tokens"],
+                "output_tokens": r["output_tokens"],
+                "total_tokens": r["total_tokens"],
+                "cost_usd": float(r["cost_usd"]),
+                "latency_ms": r["latency_ms"],
+                "success": r["success"],
+                "error_message": r["error_message"],
+            }
+            for r in rows
+        ]
+
+        return {
+            "records": records,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+        }
+
+    async def get_llm_daily_stats(self, days: int = 30) -> list:
+        """获取每日 LLM 使用统计
+
+        Args:
+            days: 天数
+
+        Returns:
+            每日统计列表
+        """
+        rows = await self.db.fetch(
+            """
+            SELECT
+                DATE(created_at) as date,
+                provider,
+                COUNT(*) as calls,
+                COALESCE(SUM(total_tokens), 0) as tokens,
+                COALESCE(SUM(cost_usd), 0) as cost_usd
+            FROM llm_usage
+            WHERE created_at >= NOW() - INTERVAL '%s days'
+            GROUP BY DATE(created_at), provider
+            ORDER BY date
+            """ % days,
+        )
+
+        return [
+            {
+                "date": str(r["date"]),
+                "provider": r["provider"],
+                "calls": r["calls"],
+                "tokens": r["tokens"],
+                "cost_usd": float(r["cost_usd"]),
+            }
+            for r in rows
+        ]
