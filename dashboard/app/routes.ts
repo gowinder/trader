@@ -6,6 +6,10 @@ export default [
   route("logout", "routes/logout.tsx"),
   route("api/logs/stream", "routes/api.logs.stream.ts"),
   route("api/llm-usage", "routes/api.llm-usage.ts"),
+  route("api/backtest-config", "routes/api.backtest-config.ts"),
+  route("api/backtest-trigger", "routes/api.backtest-trigger.ts"),
+  route("api/trading-config", "routes/api.trading-config.ts"),
+  route("api/trading-trigger", "routes/api.trading-trigger.ts"),
   route("dashboard", "routes/dashboard.tsx", [
     index("routes/dashboard._index.tsx"),
     route("chart", "routes/dashboard.chart.tsx"),
@@ -15,6 +19,7 @@ export default [
     route("analytics", "routes/dashboard.analytics.tsx"),
     route("llm-usage", "routes/dashboard.llm-usage.tsx"),
     route("backtest", "routes/dashboard.backtest.tsx"),
+    route("backtest-settings", "routes/dashboard.backtest-settings.tsx"),
     route("logs", "routes/dashboard.logs.tsx"),
     route("alerts", "routes/dashboard.alerts.tsx"),
     route("control", "routes/dashboard.control.tsx"),

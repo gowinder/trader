@@ -1,11 +1,12 @@
 import type { Route } from "./+types/dashboard._index";
 import { StatCard } from "~/components/common/StatCard";
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
-import { formatUSD, cn } from "~/lib/utils";
-import { TrendingUp, TrendingDown, Target, Activity, Clock } from "lucide-react";
+import { formatUSD, formatPercent, cn } from "~/lib/utils";
+import { TrendingUp, TrendingDown, Target, Activity, Clock, Wallet } from "lucide-react";
 import { db } from "db";
-import { decisions, dailyStats } from "db/schema";
+import { decisions, dailyStats, positionHistory } from "db/schema";
 import { desc, sql, eq, gte } from "drizzle-orm";
+import { createClient } from "redis";
 import {
   PieChart,
   Pie,
@@ -176,14 +177,50 @@ export async function loader(_args: Route.LoaderArgs) {
       ? Math.round((stats.winningTrades / stats.totalTrades) * 100)
       : 0;
 
+  // 获取累计已实现 PNL（从 positionHistory）
+  const totalRealizedPnlResult = await db
+    .select({
+      totalPnl: sql<number>`COALESCE(SUM(${positionHistory.realizedPnl}::numeric), 0)`,
+      totalTrades: sql<number>`count(*)`,
+      winningTrades: sql<number>`count(*) FILTER (WHERE ${positionHistory.realizedPnl}::numeric > 0)`,
+    })
+    .from(positionHistory)
+    .where(eq(positionHistory.status, "closed"));
+
+  const totalRealizedStats = totalRealizedPnlResult[0] || { totalPnl: 0, totalTrades: 0, winningTrades: 0 };
+  const totalWinRate = Number(totalRealizedStats.totalTrades) > 0
+    ? Math.round((Number(totalRealizedStats.winningTrades) / Number(totalRealizedStats.totalTrades)) * 100)
+    : 0;
+
+  // 获取实时账户状态（从 Redis）
+  let accountState = null;
+  try {
+    const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
+    const client = createClient({ url: redisUrl });
+    await client.connect();
+    const stateJson = await client.get("trading:account_state");
+    await client.disconnect();
+    if (stateJson) {
+      accountState = JSON.parse(stateJson);
+    }
+  } catch (e) {
+    console.error("Failed to fetch account state from Redis:", e);
+  }
+
   return {
     todayStats: {
       pnl: Number(stats.totalPnl) || 0,
-      pnlPct: 0, // 需要计算
+      pnlPct: 0,
       trades: stats.totalTrades,
       winningTrades: stats.winningTrades,
       winRate,
     },
+    // 累计已实现 PNL
+    totalRealizedPnl: Number(totalRealizedStats.totalPnl) || 0,
+    totalTrades: Number(totalRealizedStats.totalTrades) || 0,
+    totalWinRate,
+    // 实时账户状态（包含未实现 PNL）
+    accountState,
     totalDecisions,
     todayDecisions,
     recentDecisions: recentDecisionsData.map((d) => ({
@@ -291,12 +328,53 @@ export default function DashboardIndex({ loaderData }: Route.ComponentProps) {
     confidenceTrend,
     llmDistribution,
     longShortTrend,
+    totalRealizedPnl,
+    totalTrades,
+    totalWinRate,
+    accountState,
   } = loaderData;
+
+  // 从账户状态中提取未实现 PNL
+  const unrealizedPnl = accountState?.account?.unrealized_pnl ?? 0;
+  const totalEquity = accountState?.account?.total_equity ?? 0;
+
+  // 当前持仓
+  const positions = accountState?.positions ?? {};
+
+  // 总 PNL = 已实现 + 未实现
+  const totalPnl = totalRealizedPnl + unrealizedPnl;
 
   return (
     <div className="space-y-6">
-      {/* Stats Grid */}
+      {/* PNL 汇总卡片 */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        <StatCard
+          label="累计已实现盈亏"
+          value={formatUSD(totalRealizedPnl)}
+          variant={totalRealizedPnl >= 0 ? "profit" : "loss"}
+          icon={totalRealizedPnl >= 0 ? TrendingUp : TrendingDown}
+        />
+        <StatCard
+          label="未实现盈亏"
+          value={formatUSD(unrealizedPnl)}
+          variant={unrealizedPnl >= 0 ? "profit" : "loss"}
+          icon={unrealizedPnl >= 0 ? TrendingUp : TrendingDown}
+        />
+        <StatCard
+          label="总盈亏"
+          value={formatUSD(totalPnl)}
+          variant={totalPnl >= 0 ? "profit" : "loss"}
+          icon={totalPnl >= 0 ? TrendingUp : TrendingDown}
+        />
+        <StatCard
+          label="账户权益"
+          value={totalEquity > 0 ? formatUSD(totalEquity) : "离线"}
+          icon={Wallet}
+        />
+      </div>
+
+      {/* Stats Grid */}
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
         <StatCard
           label="总决策数"
           value={`${totalDecisions}`}
@@ -308,8 +386,13 @@ export default function DashboardIndex({ loaderData }: Route.ComponentProps) {
           icon={Clock}
         />
         <StatCard
-          label="今日交易"
-          value={`${todayStats.trades} 笔`}
+          label="累计交易"
+          value={`${totalTrades} 笔`}
+          icon={Target}
+        />
+        <StatCard
+          label="历史胜率"
+          value={`${totalWinRate}%`}
           icon={Target}
         />
         <StatCard
@@ -666,9 +749,56 @@ export default function DashboardIndex({ loaderData }: Route.ComponentProps) {
             <CardTitle className="text-base">当前持仓</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="flex h-32 items-center justify-center text-muted-foreground">
-              暂无持仓数据（需要连接交易所 API）
-            </div>
+            {Object.keys(positions).length > 0 ? (
+              <div className="space-y-3">
+                {Object.entries(positions).map(([symbol, pos]: [string, any]) => (
+                  pos && (
+                    <div key={symbol} className="rounded-md border p-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="font-medium">{symbol}</span>
+                        <span
+                          className={cn(
+                            "rounded px-2 py-0.5 text-xs font-medium",
+                            pos.side === "long"
+                              ? "bg-profit/20 text-profit"
+                              : "bg-loss/20 text-loss"
+                          )}
+                        >
+                          {pos.side === "long" ? "做多" : "做空"} {pos.leverage}x
+                        </span>
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 text-sm">
+                        <div>
+                          <span className="text-muted-foreground">数量: </span>
+                          <span className="tabular-nums">{pos.size?.toFixed(4)}</span>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">入场价: </span>
+                          <span className="tabular-nums">{formatUSD(pos.entry_price)}</span>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">标记价: </span>
+                          <span className="tabular-nums">{formatUSD(pos.mark_price)}</span>
+                        </div>
+                        <div>
+                          <span className="text-muted-foreground">未实现盈亏: </span>
+                          <span className={cn(
+                            "tabular-nums font-medium",
+                            pos.unrealized_pnl >= 0 ? "text-profit" : "text-loss"
+                          )}>
+                            {formatUSD(pos.unrealized_pnl)} ({formatPercent(pos.roi)})
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+                  )
+                ))}
+              </div>
+            ) : (
+              <div className="flex h-32 items-center justify-center text-muted-foreground">
+                {accountState ? "暂无持仓" : "交易系统离线"}
+              </div>
+            )}
           </CardContent>
         </Card>
 

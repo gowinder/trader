@@ -1,5 +1,4 @@
-import { spawn } from "child_process";
-import path from "path";
+import postgres from "postgres";
 
 interface UsageStats {
   total_calls: number;
@@ -11,129 +10,118 @@ interface UsageStats {
   by_provider: Record<string, { calls: number; tokens: number; cost_usd: number }>;
 }
 
-function getDbPath(): string {
-  return (
-    process.env.LLM_USAGE_DB ||
-    path.resolve(process.cwd(), "..", "data", "llm_usage.db")
-  );
-}
-
-async function runSqlite(dbPath: string, query: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const sqlite = spawn("sqlite3", ["-json", dbPath, query]);
-    let stdout = "";
-    let stderr = "";
-
-    sqlite.stdout.on("data", (data) => {
-      stdout += data.toString();
-    });
-
-    sqlite.stderr.on("data", (data) => {
-      stderr += data.toString();
-    });
-
-    sqlite.on("close", (code) => {
-      if (code === 0) {
-        resolve(stdout);
-      } else {
-        reject(new Error(stderr || `sqlite3 exited with code ${code}`));
-      }
-    });
-
-    sqlite.on("error", (err) => {
-      reject(err);
-    });
-  });
+function getDb() {
+  const dbUrl = process.env.DATABASE_URL;
+  if (!dbUrl) {
+    return null;
+  }
+  return postgres(dbUrl);
 }
 
 export async function loader({ request }: { request: Request }) {
   const url = new URL(request.url);
   const action = url.searchParams.get("action") || "stats";
-  const dbPath = getDbPath();
+
+  const sql = getDb();
+  if (!sql) {
+    // 返回空数据而不是错误
+    if (action === "stats") {
+      return Response.json({
+        total_calls: 0,
+        total_tokens: 0,
+        total_cost_usd: 0,
+        today_cost_usd: 0,
+        success_rate: 0,
+        avg_latency_ms: 0,
+        by_provider: {},
+      });
+    } else if (action === "daily") {
+      return Response.json([]);
+    } else if (action === "records") {
+      return Response.json({ records: [], total: 0, limit: 100, offset: 0 });
+    }
+    return Response.json({ error: "Database not configured" }, { status: 404 });
+  }
 
   try {
     switch (action) {
       case "stats":
-        return await handleStats(dbPath);
+        return await handleStats(sql);
       case "daily":
         const days = parseInt(url.searchParams.get("days") || "30");
-        return await handleDailyStats(dbPath, days);
+        return await handleDailyStats(sql, days);
       case "records":
         const limit = parseInt(url.searchParams.get("limit") || "100");
         const offset = parseInt(url.searchParams.get("offset") || "0");
         const provider = url.searchParams.get("provider") || undefined;
-        return await handleRecords(dbPath, limit, offset, provider);
+        return await handleRecords(sql, limit, offset, provider);
       default:
-        return new Response(
-          JSON.stringify({ error: "Unknown action" }),
-          { status: 400, headers: { "Content-Type": "application/json" } }
-        );
+        return Response.json({ error: "Unknown action" }, { status: 400 });
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
-    return new Response(
-      JSON.stringify({ error: message }),
-      { status: 500, headers: { "Content-Type": "application/json" } }
-    );
+    return Response.json({ error: message }, { status: 500 });
+  } finally {
+    await sql.end();
   }
 }
 
-async function handleStats(dbPath: string): Promise<Response> {
+async function handleStats(sql: postgres.Sql): Promise<Response> {
   // 总体统计
-  const totalStatsJson = await runSqlite(
-    dbPath,
-    `SELECT
+  const totalStatsResult = await sql`
+    SELECT
       COUNT(*) as total_calls,
       COALESCE(SUM(total_tokens), 0) as total_tokens,
       COALESCE(SUM(cost_usd), 0) as total_cost_usd,
-      COALESCE(AVG(CASE WHEN success = 1 THEN 1.0 ELSE 0.0 END), 0) as success_rate,
+      COALESCE(AVG(CASE WHEN success THEN 1.0 ELSE 0.0 END), 0) as success_rate,
       COALESCE(AVG(latency_ms), 0) as avg_latency_ms
-    FROM llm_usage`
-  );
+    FROM llm_usage
+  `;
 
-  const totalStats = JSON.parse(totalStatsJson || "[{}]")[0] || {
-    total_calls: 0,
-    total_tokens: 0,
-    total_cost_usd: 0,
-    success_rate: 0,
-    avg_latency_ms: 0,
-  };
+  const totalStats = totalStatsResult.length > 0
+    ? {
+        total_calls: Number(totalStatsResult[0].total_calls),
+        total_tokens: Number(totalStatsResult[0].total_tokens),
+        total_cost_usd: Number(totalStatsResult[0].total_cost_usd),
+        success_rate: Number(totalStatsResult[0].success_rate),
+        avg_latency_ms: Number(totalStatsResult[0].avg_latency_ms),
+      }
+    : {
+        total_calls: 0,
+        total_tokens: 0,
+        total_cost_usd: 0,
+        success_rate: 0,
+        avg_latency_ms: 0,
+      };
 
   // 今日费用
-  const today = new Date().toISOString().split("T")[0];
-  const todayStatsJson = await runSqlite(
-    dbPath,
-    `SELECT COALESCE(SUM(cost_usd), 0) as today_cost_usd
+  const todayStatsResult = await sql`
+    SELECT COALESCE(SUM(cost_usd), 0) as today_cost_usd
     FROM llm_usage
-    WHERE DATE(timestamp) = '${today}'`
-  );
-  const todayStats = JSON.parse(todayStatsJson || "[{}]")[0] || { today_cost_usd: 0 };
+    WHERE DATE(created_at) = CURRENT_DATE
+  `;
+
+  const todayStats = todayStatsResult.length > 0
+    ? { today_cost_usd: Number(todayStatsResult[0].today_cost_usd) }
+    : { today_cost_usd: 0 };
 
   // 按 provider 统计
-  const byProviderJson = await runSqlite(
-    dbPath,
-    `SELECT
+  const byProviderResult = await sql`
+    SELECT
       provider,
       COUNT(*) as calls,
       COALESCE(SUM(total_tokens), 0) as tokens,
       COALESCE(SUM(cost_usd), 0) as cost_usd
     FROM llm_usage
-    GROUP BY provider`
-  );
-
-  const byProviderRows = JSON.parse(byProviderJson || "[]") as Array<{
-    provider: string;
-    calls: number;
-    tokens: number;
-    cost_usd: number;
-  }>;
+    GROUP BY provider
+  `;
 
   const by_provider: Record<string, { calls: number; tokens: number; cost_usd: number }> = {};
-  for (const row of byProviderRows) {
+  for (const row of byProviderResult) {
     by_provider[row.provider] = {
-      calls: row.calls,
-      tokens: row.tokens,
-      cost_usd: row.cost_usd,
+      calls: Number(row.calls),
+      tokens: Number(row.tokens),
+      cost_usd: Number(row.cost_usd),
     };
   }
 
@@ -147,77 +135,89 @@ async function handleStats(dbPath: string): Promise<Response> {
     by_provider,
   };
 
-  return new Response(JSON.stringify(stats), {
-    headers: { "Content-Type": "application/json" },
-  });
+  return Response.json(stats);
 }
 
-async function handleDailyStats(dbPath: string, days: number): Promise<Response> {
-  const startDate = new Date();
-  startDate.setDate(startDate.getDate() - days);
-  const startDateStr = startDate.toISOString();
-
-  const rowsJson = await runSqlite(
-    dbPath,
-    `SELECT
-      DATE(timestamp) as date,
+async function handleDailyStats(sql: postgres.Sql, days: number): Promise<Response> {
+  const result = await sql`
+    SELECT
+      DATE(created_at) as date,
       provider,
       COUNT(*) as calls,
       COALESCE(SUM(total_tokens), 0) as tokens,
       COALESCE(SUM(cost_usd), 0) as cost_usd
     FROM llm_usage
-    WHERE timestamp >= '${startDateStr}'
-    GROUP BY DATE(timestamp), provider
-    ORDER BY date`
-  );
+    WHERE created_at >= NOW() - INTERVAL '${days} days'
+    GROUP BY DATE(created_at), provider
+    ORDER BY date
+  `;
 
-  const rows = JSON.parse(rowsJson || "[]");
+  const rows = result.map((row) => ({
+    date: row.date,
+    provider: row.provider,
+    calls: Number(row.calls),
+    tokens: Number(row.tokens),
+    cost_usd: Number(row.cost_usd),
+  }));
 
-  return new Response(JSON.stringify(rows), {
-    headers: { "Content-Type": "application/json" },
-  });
+  return Response.json(rows);
 }
 
 async function handleRecords(
-  dbPath: string,
+  sql: postgres.Sql,
   limit: number,
   offset: number,
   provider?: string
 ): Promise<Response> {
-  let whereClause = "";
+  let result;
   if (provider) {
-    whereClause = `WHERE provider = '${provider}'`;
+    result = await sql`
+      SELECT
+        id, created_at, provider, model, input_tokens, output_tokens,
+        total_tokens, cost_usd, latency_ms, success, error_message
+      FROM llm_usage
+      WHERE provider = ${provider}
+      ORDER BY created_at DESC
+      LIMIT ${limit} OFFSET ${offset}
+    `;
+  } else {
+    result = await sql`
+      SELECT
+        id, created_at, provider, model, input_tokens, output_tokens,
+        total_tokens, cost_usd, latency_ms, success, error_message
+      FROM llm_usage
+      ORDER BY created_at DESC
+      LIMIT ${limit} OFFSET ${offset}
+    `;
   }
 
-  const rowsJson = await runSqlite(
-    dbPath,
-    `SELECT
-      id, timestamp, provider, model, input_tokens, output_tokens,
-      total_tokens, cost_usd, latency_ms, success, error_message
-    FROM llm_usage
-    ${whereClause}
-    ORDER BY timestamp DESC
-    LIMIT ${limit} OFFSET ${offset}`
-  );
-
-  const rows = JSON.parse(rowsJson || "[]");
+  const rows = result.map((row) => ({
+    id: row.id,
+    timestamp: row.created_at,
+    provider: row.provider,
+    model: row.model,
+    input_tokens: Number(row.input_tokens),
+    output_tokens: Number(row.output_tokens),
+    total_tokens: Number(row.total_tokens),
+    cost_usd: Number(row.cost_usd),
+    latency_ms: Number(row.latency_ms),
+    success: row.success,
+    error_message: row.error_message,
+  }));
 
   // 获取总数
-  const countJson = await runSqlite(
-    dbPath,
-    `SELECT COUNT(*) as count FROM llm_usage ${whereClause}`
-  );
-  const countResult = JSON.parse(countJson || "[{}]")[0] || { count: 0 };
+  let countResult;
+  if (provider) {
+    countResult = await sql`SELECT COUNT(*) as count FROM llm_usage WHERE provider = ${provider}`;
+  } else {
+    countResult = await sql`SELECT COUNT(*) as count FROM llm_usage`;
+  }
+  const total = Number(countResult[0].count);
 
-  return new Response(
-    JSON.stringify({
-      records: rows,
-      total: countResult.count,
-      limit,
-      offset,
-    }),
-    {
-      headers: { "Content-Type": "application/json" },
-    }
-  );
+  return Response.json({
+    records: rows,
+    total,
+    limit,
+    offset,
+  });
 }

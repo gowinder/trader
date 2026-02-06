@@ -365,6 +365,33 @@ export const alertHistory = pgTable(
   })
 );
 
+// ==================== LLM 使用记录 ====================
+
+export const llmUsage = pgTable(
+  "llm_usage",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+
+    provider: varchar("provider", { length: 30 }).notNull(),
+    model: varchar("model", { length: 100 }).notNull(),
+    inputTokens: integer("input_tokens").default(0),
+    outputTokens: integer("output_tokens").default(0),
+    totalTokens: integer("total_tokens").default(0),
+    costUsd: decimal("cost_usd", { precision: 12, scale: 8 }).default("0"),
+    latencyMs: integer("latency_ms").default(0),
+    success: boolean("success").default(true),
+    errorMessage: text("error_message"),
+
+    // 关联上下文（可选）
+    decisionId: uuid("decision_id").references(() => decisions.id),
+  },
+  (table) => ({
+    timeIdx: index("idx_llm_usage_time").on(table.createdAt),
+    providerIdx: index("idx_llm_usage_provider").on(table.provider),
+  })
+);
+
 // ==================== 系统管理 ====================
 
 export const operationLogs = pgTable("operation_logs", {

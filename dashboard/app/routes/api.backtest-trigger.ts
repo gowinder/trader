@@ -1,6 +1,41 @@
-import type { ActionFunctionArgs } from "react-router";
-import { spawn } from "child_process";
-import path from "path";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+import { createClient } from "redis";
+
+// 查询回测任务状态
+export async function loader({ request }: LoaderFunctionArgs) {
+  const url = new URL(request.url);
+  const taskId = url.searchParams.get("task_id");
+
+  if (!taskId) {
+    return Response.json({ error: "task_id is required" }, { status: 400 });
+  }
+
+  const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
+
+  try {
+    const client = createClient({ url: redisUrl });
+    await client.connect();
+
+    const status = await client.hGetAll(`backtest:status:${taskId}`);
+    await client.disconnect();
+
+    if (!status || Object.keys(status).length === 0) {
+      return Response.json({
+        task_id: taskId,
+        status: "pending",
+        message: "Task is waiting to be processed",
+      });
+    }
+
+    return Response.json({
+      task_id: taskId,
+      ...status,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    return Response.json({ error: message }, { status: 500 });
+  }
+}
 
 export async function action({ request }: ActionFunctionArgs) {
   if (request.method !== "POST") {
@@ -21,37 +56,37 @@ export async function action({ request }: ActionFunctionArgs) {
     return Response.json({ error: "startDate and endDate are required" }, { status: 400 });
   }
 
-  // 构建命令参数 - 使用现有的 run_backtest.py 脚本
-  const args = [
-    "scripts/run_backtest.py",
-    "--symbol", symbol,
-    "--start", startDate,
-    "--end", endDate,
-    "--interval", interval,
-    "--capital", String(capital),
-    "--save-to-db",
-  ];
-
-  // 获取 Python 路径 (容器内或本地)
-  const pythonPath = process.env.PYTHON_PATH || "python";
+  const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
 
   try {
-    // 异步启动回测进程
-    const proc = spawn(pythonPath, args, {
-      cwd: path.resolve(process.cwd(), ".."),
-      detached: true,
-      stdio: "ignore",
-    });
+    // 通过 Redis 队列发送回测任务
+    const client = createClient({ url: redisUrl });
+    await client.connect();
 
-    proc.unref();
+    const taskId = `backtest-${Date.now()}`;
+    const task = {
+      task_id: taskId,
+      type: "backtest",
+      symbol,
+      start_date: startDate,
+      end_date: endDate,
+      interval,
+      capital,
+      created_at: new Date().toISOString(),
+    };
+
+    // 推送到回测任务队列
+    await client.lPush("backtest:tasks", JSON.stringify(task));
+    await client.disconnect();
 
     return Response.json({
       success: true,
-      message: "Backtest started",
-      pid: proc.pid,
+      message: "Backtest task queued",
+      task_id: taskId,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
+    console.error("Failed to queue backtest task:", message);
     return Response.json({ error: message }, { status: 500 });
   }
 }
