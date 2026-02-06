@@ -7,6 +7,8 @@ from .providers import (
     GLMProvider,
     GeminiProvider,
 )
+from .llm_manager import get_llm_manager
+from .usage_tracker import get_usage_tracker
 from ..config import config
 
 
@@ -72,12 +74,21 @@ def create_llm_provider() -> BaseLLMProvider:
         raise ValueError(f"不支持的 LLM Provider: {provider}")
 
 
-# 为了向后兼容，保留 LLMClient 别名
+# 使用 LLMManager 实现负载均衡
 class LLMClient:
-    """LLM 客户端 (向后兼容)"""
+    """LLM 客户端 - 使用 LLMManager 实现多 Provider 负载均衡"""
 
     def __init__(self):
-        self._provider = create_llm_provider()
+        self._manager = get_llm_manager()
+        self._tracker = get_usage_tracker()
+        self._manager.set_usage_tracker(self._tracker)
+        self._started = False
+
+    async def _ensure_started(self):
+        """确保 manager 已启动"""
+        if not self._started:
+            await self._manager.start()
+            self._started = True
 
     async def chat(
         self,
@@ -86,11 +97,18 @@ class LLMClient:
         max_tokens=2000,
         temperature=0.3,
     ):
-        return await self._provider.chat(messages, schema, max_tokens, temperature)
+        await self._ensure_started()
+        return await self._manager.chat(
+            messages=messages,
+            schema=schema,
+            max_tokens=max_tokens,
+            temperature=temperature,
+        )
 
     async def close(self):
-        await self._provider.close()
+        await self._manager.close()
+        await self._tracker.close()
 
     @property
     def provider_name(self) -> str:
-        return self._provider.provider_name
+        return "llm_manager"

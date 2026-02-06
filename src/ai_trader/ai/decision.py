@@ -269,7 +269,55 @@ class DecisionEngine:
             max_tokens=1000,
         )
 
-        return TradingDecision(**response)
+        decision = TradingDecision(**response)
+
+        # Fill in missing price fields based on current price and ATR
+        if decision.action in ["open_long", "open_short", "add_long", "add_short"]:
+            current_price = market.current_price
+
+            # Entry price: use current price if not set
+            if decision.entry_price is None:
+                decision.entry_price = current_price
+
+            # Calculate stop loss and take profit based on ATR if not set
+            if atr > 0:
+                # Stop loss: 2x ATR from entry
+                if decision.stop_loss_price is None:
+                    if "long" in decision.action:
+                        decision.stop_loss_price = current_price - (2.0 * atr)
+                    else:  # short
+                        decision.stop_loss_price = current_price + (2.0 * atr)
+
+                # Take profit: 3x ATR from entry (1.5:1 risk-reward)
+                if decision.take_profit_price is None:
+                    if "long" in decision.action:
+                        decision.take_profit_price = current_price + (3.0 * atr)
+                    else:  # short
+                        decision.take_profit_price = current_price - (3.0 * atr)
+            else:
+                # Fallback to percentage-based if ATR not available
+                stop_pct = config.stop_loss_percent / 100.0
+                tp_pct = config.take_profit_percent / 100.0
+
+                if decision.stop_loss_price is None:
+                    if "long" in decision.action:
+                        decision.stop_loss_price = current_price * (1 - stop_pct)
+                    else:
+                        decision.stop_loss_price = current_price * (1 + stop_pct)
+
+                if decision.take_profit_price is None:
+                    if "long" in decision.action:
+                        decision.take_profit_price = current_price * (1 + tp_pct)
+                    else:
+                        decision.take_profit_price = current_price * (1 - tp_pct)
+
+            logger.info(
+                f"Decision prices: entry={decision.entry_price:.2f}, "
+                f"stop={decision.stop_loss_price:.2f}, "
+                f"tp={decision.take_profit_price:.2f}"
+            )
+
+        return decision
 
 
 class HybridDecisionEngine(DecisionEngine):

@@ -171,7 +171,9 @@ class HybridDecisionEngine(DecisionEngine):
         if self.strategy_selector and config.enable_quant_strategies:
             try:
                 # Classify market state
-                df = pd.DataFrame(market_data.klines)
+                # Convert Kline objects to dicts for DataFrame
+                klines_data = [k.model_dump() for k in market_data.klines]
+                df = pd.DataFrame(klines_data)
                 market_state = self.market_classifier.classify(df)
 
                 # Generate quantitative signal
@@ -188,18 +190,13 @@ class HybridDecisionEngine(DecisionEngine):
         sentiment_result: Optional[SentimentResult] = None
         if self.sentiment_analyzer and config.enable_sentiment_analysis:
             try:
-                # Get current price and 24h change
-                current_price = market_data.ticker.last_price
-                # Calculate 24h change if we have enough klines
-                price_change_24h = None
-                if len(market_data.klines) >= 24:
-                    price_24h_ago = market_data.klines[-24]["close"]
-                    price_change_24h = (
-                        (current_price - price_24h_ago) / price_24h_ago * 100
-                    )
+                # Get current price and 24h change from MarketData
+                current_price = market_data.current_price
+                # Use change_24h from market_data if available
+                price_change_24h = market_data.change_24h if market_data.change_24h else None
 
                 sentiment_result = await self.sentiment_analyzer.analyze(
-                    symbol=market_data.ticker.symbol,
+                    symbol=market_data.symbol,
                     current_price=current_price,
                     price_change_24h=price_change_24h,
                 )
@@ -208,7 +205,10 @@ class HybridDecisionEngine(DecisionEngine):
                     logger.info(
                         f"Sentiment: {sentiment_result.score.value}, "
                         f"confidence: {sentiment_result.confidence:.2f}, "
-                        f"news: {sentiment_result.news_count}"
+                        f"news: {sentiment_result.news_count}, "
+                        f"risk_event: {sentiment_result.risk_event}, "
+                        f"extreme_fear: {sentiment_result.extreme_fear}, "
+                        f"extreme_greed: {sentiment_result.extreme_greed}"
                     )
             except Exception as e:
                 logger.error(f"Sentiment analysis failed: {e}")
@@ -332,7 +332,7 @@ class HybridDecisionEngine(DecisionEngine):
         elif "short" in base_decision.action.lower():
             ai_score = -0.5
 
-        ai_confidence = base_decision.confidence
+        ai_confidence = base_decision.confidence / 100.0  # Normalize to 0-1
 
         # Quant signal
         quant_score = 0.0
@@ -350,16 +350,16 @@ class HybridDecisionEngine(DecisionEngine):
             sentiment_adjustment = sentiment_result.get_sentiment_adjustment()
             logger.info(f"Sentiment adjustment: {sentiment_adjustment:+.2f}")
 
-        # Calculate weighted score
-        weighted_score = (
-            ai_score * weights["ai"] * ai_confidence +
-            quant_score * weights["quant"] * quant_confidence
+        # Calculate weighted direction score (decoupled from confidence)
+        weighted_direction = (
+            ai_score * weights["ai"] +
+            quant_score * weights["quant"]
         )
 
         # Apply sentiment adjustment
-        final_score = weighted_score + sentiment_adjustment * weights.get("sentiment", 0.0)
+        final_score = weighted_direction + sentiment_adjustment * weights.get("sentiment", 0.0)
 
-        # Calculate final confidence (average of component confidences, weighted)
+        # Calculate weighted confidence (all in 0-1 scale)
         final_confidence = (
             ai_confidence * weights["ai"] +
             quant_confidence * weights["quant"]
@@ -369,10 +369,12 @@ class HybridDecisionEngine(DecisionEngine):
             final_confidence += sentiment_result.confidence * weights["sentiment"]
 
         # Determine final action
+        SCORE_THRESHOLD = 0.15
+        CONFIDENCE_THRESHOLD = 0.5
         action = "hold"
-        if final_score > 0.2 and final_confidence > 0.5:
+        if final_score > SCORE_THRESHOLD and final_confidence > CONFIDENCE_THRESHOLD:
             action = "open_long"
-        elif final_score < -0.2 and final_confidence > 0.5:
+        elif final_score < -SCORE_THRESHOLD and final_confidence > CONFIDENCE_THRESHOLD:
             action = "open_short"
 
         # Apply sentiment safety checks
@@ -395,7 +397,7 @@ class HybridDecisionEngine(DecisionEngine):
         # Update decision
         decision = base_decision.model_copy(deep=True)
         decision.action = action
-        decision.confidence = final_confidence
+        decision.confidence = final_confidence * 100.0  # Convert back to 0-100 for TradingDecision model
         decision.reasoning += (
             f"\n\nHybrid Decision Fusion:\n"
             f"- AI score: {ai_score:+.2f} (confidence: {ai_confidence:.2f}, weight: {weights['ai']:.2f})\n"

@@ -47,14 +47,32 @@ class RetryConfig:
 class LLMManager:
     """LLM 统一管理器"""
 
-    DEFAULT_PROVIDERS = [
-        # 免费优先，qwen 为默认
-        ProviderConfig(name="qwen", priority=1, cost_tier="free", weight=4),
-        ProviderConfig(name="gemini", priority=1, cost_tier="free", weight=3),
-        ProviderConfig(name="codex", priority=1, cost_tier="free", weight=3),
-        # 付费备用
-        ProviderConfig(name="openrouter", priority=2, cost_tier="paid", weight=1),
-    ]
+    @staticmethod
+    def _get_default_providers() -> List[ProviderConfig]:
+        """根据环境配置动态生成 provider 列表
+
+        如果配置了 LLM_PROVIDER=openrouter，优先使用 openrouter
+        避免在 Docker 容器中无 CLI 工具时失败
+        """
+        configured_provider = config.llm_provider.lower()
+
+        if configured_provider == "openrouter":
+            # OpenRouter 配置时，将 openrouter 标记为 free 确保 COST_FIRST 策略优先使用
+            logger.info("LLM_PROVIDER=openrouter, prioritizing OpenRouter")
+            return [
+                ProviderConfig(name="openrouter", priority=1, cost_tier="free", weight=10),
+                ProviderConfig(name="codex", priority=2, cost_tier="paid", weight=2),
+                ProviderConfig(name="qwen", priority=3, cost_tier="paid", weight=1),
+                ProviderConfig(name="gemini", priority=3, cost_tier="paid", weight=1),
+            ]
+        else:
+            # 默认：免费 CLI 优先
+            return [
+                ProviderConfig(name="qwen", priority=1, cost_tier="free", weight=4),
+                ProviderConfig(name="gemini", priority=1, cost_tier="free", weight=3),
+                ProviderConfig(name="codex", priority=1, cost_tier="free", weight=3),
+                ProviderConfig(name="openrouter", priority=2, cost_tier="paid", weight=1),
+            ]
 
     def __init__(
         self,
@@ -63,7 +81,7 @@ class LLMManager:
         retry_config: Optional[RetryConfig] = None,
     ):
         self.strategy = strategy
-        self.providers_config = providers_config or self.DEFAULT_PROVIDERS.copy()
+        self.providers_config = providers_config or self._get_default_providers()
         self.retry_config = retry_config or RetryConfig()
 
         self._token_manager = get_token_manager()
