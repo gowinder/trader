@@ -57,25 +57,42 @@ class RateLimiter:
         return max(0.0, wait_seconds)
 
 
+# Per-source rate limit configurations for free tier APIs
+# CryptoPanic Developer: 100 req/month ≈ 3 req/day, use 24h window
+# NewsAPI Developer: 100 req/day, use 24h window
+SOURCE_RATE_LIMITS = {
+    "CryptoPanicSource": {
+        "max_requests": 3,  # 100/month ≈ 3/day to be safe
+        "window_seconds": 86400,  # 24 hours
+        "cache_ttl": 28800,  # 8 hours cache
+    },
+    "NewsAPISource": {
+        "max_requests": 4,  # 100/day, use 4/hour to spread out
+        "window_seconds": 3600,  # 1 hour
+        "cache_ttl": 3600,  # 1 hour cache
+    },
+}
+
+
 class SentimentCache:
     """Sentiment analysis cache with TTL and rate limiting
 
     Features:
     - TTL-based cache expiration
-    - Per-source rate limiting
+    - Per-source rate limiting with API-specific limits
     - Automatic cleanup of expired entries
     """
 
     def __init__(
         self,
-        default_ttl: int = 900,  # 15 minutes
-        max_requests_per_hour: int = 100,
+        default_ttl: int = 3600,  # 1 hour (increased for free tier)
+        max_requests_per_hour: int = 4,  # Conservative default
         cleanup_interval: int = 300,  # 5 minutes
     ):
         """Initialize cache
 
         Args:
-            default_ttl: Default TTL in seconds (15 minutes)
+            default_ttl: Default TTL in seconds (1 hour for free tier)
             max_requests_per_hour: Max API requests per hour per source
             cleanup_interval: Cleanup interval in seconds
         """
@@ -85,19 +102,38 @@ class SentimentCache:
         self.max_requests_per_hour = max_requests_per_hour
         self.cleanup_interval = cleanup_interval
         self._cleanup_task: Optional[asyncio.Task] = None
+        # Per-source TTL overrides
+        self.source_ttl: Dict[str, int] = {
+            name: cfg["cache_ttl"] for name, cfg in SOURCE_RATE_LIMITS.items()
+        }
 
     def _get_cache_key(self, source: str, symbol: str) -> str:
         """Generate cache key"""
         return f"{source}:{symbol}"
 
     def _get_rate_limiter(self, source: str) -> RateLimiter:
-        """Get or create rate limiter for source"""
+        """Get or create rate limiter for source with API-specific limits"""
         if source not in self.rate_limiters:
-            self.rate_limiters[source] = RateLimiter(
-                max_requests=self.max_requests_per_hour,
-                window_seconds=3600,
-            )
+            # Use source-specific limits if available
+            if source in SOURCE_RATE_LIMITS:
+                cfg = SOURCE_RATE_LIMITS[source]
+                self.rate_limiters[source] = RateLimiter(
+                    max_requests=cfg["max_requests"],
+                    window_seconds=cfg["window_seconds"],
+                )
+                logger.info(
+                    f"Rate limiter for {source}: {cfg['max_requests']} req/{cfg['window_seconds']}s"
+                )
+            else:
+                self.rate_limiters[source] = RateLimiter(
+                    max_requests=self.max_requests_per_hour,
+                    window_seconds=3600,
+                )
         return self.rate_limiters[source]
+
+    def get_source_ttl(self, source: str) -> int:
+        """Get TTL for specific source"""
+        return self.source_ttl.get(source, self.default_ttl)
 
     def get(self, source: str, symbol: str) -> Optional[Any]:
         """Get cached data if not expired

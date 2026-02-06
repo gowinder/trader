@@ -12,21 +12,35 @@ from loguru import logger
 class BinanceDataFetcher:
     """Fetch historical data from Binance"""
 
-    def __init__(self, testnet: bool = False):
+    def __init__(self, testnet: bool = False, proxy_url: str = ""):
         """Initialize Binance data fetcher
 
         Args:
             testnet: Whether to use testnet
+            proxy_url: HTTP proxy URL (e.g., "http://127.0.0.1:7890")
         """
-        self.exchange = ccxt.binance(
-            {
-                "enableRateLimit": True,
-                "options": {"defaultType": "future"},
+        config_dict = {
+            "enableRateLimit": True,
+            "options": {"defaultType": "future"},
+        }
+
+        # 添加代理支持
+        if proxy_url:
+            # 确保 URL 末尾有斜杠
+            if not proxy_url.endswith("/"):
+                proxy_url = proxy_url + "/"
+            config_dict["proxies"] = {
+                "http": proxy_url,
+                "https": proxy_url,
             }
-        )
+            logger.info(f"Using proxy: {proxy_url}")
+
+        # 使用 binanceusdm 获取 USDT 期货数据
+        self.exchange = ccxt.binanceusdm(config_dict)
 
         if testnet:
             self.exchange.set_sandbox_mode(True)
+            logger.info("Using Binance testnet for data fetching")
 
     def fetch_ohlcv(
         self,
@@ -73,7 +87,9 @@ class BinanceDataFetcher:
             return df
 
         except Exception as e:
+            import traceback
             logger.error(f"Failed to fetch OHLCV data: {e}")
+            logger.error(f"Traceback: {traceback.format_exc()}")
             raise
 
     def fetch_historical_data(
@@ -180,16 +196,17 @@ class BinanceDataFetcher:
 class CachedDataFetcher:
     """Data fetcher with file caching"""
 
-    def __init__(self, cache_dir: str = "data/cache", testnet: bool = False):
+    def __init__(self, cache_dir: str = "data/cache", testnet: bool = False, proxy_url: str = ""):
         """Initialize cached data fetcher
 
         Args:
             cache_dir: Cache directory path
             testnet: Whether to use testnet
+            proxy_url: HTTP proxy URL (e.g., "http://127.0.0.1:7890")
         """
         self.cache_dir = Path(cache_dir)
         self.cache_dir.mkdir(parents=True, exist_ok=True)
-        self.fetcher = BinanceDataFetcher(testnet=testnet)
+        self.fetcher = BinanceDataFetcher(testnet=testnet, proxy_url=proxy_url)
 
     def get_data(
         self,
