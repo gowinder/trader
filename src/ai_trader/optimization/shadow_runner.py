@@ -4,7 +4,7 @@
 import json
 import logging
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional
 from uuid import uuid4
 from dataclasses import dataclass
 
@@ -39,12 +39,12 @@ class ShadowRunner:
 
     def __init__(self, db: "DatabaseManager"):
         self.db = db
-        self._run_id: str | None = None
+        self._run_id: Optional[str] = None
         self._current_params: dict = {}
         self._candidate_params: dict = {}
         self._current_stats = ShadowStats()
         self._candidate_stats = ShadowStats()
-        self._started_at: datetime | None = None
+        self._started_at: Optional[datetime] = None
 
     @property
     def is_running(self) -> bool:

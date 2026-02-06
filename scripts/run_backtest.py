@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
-"""Backtest script for Phase 4 strategy validation"""
+"""Backtest script for Phase 4 strategy validation
+
+支持将回测结果保存到 Dashboard 数据库，启用方法:
+  1. 配置 DASHBOARD_DATABASE_URL 和 ENABLE_DECISION_PERSISTENCE=true
+  2. 添加 --save-to-db 参数
+"""
 
 import asyncio
 import sys
 from pathlib import Path
 from datetime import datetime, timedelta
+from typing import Optional
+from uuid import UUID
 import pandas as pd
 
 # Add project root to path
@@ -16,6 +23,7 @@ from ai_trader.strategies.pattern_recognition import PatternRecognizer
 from ai_trader.strategies.market_classifier import MarketClassifier
 from ai_trader.strategies.strategy_selector import StrategySelector
 from ai_trader.strategies.signal_filter import SignalFilter
+from ai_trader.persistence import DatabaseManager, DecisionPersistenceService
 from ai_trader.config import config
 
 
@@ -171,6 +179,104 @@ def generate_signals(df: pd.DataFrame, enable_filters: bool = True) -> pd.DataFr
     return signals_df
 
 
+async def save_backtest_to_db(
+    engine: BacktestEngine,
+    result,
+    df: pd.DataFrame,
+    symbol: str,
+    start_date: str,
+    end_date: str,
+    initial_capital: float,
+    interval: str,
+) -> Optional[UUID]:
+    """保存回测结果到数据库
+
+    Args:
+        engine: 回测引擎实例
+        result: 回测结果
+        df: K线数据
+        symbol: 交易对
+        start_date: 开始日期
+        end_date: 结束日期
+        initial_capital: 初始资金
+        interval: K线间隔
+
+    Returns:
+        回测 ID 或 None
+    """
+    if not config.dashboard_database_url:
+        print("⚠️  未配置 DASHBOARD_DATABASE_URL，跳过数据库保存")
+        return None
+
+    print("\n保存回测结果到数据库...")
+    db = DatabaseManager(config.dashboard_database_url)
+    await db.connect()
+    persistence = DecisionPersistenceService(db)
+
+    try:
+        # 创建回测记录
+        backtest_id = await persistence.create_backtest(
+            mode="single",
+            symbol=symbol,
+            start_date=start_date,
+            end_date=end_date,
+            initial_capital=initial_capital,
+            config_snapshot={
+                "interval": interval,
+                "strategies": config.enabled_strategies,
+            },
+        )
+
+        # 保存交易记录
+        for trade in engine.trades:
+            await persistence.save_backtest_trade(
+                backtest_id=backtest_id,
+                symbol=symbol,
+                side=trade.side,
+                entry_time=trade.timestamp,
+                entry_price=trade.entry_price,
+                exit_time=trade.timestamp,
+                exit_price=trade.exit_price,
+                pnl=trade.pnl,
+                pnl_percent=(trade.pnl / (trade.entry_price * trade.size) * 100)
+                if trade.pnl and trade.entry_price and trade.size
+                else None,
+            )
+
+        # 保存权益曲线 (每10个点保存一次，避免数据过多)
+        step = max(1, len(engine.equity_curve) // 100)
+        for i in range(0, len(engine.equity_curve), step):
+            if i < len(df):
+                ts = df.iloc[i]["timestamp"]
+                if isinstance(ts, str):
+                    ts = datetime.fromisoformat(ts)
+                await persistence.save_backtest_equity(
+                    backtest_id=backtest_id,
+                    timestamp=ts,
+                    total_equity=engine.equity_curve[i],
+                )
+
+        # 完成回测
+        await persistence.complete_backtest(
+            backtest_id=backtest_id,
+            final_capital=result.final_capital,
+            total_pnl=result.total_pnl,
+            total_trades=result.total_trades,
+            winning_trades=result.winning_trades,
+            max_drawdown=result.max_drawdown,
+            sharpe_ratio=result.sharpe_ratio,
+        )
+
+        print(f"✓ 回测结果已保存，ID: {backtest_id}")
+        return backtest_id
+
+    except Exception as e:
+        print(f"✗ 保存失败: {e}")
+        return None
+    finally:
+        await db.close()
+
+
 async def run_backtest(
     symbol: str = "BTCUSDT",
     start_date: str = "2024-01-01",
@@ -179,6 +285,7 @@ async def run_backtest(
     initial_capital: float = 10000.0,
     use_real_data: bool = True,
     enable_filters: bool = False,
+    save_to_db: bool = False,
 ):
     """Run backtest
 
@@ -188,6 +295,7 @@ async def run_backtest(
         end_date: End date (YYYY-MM-DD)
         interval: Candle interval
         initial_capital: Initial capital in USDT
+        save_to_db: Whether to save results to database
     """
     print("=" * 60)
     print("PHASE 4 BACKTEST - QUANTITATIVE STRATEGY VALIDATION")
@@ -223,6 +331,19 @@ async def run_backtest(
     # Generate report
     report = engine.generate_report(result)
     print(report)
+
+    # Save to database if requested
+    if save_to_db:
+        await save_backtest_to_db(
+            engine=engine,
+            result=result,
+            df=df,
+            symbol=symbol,
+            start_date=start_date,
+            end_date=end_date,
+            initial_capital=initial_capital,
+            interval=interval,
+        )
 
     # Validation checks
     print("\nVALIDATION CHECKS")
@@ -320,6 +441,11 @@ async def main():
         action="store_true",
         help="Use dummy data instead of real Binance data",
     )
+    parser.add_argument(
+        "--save-to-db",
+        action="store_true",
+        help="Save backtest results to Dashboard database",
+    )
 
     args = parser.parse_args()
 
@@ -333,6 +459,7 @@ async def main():
             interval=args.interval,
             initial_capital=args.capital,
             use_real_data=not args.dummy_data,  # Use real data by default
+            save_to_db=args.save_to_db,
         )
 
 
