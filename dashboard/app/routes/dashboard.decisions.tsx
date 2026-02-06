@@ -13,7 +13,7 @@ import { cn, formatDateTime, formatUSD, getPnlColorClass } from "~/lib/utils";
 import { ChevronLeft, ChevronRight, ExternalLink, X } from "lucide-react";
 import { db } from "db";
 import { decisions as decisionsTable } from "db/schema";
-import { desc, count, eq, and, gte } from "drizzle-orm";
+import { desc, count, eq, and, gte, ne } from "drizzle-orm";
 
 export async function loader({ request }: Route.LoaderArgs) {
   const url = new URL(request.url);
@@ -30,7 +30,11 @@ export async function loader({ request }: Route.LoaderArgs) {
     conditions.push(eq(decisionsTable.symbol, symbol));
   }
   if (action) {
-    conditions.push(eq(decisionsTable.action, action));
+    if (action === "not_hold") {
+      conditions.push(ne(decisionsTable.action, "hold"));
+    } else {
+      conditions.push(eq(decisionsTable.action, action));
+    }
   }
   if (days > 0) {
     const startDate = new Date();
@@ -158,6 +162,7 @@ export default function DecisionsPage({ loaderData }: Route.ComponentProps) {
             <SelectValue placeholder="动作" />
           </SelectTrigger>
           <SelectContent>
+            <SelectItem value="not_hold">非持有</SelectItem>
             <SelectItem value="open_long">开多</SelectItem>
             <SelectItem value="open_short">开空</SelectItem>
             <SelectItem value="close_long">平多</SelectItem>

@@ -13,7 +13,8 @@ const storage = createCookieSessionStorage({
     path: "/",
     sameSite: "lax",
     secrets: [sessionSecret],
-    secure: process.env.NODE_ENV === "production",
+    // 只有在显式启用 HTTPS 时才设置 secure
+    secure: process.env.COOKIE_SECURE === "true",
   },
 });
 
