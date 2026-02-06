@@ -400,3 +400,7 @@ tmp/
 .antigravity/
 run_output/
 trades/
+
+# Runtime data and cache
+data/cache/
+data/*.db
