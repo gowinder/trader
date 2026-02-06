@@ -13,6 +13,7 @@ from ..optimization.parameter_registry import ParameterRegistry
 
 if TYPE_CHECKING:
     from ..persistence.database import DatabaseManager
+    from ..ai.client import LLMClient
 
 logger = logging.getLogger(__name__)
 
@@ -22,14 +23,14 @@ class ReflectionEngine:
 
     def __init__(
         self,
-        llm_client,
+        llm_client: "LLMClient",
         db: "DatabaseManager",
         parameter_registry: Optional[ParameterRegistry] = None,
     ):
         """初始化复盘引擎
 
         Args:
-            llm_client: LLM 客户端（需要有 generate 方法）
+            llm_client: LLM 客户端
             db: 数据库管理器
             parameter_registry: 参数注册表（可选）
         """
