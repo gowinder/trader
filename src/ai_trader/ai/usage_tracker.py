@@ -1,12 +1,10 @@
 """LLM 使用量追踪器 - 记录调用统计和费用"""
 
 import json
-import asyncio
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
-from typing import Optional, Dict, List, Any
-from dataclasses import dataclass, asdict
-import aiosqlite
+from typing import Optional, Dict, Any
+from dataclasses import dataclass
 
 from ..utils.logger import logger
 
@@ -31,21 +29,6 @@ class UsageRecord:
             self.timestamp = datetime.now()
         if self.total_tokens == 0:
             self.total_tokens = self.input_tokens + self.output_tokens
-
-
-@dataclass
-class UsageStats:
-    """使用统计"""
-    total_calls: int = 0
-    total_tokens: int = 0
-    total_cost_usd: float = 0.0
-    success_rate: float = 0.0
-    avg_latency_ms: float = 0.0
-    by_provider: Dict[str, Dict[str, Any]] = None
-
-    def __post_init__(self):
-        if self.by_provider is None:
-            self.by_provider = {}
 
 
 class PricingManager:
@@ -115,63 +98,27 @@ class PricingManager:
 
         return input_cost + output_cost
 
-    def save_pricing(self, path: str):
-        """保存价格配置到文件"""
-        with open(path, "w") as f:
-            json.dump(self._pricing, f, indent=2)
-
 
 class UsageTracker:
-    """使用量追踪器"""
+    """使用量追踪器 - 使用 PostgreSQL 存储"""
 
     def __init__(
         self,
-        db_path: str = "data/llm_usage.db",
         pricing_file: Optional[str] = None,
     ):
-        self._db_path = db_path
         self._pricing_manager = PricingManager(pricing_file)
-        self._db: Optional[aiosqlite.Connection] = None
+        self._persistence_service = None
         self._initialized = False
 
-    async def _ensure_initialized(self):
-        """确保数据库已初始化"""
-        if self._initialized:
-            return
+    def set_persistence_service(self, persistence_service):
+        """设置持久化服务
 
-        # 确保目录存在
-        db_dir = Path(self._db_path).parent
-        db_dir.mkdir(parents=True, exist_ok=True)
-
-        self._db = await aiosqlite.connect(self._db_path)
-
-        # 创建表
-        await self._db.execute("""
-            CREATE TABLE IF NOT EXISTS llm_usage (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                timestamp TEXT NOT NULL,
-                provider TEXT NOT NULL,
-                model TEXT NOT NULL,
-                input_tokens INTEGER DEFAULT 0,
-                output_tokens INTEGER DEFAULT 0,
-                total_tokens INTEGER DEFAULT 0,
-                cost_usd REAL DEFAULT 0,
-                latency_ms INTEGER DEFAULT 0,
-                success INTEGER DEFAULT 1,
-                error_message TEXT DEFAULT ''
-            )
-        """)
-
-        # 创建索引
-        await self._db.execute("""
-            CREATE INDEX IF NOT EXISTS idx_timestamp ON llm_usage(timestamp)
-        """)
-        await self._db.execute("""
-            CREATE INDEX IF NOT EXISTS idx_provider ON llm_usage(provider)
-        """)
-
-        await self._db.commit()
+        Args:
+            persistence_service: DecisionPersistenceService 实例
+        """
+        self._persistence_service = persistence_service
         self._initialized = True
+        logger.info("UsageTracker initialized with PostgreSQL persistence")
 
     async def record(
         self,
@@ -182,234 +129,90 @@ class UsageTracker:
         latency_ms: int = 0,
         success: bool = True,
         error_message: str = "",
+        decision_id: Optional[str] = None,
     ):
         """记录一次调用"""
-        await self._ensure_initialized()
+        if not self._initialized or not self._persistence_service:
+            logger.warning("UsageTracker not initialized, skipping record")
+            return
 
         total_tokens = input_tokens + output_tokens
         cost_usd = self._pricing_manager.get_cost(
             provider, model, input_tokens, output_tokens
         )
 
-        record = UsageRecord(
-            provider=provider,
-            model=model,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            total_tokens=total_tokens,
-            cost_usd=cost_usd,
-            latency_ms=latency_ms,
-            success=success,
-            error_message=error_message,
-        )
+        try:
+            from uuid import UUID
+            decision_uuid = UUID(decision_id) if decision_id else None
 
-        await self._db.execute(
-            """
-            INSERT INTO llm_usage
-            (timestamp, provider, model, input_tokens, output_tokens, total_tokens,
-             cost_usd, latency_ms, success, error_message)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                record.timestamp.isoformat(),
-                record.provider,
-                record.model,
-                record.input_tokens,
-                record.output_tokens,
-                record.total_tokens,
-                record.cost_usd,
-                record.latency_ms,
-                1 if record.success else 0,
-                record.error_message,
-            ),
-        )
-        await self._db.commit()
-
-        logger.debug(
-            f"Recorded LLM usage: {provider}/{model} "
-            f"tokens={total_tokens} cost=${cost_usd:.4f}"
-        )
+            await self._persistence_service.record_llm_usage(
+                provider=provider,
+                model=model,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                total_tokens=total_tokens,
+                cost_usd=cost_usd,
+                latency_ms=latency_ms,
+                success=success,
+                error_message=error_message if not success else None,
+                decision_id=decision_uuid,
+            )
+        except Exception as e:
+            logger.error(f"Failed to record LLM usage: {e}")
 
     async def get_stats(
         self,
         start_time: Optional[datetime] = None,
         end_time: Optional[datetime] = None,
-    ) -> UsageStats:
+    ) -> Dict[str, Any]:
         """获取统计数据"""
-        await self._ensure_initialized()
-
-        # 默认时间范围：全部
-        where_clause = ""
-        params = []
-
-        if start_time:
-            where_clause += " AND timestamp >= ?"
-            params.append(start_time.isoformat())
-        if end_time:
-            where_clause += " AND timestamp <= ?"
-            params.append(end_time.isoformat())
-
-        if where_clause:
-            where_clause = "WHERE 1=1" + where_clause
-
-        # 总体统计
-        cursor = await self._db.execute(
-            f"""
-            SELECT
-                COUNT(*) as total_calls,
-                COALESCE(SUM(total_tokens), 0) as total_tokens,
-                COALESCE(SUM(cost_usd), 0) as total_cost_usd,
-                COALESCE(AVG(CASE WHEN success = 1 THEN 1.0 ELSE 0.0 END), 0) as success_rate,
-                COALESCE(AVG(latency_ms), 0) as avg_latency_ms
-            FROM llm_usage
-            {where_clause}
-            """,
-            params,
-        )
-        row = await cursor.fetchone()
-
-        stats = UsageStats(
-            total_calls=row[0],
-            total_tokens=row[1],
-            total_cost_usd=row[2],
-            success_rate=row[3] * 100,
-            avg_latency_ms=row[4],
-        )
-
-        # 按 provider 统计
-        cursor = await self._db.execute(
-            f"""
-            SELECT
-                provider,
-                COUNT(*) as calls,
-                COALESCE(SUM(total_tokens), 0) as tokens,
-                COALESCE(SUM(cost_usd), 0) as cost_usd
-            FROM llm_usage
-            {where_clause}
-            GROUP BY provider
-            """,
-            params,
-        )
-
-        stats.by_provider = {}
-        async for row in cursor:
-            stats.by_provider[row[0]] = {
-                "calls": row[1],
-                "tokens": row[2],
-                "cost_usd": row[3],
+        if not self._initialized or not self._persistence_service:
+            return {
+                "total_calls": 0,
+                "total_tokens": 0,
+                "total_cost_usd": 0,
+                "today_cost_usd": 0,
+                "success_rate": 0,
+                "avg_latency_ms": 0,
+                "by_provider": {},
             }
 
-        return stats
-
-    async def get_daily_stats(
-        self,
-        days: int = 30,
-    ) -> List[Dict[str, Any]]:
-        """获取每日统计数据"""
-        await self._ensure_initialized()
-
-        start_time = datetime.now() - timedelta(days=days)
-
-        cursor = await self._db.execute(
-            """
-            SELECT
-                DATE(timestamp) as date,
-                provider,
-                COUNT(*) as calls,
-                COALESCE(SUM(total_tokens), 0) as tokens,
-                COALESCE(SUM(cost_usd), 0) as cost_usd
-            FROM llm_usage
-            WHERE timestamp >= ?
-            GROUP BY DATE(timestamp), provider
-            ORDER BY date
-            """,
-            (start_time.isoformat(),),
+        return await self._persistence_service.get_llm_usage_stats(
+            start_time=start_time,
+            end_time=end_time,
         )
 
-        results = []
-        async for row in cursor:
-            results.append({
-                "date": row[0],
-                "provider": row[1],
-                "calls": row[2],
-                "tokens": row[3],
-                "cost_usd": row[4],
-            })
+    async def get_daily_stats(self, days: int = 30) -> list:
+        """获取每日统计数据"""
+        if not self._initialized or not self._persistence_service:
+            return []
 
-        return results
+        return await self._persistence_service.get_llm_daily_stats(days=days)
 
     async def get_records(
         self,
         limit: int = 100,
         offset: int = 0,
         provider: Optional[str] = None,
-    ) -> List[UsageRecord]:
+    ) -> Dict[str, Any]:
         """获取调用记录"""
-        await self._ensure_initialized()
+        if not self._initialized or not self._persistence_service:
+            return {"records": [], "total": 0, "limit": limit, "offset": offset}
 
-        where_clause = ""
-        params = []
-
-        if provider:
-            where_clause = "WHERE provider = ?"
-            params.append(provider)
-
-        params.extend([limit, offset])
-
-        cursor = await self._db.execute(
-            f"""
-            SELECT
-                id, timestamp, provider, model, input_tokens, output_tokens,
-                total_tokens, cost_usd, latency_ms, success, error_message
-            FROM llm_usage
-            {where_clause}
-            ORDER BY timestamp DESC
-            LIMIT ? OFFSET ?
-            """,
-            params,
+        return await self._persistence_service.get_llm_usage_records(
+            limit=limit,
+            offset=offset,
+            provider=provider,
         )
-
-        records = []
-        async for row in cursor:
-            records.append(UsageRecord(
-                id=row[0],
-                timestamp=datetime.fromisoformat(row[1]),
-                provider=row[2],
-                model=row[3],
-                input_tokens=row[4],
-                output_tokens=row[5],
-                total_tokens=row[6],
-                cost_usd=row[7],
-                latency_ms=row[8],
-                success=bool(row[9]),
-                error_message=row[10],
-            ))
-
-        return records
 
     async def get_today_cost(self) -> float:
         """获取今日费用"""
-        await self._ensure_initialized()
-
-        today = datetime.now().date().isoformat()
-
-        cursor = await self._db.execute(
-            """
-            SELECT COALESCE(SUM(cost_usd), 0)
-            FROM llm_usage
-            WHERE DATE(timestamp) = ?
-            """,
-            (today,),
-        )
-        row = await cursor.fetchone()
-        return row[0]
+        stats = await self.get_stats()
+        return stats.get("today_cost_usd", 0.0)
 
     async def close(self):
-        """关闭数据库连接"""
-        if self._db:
-            await self._db.close()
-            self._db = None
-            self._initialized = False
+        """关闭（兼容接口）"""
+        pass
 
 
 # 全局单例
