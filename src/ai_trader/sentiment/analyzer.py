@@ -168,8 +168,20 @@ Respond in JSON format:
                 )
                 continue
 
+            # Check source-specific cache first
+            cached_news = self.cache.get(source_name, base_symbol)
+            if cached_news:
+                all_news.extend(cached_news)
+                logger.info(f"Using cached {len(cached_news)} news from {source_name}")
+                continue
+
             try:
-                news = await source.fetch_news(base_symbol, limit=10, hours=24)
+                # Free tier: limit to 10 items, 48h history (24h delay + 24h window)
+                news = await source.fetch_news(base_symbol, limit=10, hours=48)
+                if news:
+                    # Cache per-source results with source-specific TTL
+                    source_ttl = self.cache.get_source_ttl(source_name)
+                    self.cache.set(source_name, base_symbol, news, ttl=source_ttl)
                 all_news.extend(news)
                 logger.info(f"Fetched {len(news)} news from {source_name}")
             except Exception as e:
@@ -202,15 +214,35 @@ Respond in JSON format:
 
         # Analyze with LLM
         try:
-            response = await self.llm_client.chat_completion(
+            # 定义 JSON schema
+            schema = {
+                "type": "object",
+                "properties": {
+                    "score": {
+                        "type": "string",
+                        "enum": ["very_bearish", "bearish", "neutral", "bullish", "very_bullish"]
+                    },
+                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                    "extreme_fear": {"type": "boolean"},
+                    "extreme_greed": {"type": "boolean"},
+                    "risk_event": {"type": "boolean"},
+                    "reasoning": {"type": "string"}
+                },
+                "required": ["score", "confidence", "reasoning"],
+                "additionalProperties": False
+            }
+
+            result_data = await self.llm_client.chat(
                 messages=[{"role": "user", "content": prompt}],
-                response_format="json",
+                schema=schema,
             )
 
-            # Parse response
-            import json
-
-            analysis = json.loads(response)
+            # 结果可能直接是 dict 或包含在 content 中
+            if isinstance(result_data, dict) and "content" in result_data:
+                import json
+                analysis = json.loads(result_data["content"]) if isinstance(result_data["content"], str) else result_data["content"]
+            else:
+                analysis = result_data
 
             # Detect divergence if price data available
             divergence = False
