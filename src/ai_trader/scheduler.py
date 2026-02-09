@@ -25,7 +25,7 @@ from .data.market_data import MarketDataManager
 from .ai.client import LLMClient
 from .ai.decision import DecisionEngine
 from .ai.hybrid_decision import HybridDecisionEngine
-from .persistence import DatabaseManager, DecisionPersistenceService
+from .persistence import DatabaseManager, DecisionPersistenceService, StrategyPresetService
 from .reporter import Reporter
 from .memory import TradeMemoryCollector
 from .ai.usage_tracker import get_usage_tracker
@@ -70,6 +70,10 @@ class Scheduler:
         self._trading_enabled = True
         self._decision_interval = config.decision_interval
 
+        # Strategy preset
+        self._active_preset_name: Optional[str] = None
+        self._strategy_preset_service: Optional[StrategyPresetService] = None
+
     async def _init_persistence(self):
         """初始化仓位持久化服务"""
         if self._persistence_initialized:
@@ -102,6 +106,12 @@ class Scheduler:
                 await self.reflection_client.connect()
                 self.shadow_runner = ShadowRunner(self.db_manager)
                 logger.info("Memory and optimization system initialized (async mode)")
+
+            # Initialize strategy preset service
+            self._strategy_preset_service = StrategyPresetService(self.db_manager)
+            await self._strategy_preset_service.init_system_presets()
+            await self._strategy_preset_service.ensure_default_active()
+            await self._load_active_preset()
         except Exception as e:
             logger.error(f"Failed to initialize persistence service: {e}")
             self.db_manager = None
@@ -124,6 +134,53 @@ class Scheduler:
         except Exception as e:
             logger.warning(f"Redis not available, using static config: {e}")
             self._redis = None
+
+    async def _load_active_preset(self):
+        """从 Redis 或 PG 加载活跃策略预设并应用到配置"""
+        preset_data = None
+
+        # 优先从 Redis 读取
+        if self._redis:
+            try:
+                data = await self._redis.get("strategy:active_preset")
+                if data:
+                    preset_data = json.loads(data)
+            except Exception as e:
+                logger.error(f"Failed to load preset from Redis: {e}")
+
+        # Redis 没有则从 PG 读取
+        if preset_data is None and self._strategy_preset_service:
+            active = await self._strategy_preset_service.get_active_preset()
+            if active:
+                preset_config = active["config_json"]
+                if isinstance(preset_config, str):
+                    preset_config = json.loads(preset_config)
+                preset_data = {"name": active["name"], "config": preset_config}
+                self._active_preset_name = active["name"]
+                # 写入 Redis 缓存
+                if self._redis:
+                    try:
+                        await self._redis.set(
+                            "strategy:active_preset",
+                            json.dumps(preset_data),
+                        )
+                    except Exception:
+                        pass
+
+        if preset_data:
+            preset_config = preset_data.get("config", preset_data)
+            self._active_preset_name = preset_data.get("name", self._active_preset_name)
+            config.apply_preset(preset_config)
+
+            # 重建决策引擎
+            self.decision_engine = HybridDecisionEngine(self.llm)
+
+            # 更新信号过滤器间隔
+            interval_sec = preset_config.get("min_trade_interval_seconds", 21600)
+            if hasattr(self.decision_engine, "signal_filter") and self.decision_engine.signal_filter:
+                self.decision_engine.signal_filter.min_interval_hours = interval_sec / 3600
+
+            logger.info(f"Applied strategy preset: {self._active_preset_name}")
 
     async def _load_trading_config(self):
         """从 Redis 加载交易配置"""
@@ -149,16 +206,21 @@ class Scheduler:
 
         try:
             pubsub = self._redis.pubsub()
-            await pubsub.subscribe("trading:config:updated")
+            await pubsub.subscribe("trading:config:updated", "strategy:preset:updated")
 
             async for message in pubsub.listen():
                 if message["type"] == "message":
                     try:
-                        cfg = json.loads(message["data"])
-                        self._trading_enabled = cfg.get("enabled", True)
-                        interval_minutes = cfg.get("decisionInterval", 1)
-                        self._decision_interval = interval_minutes * 60
-                        logger.info(f"Config updated: enabled={self._trading_enabled}, interval={interval_minutes}m")
+                        channel = message.get("channel", b"").decode() if isinstance(message.get("channel"), bytes) else message.get("channel", "")
+                        if channel == "strategy:preset:updated":
+                            logger.info("Strategy preset update received")
+                            await self._load_active_preset()
+                        else:
+                            cfg = json.loads(message["data"])
+                            self._trading_enabled = cfg.get("enabled", True)
+                            interval_minutes = cfg.get("decisionInterval", 1)
+                            self._decision_interval = interval_minutes * 60
+                            logger.info(f"Config updated: enabled={self._trading_enabled}, interval={interval_minutes}m")
                     except Exception as e:
                         logger.error(f"Failed to parse config update: {e}")
         except asyncio.CancelledError:

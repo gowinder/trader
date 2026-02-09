@@ -208,6 +208,19 @@ class TradingConfig(BaseSettings):
             raise ValueError(f"无效的 LLM Provider: {v}. 支持的类型: {valid_providers}")
         return v.lower()
 
+    def apply_preset(self, config_json: dict):
+        """从策略预设配置覆盖交易参数"""
+        if "enabled_strategies" in config_json:
+            self.enabled_strategies = config_json["enabled_strategies"]
+        if "ai_weight" in config_json:
+            self.ai_weight = config_json["ai_weight"]
+        if "quant_weight" in config_json:
+            self.quant_weight = config_json["quant_weight"]
+        if "sentiment_weight" in config_json:
+            self.sentiment_weight = config_json["sentiment_weight"]
+        if "enable_sentiment" in config_json:
+            self.enable_sentiment_analysis = config_json["enable_sentiment"]
+
     def get_llm_config(self) -> LLMConfig:
         """获取 LLM 配置"""
         return LLMConfig(
