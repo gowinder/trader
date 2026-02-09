@@ -208,6 +208,30 @@ class LLMManager:
             return self._select_provider_priority()
         return None
 
+    def _get_ordered_providers(self, exclude: set = None) -> List[ProviderConfig]:
+        """按策略返回排序后的可用 provider 列表（用于故障转移）
+
+        Args:
+            exclude: 需要排除的 provider 名称集合
+        """
+        exclude = exclude or set()
+        available = [
+            p for p in self.providers_config
+            if self._is_provider_available(p) and p.name not in exclude
+        ]
+        if not available:
+            return []
+
+        if self.strategy == ScheduleStrategy.PRIORITY:
+            # 严格按优先级排序
+            available.sort(key=lambda p: p.priority)
+        elif self.strategy == ScheduleStrategy.COST_FIRST:
+            # 免费优先，同组内按优先级排序
+            available.sort(key=lambda p: (0 if p.cost_tier == "free" else 1, p.priority))
+        # ROUND_ROBIN 保持原顺序
+
+        return available
+
     def _handle_failure(self, provider_config: ProviderConfig, error: Exception):
         """处理失败"""
         provider_config.consecutive_failures += 1
@@ -240,31 +264,31 @@ class LLMManager:
         temperature: float = 0.3,
         provider: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """发送聊天请求，自动负载均衡和故障转移"""
+        """发送聊天请求，自动负载均衡和故障转移
+
+        按优先级逐个尝试 provider，成功立即返回，失败则 fallback 到下一个。
+        """
         start_time = time.time()
         last_error = None
         tried_providers = set()
 
-        for attempt in range(self.retry_config.max_retries + 1):
-            # 选择 provider
-            if provider:
-                # 强制使用指定 provider
-                provider_config = next(
-                    (p for p in self.providers_config if p.name == provider),
-                    None
-                )
-                if not provider_config:
-                    raise ValueError(f"Unknown provider: {provider}")
-            else:
-                provider_config = self._select_provider()
+        if provider:
+            # 强制使用指定 provider，不做 fallback
+            provider_config = next(
+                (p for p in self.providers_config if p.name == provider),
+                None
+            )
+            if not provider_config:
+                raise ValueError(f"Unknown provider: {provider}")
+            providers_to_try = [provider_config]
+        else:
+            # 按策略获取排序后的 provider 列表
+            providers_to_try = self._get_ordered_providers()
 
-            if provider_config is None:
-                break
+        if not providers_to_try:
+            raise RuntimeError("No LLM providers available")
 
-            # 跳过已尝试的 provider（除非只有一个）
-            if provider_config.name in tried_providers and len(self.providers_config) > 1:
-                continue
-
+        for i, provider_config in enumerate(providers_to_try):
             tried_providers.add(provider_config.name)
 
             try:
@@ -272,7 +296,10 @@ class LLMManager:
                     provider_config.name,
                     provider_config.model
                 )
-                logger.debug(f"Using provider: {provider_config.name}")
+                logger.debug(
+                    f"Using provider: {provider_config.name} "
+                    f"(priority={provider_config.priority}, {i+1}/{len(providers_to_try)})"
+                )
 
                 result = await llm_provider.chat(
                     messages=messages,
@@ -301,7 +328,9 @@ class LLMManager:
             except Exception as e:
                 last_error = e
                 self._handle_failure(provider_config, e)
-                logger.warning(f"Provider {provider_config.name} failed: {e}")
+                logger.warning(
+                    f"Provider {provider_config.name} failed ({i+1}/{len(providers_to_try)}): {e}"
+                )
 
                 # 记录失败统计
                 if self._usage_tracker:
@@ -316,16 +345,16 @@ class LLMManager:
                         error_message=str(e),
                     )
 
-                # 退避等待
-                if attempt < self.retry_config.max_retries:
+                # 退避等待（最后一个 provider 不等待）
+                if i < len(providers_to_try) - 1:
                     backoff = self.retry_config.backoff_seconds[
-                        min(attempt, len(self.retry_config.backoff_seconds) - 1)
+                        min(i, len(self.retry_config.backoff_seconds) - 1)
                     ]
                     await asyncio.sleep(backoff)
 
         raise RuntimeError(
-            f"All LLM providers failed after {self.retry_config.max_retries + 1} attempts. "
-            f"Last error: {last_error}"
+            f"All LLM providers failed after trying {len(tried_providers)} providers "
+            f"({', '.join(tried_providers)}). Last error: {last_error}"
         )
 
     def set_usage_tracker(self, tracker):
