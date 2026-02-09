@@ -308,7 +308,7 @@ class LLMManager:
                     latency_ms = int((time.time() - start_time) * 1000)
                     await self._usage_tracker.record(
                         provider=provider_config.name,
-                        model=provider_config.model or "unknown",
+                        model=provider_config.model or llm_provider.model,
                         input_tokens=0,
                         output_tokens=0,
                         latency_ms=latency_ms,
@@ -331,6 +331,49 @@ class LLMManager:
     def set_usage_tracker(self, tracker):
         """设置使用量追踪器"""
         self._usage_tracker = tracker
+
+    def update_providers(self, provider_list: List[Dict[str, Any]]):
+        """动态更新 provider 配置（从 Redis 配置）
+
+        provider_list 格式: [{"name": "qwen", "model": "qwen-max", "priority": 1}, ...]
+        按列表顺序设置优先级，第一个优先级最高
+        """
+        new_configs = []
+        for i, p in enumerate(provider_list):
+            name = p.get("name", "")
+            model = p.get("model")
+            if not name:
+                continue
+            new_configs.append(ProviderConfig(
+                name=name,
+                priority=i + 1,
+                cost_tier="free",
+                weight=max(1, len(provider_list) - i),
+                model=model,
+            ))
+
+        if new_configs:
+            self.providers_config = new_configs
+            self.strategy = ScheduleStrategy.PRIORITY
+            self._providers.clear()
+            logger.info(
+                f"Provider config updated: "
+                f"{[f'{p.name}({p.model})' for p in new_configs]}"
+            )
+
+    def get_providers_info(self) -> List[Dict[str, Any]]:
+        """获取当前 provider 配置信息"""
+        return [
+            {
+                "name": p.name,
+                "model": p.model,
+                "priority": p.priority,
+                "available": self._is_provider_available(p),
+                "cooldown_until": p.cooldown_until if p.cooldown_until > time.time() else 0,
+                "consecutive_failures": p.consecutive_failures,
+            }
+            for p in self.providers_config
+        ]
 
     async def start(self):
         """启动 manager"""

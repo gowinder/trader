@@ -1,9 +1,12 @@
+import { useState, useCallback } from "react";
 import type { LoaderFunctionArgs } from "react-router";
 import { useLoaderData } from "react-router";
 import { StatCard } from "~/components/common/StatCard";
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
+import { Button } from "~/components/ui/button";
+import { Input } from "~/components/ui/input";
 import { cn } from "~/lib/utils";
-import { Cpu, Coins, Clock, CheckCircle } from "lucide-react";
+import { Cpu, Coins, Clock, CheckCircle, X, ChevronUp, ChevronDown, Save, GripVertical } from "lucide-react";
 import {
   AreaChart,
   Area,
@@ -40,7 +43,7 @@ interface DailyStats {
 }
 
 interface UsageRecord {
-  id: number;
+  id: string;
   timestamp: string;
   provider: string;
   model: string;
@@ -49,8 +52,13 @@ interface UsageRecord {
   total_tokens: number;
   cost_usd: number;
   latency_ms: number;
-  success: number;
-  error_message: string;
+  success: boolean;
+  error_message: string | null;
+}
+
+interface ProviderItem {
+  name: string;
+  model: string;
 }
 
 const PROVIDER_COLORS: Record<string, string> = {
@@ -155,6 +163,26 @@ export async function loader({ request }: LoaderFunctionArgs) {
     cost: data.cost_usd,
   }));
 
+  // 获取 provider 优先级配置
+  let providerConfig: ProviderItem[] = [
+    { name: "qwen", model: "qwen-max" },
+    { name: "gemini", model: "gemini-2.0-flash" },
+    { name: "codex", model: "gpt-4o" },
+    { name: "openrouter", model: "google/gemini-2.0-flash-exp:free" },
+  ];
+
+  try {
+    const provResp = await fetch(`${baseUrl}/api/llm-providers`);
+    if (provResp.ok) {
+      const provData = await provResp.json();
+      if (provData.providers?.length > 0) {
+        providerConfig = provData.providers;
+      }
+    }
+  } catch (e) {
+    console.error("Failed to fetch provider config:", e);
+  }
+
   return {
     stats,
     dailyTokensData,
@@ -163,6 +191,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     providerPieData,
     providerCostData,
     records,
+    providerConfig,
   };
 }
 
@@ -174,6 +203,7 @@ interface LoaderData {
   providerPieData: { name: string; value: number; tokens: number; cost: number }[];
   providerCostData: { name: string; cost: number }[];
   records: UsageRecord[];
+  providerConfig: ProviderItem[];
 }
 
 export default function LLMUsagePage() {
@@ -185,7 +215,50 @@ export default function LLMUsagePage() {
     providerPieData,
     providerCostData,
     records,
+    providerConfig,
   } = useLoaderData<LoaderData>();
+
+  const [selectedRecord, setSelectedRecord] = useState<UsageRecord | null>(null);
+  const [providerList, setProviderList] = useState<ProviderItem[]>(providerConfig);
+  const [saving, setSaving] = useState(false);
+  const [saveMsg, setSaveMsg] = useState("");
+
+  const moveProvider = useCallback((index: number, direction: -1 | 1) => {
+    const newIndex = index + direction;
+    if (newIndex < 0 || newIndex >= providerList.length) return;
+    const newList = [...providerList];
+    [newList[index], newList[newIndex]] = [newList[newIndex], newList[index]];
+    setProviderList(newList);
+  }, [providerList]);
+
+  const updateProviderModel = useCallback((index: number, model: string) => {
+    const newList = [...providerList];
+    newList[index] = { ...newList[index], model };
+    setProviderList(newList);
+  }, [providerList]);
+
+  const saveProviderConfig = useCallback(async () => {
+    setSaving(true);
+    setSaveMsg("");
+    try {
+      const resp = await fetch("/api/llm-providers", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ providers: providerList }),
+      });
+      if (resp.ok) {
+        setSaveMsg("已保存");
+        setTimeout(() => setSaveMsg(""), 3000);
+      } else {
+        const data = await resp.json();
+        setSaveMsg(`失败: ${data.error}`);
+      }
+    } catch {
+      setSaveMsg("保存失败");
+    } finally {
+      setSaving(false);
+    }
+  }, [providerList]);
 
   return (
     <div className="space-y-6">
@@ -213,6 +286,77 @@ export default function LLMUsagePage() {
           variant={stats.today_cost_usd > 0 ? "loss" : "default"}
         />
       </div>
+
+      {/* Provider 调用优先级配置 */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center justify-between text-base">
+            <span>模型调用优先级</span>
+            <div className="flex items-center gap-2">
+              {saveMsg && (
+                <span className={cn(
+                  "text-xs",
+                  saveMsg === "已保存" ? "text-green-500" : "text-red-500"
+                )}>{saveMsg}</span>
+              )}
+              <Button size="sm" onClick={saveProviderConfig} disabled={saving}>
+                <Save className="mr-1 h-4 w-4" />
+                {saving ? "保存中..." : "保存"}
+              </Button>
+            </div>
+          </CardTitle>
+          <p className="text-xs text-muted-foreground">
+            按优先级排列，排在前面的模型优先调用，成功则不再调用后续模型
+          </p>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-2">
+            {providerList.map((p, i) => (
+              <div
+                key={`${p.name}-${i}`}
+                className="flex items-center gap-3 rounded-lg border p-3"
+              >
+                <GripVertical className="h-4 w-4 text-muted-foreground" />
+                <span className="w-6 text-center text-sm font-medium text-muted-foreground">
+                  {i + 1}
+                </span>
+                <span
+                  className="rounded px-2 py-0.5 text-xs font-medium text-white"
+                  style={{ backgroundColor: PROVIDER_COLORS[p.name] || "#666" }}
+                >
+                  {p.name}
+                </span>
+                <Input
+                  className="h-8 flex-1 text-sm"
+                  value={p.model}
+                  onChange={(e) => updateProviderModel(i, e.target.value)}
+                  placeholder="模型名称"
+                />
+                <div className="flex gap-1">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 w-8 p-0"
+                    disabled={i === 0}
+                    onClick={() => moveProvider(i, -1)}
+                  >
+                    <ChevronUp className="h-4 w-4" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 w-8 p-0"
+                    disabled={i === providerList.length - 1}
+                    onClick={() => moveProvider(i, 1)}
+                  >
+                    <ChevronDown className="h-4 w-4" />
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
 
       {/* 成功率和延迟 */}
       <div className="grid gap-4 md:grid-cols-2">
@@ -435,7 +579,11 @@ export default function LLMUsagePage() {
                 </thead>
                 <tbody>
                   {records.map((record) => (
-                    <tr key={record.id} className="border-b last:border-0">
+                    <tr
+                      key={record.id}
+                      className="border-b last:border-0 cursor-pointer hover:bg-muted/50 transition-colors"
+                      onClick={() => setSelectedRecord(record)}
+                    >
                       <td className="py-2 px-3 text-muted-foreground">
                         {new Date(record.timestamp).toLocaleString("zh-CN", {
                           month: "2-digit",
@@ -464,7 +612,7 @@ export default function LLMUsagePage() {
                         {record.success ? (
                           <span className="text-green-500">✓</span>
                         ) : (
-                          <span className="text-red-500" title={record.error_message}>✗</span>
+                          <span className="text-red-500" title={record.error_message ?? undefined}>✗</span>
                         )}
                       </td>
                     </tr>
@@ -479,6 +627,82 @@ export default function LLMUsagePage() {
           )}
         </CardContent>
       </Card>
+
+      {/* 明细弹窗 */}
+      {selectedRecord && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+          onClick={() => setSelectedRecord(null)}
+        >
+          <div
+            className="relative w-full max-w-lg rounded-lg border bg-background p-6 shadow-lg"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              className="absolute right-4 top-4 text-muted-foreground hover:text-foreground"
+              onClick={() => setSelectedRecord(null)}
+            >
+              <X className="h-5 w-5" />
+            </button>
+
+            <h3 className="mb-4 text-lg font-semibold">调用详情</h3>
+
+            <div className="space-y-3 text-sm">
+              <div className="flex justify-between border-b pb-2">
+                <span className="text-muted-foreground">时间</span>
+                <span>{new Date(selectedRecord.timestamp).toLocaleString("zh-CN")}</span>
+              </div>
+              <div className="flex justify-between border-b pb-2">
+                <span className="text-muted-foreground">Provider</span>
+                <span
+                  className="rounded px-2 py-0.5 text-xs font-medium text-white"
+                  style={{ backgroundColor: PROVIDER_COLORS[selectedRecord.provider] || "#666" }}
+                >
+                  {selectedRecord.provider}
+                </span>
+              </div>
+              <div className="flex justify-between border-b pb-2">
+                <span className="text-muted-foreground">Model</span>
+                <span className="font-mono text-xs">{selectedRecord.model}</span>
+              </div>
+              <div className="flex justify-between border-b pb-2">
+                <span className="text-muted-foreground">Input Tokens</span>
+                <span className="tabular-nums">{formatNumber(selectedRecord.input_tokens)}</span>
+              </div>
+              <div className="flex justify-between border-b pb-2">
+                <span className="text-muted-foreground">Output Tokens</span>
+                <span className="tabular-nums">{formatNumber(selectedRecord.output_tokens)}</span>
+              </div>
+              <div className="flex justify-between border-b pb-2">
+                <span className="text-muted-foreground">Total Tokens</span>
+                <span className="tabular-nums font-medium">{formatNumber(selectedRecord.total_tokens)}</span>
+              </div>
+              <div className="flex justify-between border-b pb-2">
+                <span className="text-muted-foreground">费用</span>
+                <span className="font-medium">{formatUSD(selectedRecord.cost_usd)}</span>
+              </div>
+              <div className="flex justify-between border-b pb-2">
+                <span className="text-muted-foreground">延迟</span>
+                <span className="tabular-nums">{selectedRecord.latency_ms.toFixed(0)} ms</span>
+              </div>
+              <div className="flex justify-between border-b pb-2">
+                <span className="text-muted-foreground">状态</span>
+                <span className={selectedRecord.success ? "text-green-500" : "text-red-500"}>
+                  {selectedRecord.success ? "成功" : "失败"}
+                </span>
+              </div>
+              {selectedRecord.error_message && (
+                <div className="border-b pb-2">
+                  <div className="text-muted-foreground mb-1">错误信息</div>
+                  <div className="rounded bg-red-500/10 p-2 text-xs text-red-500 break-all">
+                    {selectedRecord.error_message}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
