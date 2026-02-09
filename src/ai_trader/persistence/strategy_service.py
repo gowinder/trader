@@ -127,7 +127,7 @@ class StrategyPresetService:
                     COALESCE(SUM(realized_pnl), 0) as total_pnl,
                     COUNT(*) FILTER (WHERE realized_pnl > 0) as win_count
                 FROM position_history
-                WHERE closed_at BETWEEN $1 AND $2""",
+                WHERE exit_time BETWEEN $1 AND $2""",
                 start, end,
             )
             if stats:
