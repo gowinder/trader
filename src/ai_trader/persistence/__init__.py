@@ -2,5 +2,6 @@
 
 from .service import DecisionPersistenceService
 from .database import DatabaseManager
+from .strategy_service import StrategyPresetService
 
-__all__ = ["DecisionPersistenceService", "DatabaseManager"]
+__all__ = ["DecisionPersistenceService", "DatabaseManager", "StrategyPresetService"]
