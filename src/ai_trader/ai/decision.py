@@ -11,6 +11,7 @@ from .analyzer import MarketAnalyzer
 from ..prompts.risk import RISK_USER, RISK_SYSTEM, RISK_SCHEMA
 from ..prompts.trading import TRADING_USER, TRADING_SYSTEM, TRADING_SCHEMA
 from ..config import config
+from ..utils.logger import logger
 
 # Phase 4: Import quantitative strategy modules
 from ..strategies.pattern_recognition import PatternRecognizer
@@ -594,9 +595,22 @@ class HybridDecisionEngine(DecisionEngine):
         """Check if two actions conflict (opposite directions)"""
         long_actions = ["open_long", "add_long"]
         short_actions = ["open_short", "add_short"]
+        close_long_actions = ["close_long", "reduce_long"]
+        close_short_actions = ["close_short", "reduce_short"]
 
+        # long vs short
         if (action1 in long_actions and action2 in short_actions) or (
             action1 in short_actions and action2 in long_actions
+        ):
+            return True
+
+        # close_long vs open_long (one wants to close, other wants to open same direction)
+        if (action1 in close_long_actions and action2 in long_actions) or (
+            action1 in long_actions and action2 in close_long_actions
+        ):
+            return True
+        if (action1 in close_short_actions and action2 in short_actions) or (
+            action1 in short_actions and action2 in close_short_actions
         ):
             return True
 
