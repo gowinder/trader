@@ -36,6 +36,7 @@ export async function loader(_args: Route.LoaderArgs) {
       action: decisions.action,
       confidence: decisions.confidence,
       reasoning: decisions.reasoning,
+      reasoningZh: decisions.reasoningZh,
     })
     .from(decisions)
     .orderBy(desc(decisions.createdAt))
@@ -252,6 +253,7 @@ export async function loader(_args: Route.LoaderArgs) {
       action: d.action,
       confidence: d.confidence,
       reasoning: d.reasoning,
+      reasoningZh: d.reasoningZh,
     })),
     actionDistribution: actionDistribution.map((d) => ({
       name: formatActionLabel(d.action),
@@ -415,23 +417,27 @@ export default function DashboardIndex({ loaderData }: Route.ComponentProps) {
           value={formatUSD(totalRealizedPnl)}
           variant={totalRealizedPnl >= 0 ? "profit" : "loss"}
           icon={totalRealizedPnl >= 0 ? TrendingUp : TrendingDown}
+          tooltip="所有已平仓位的总盈亏金额"
         />
         <StatCard
           label="未实现盈亏"
           value={formatUSD(unrealizedPnl)}
           variant={unrealizedPnl >= 0 ? "profit" : "loss"}
           icon={unrealizedPnl >= 0 ? TrendingUp : TrendingDown}
+          tooltip="当前持仓的浮动盈亏，实时从交易所获取"
         />
         <StatCard
           label="总盈亏"
           value={formatUSD(totalPnl)}
           variant={totalPnl >= 0 ? "profit" : "loss"}
           icon={totalPnl >= 0 ? TrendingUp : TrendingDown}
+          tooltip="已实现盈亏 + 未实现盈亏"
         />
         <StatCard
           label="账户权益"
           value={totalEquity > 0 ? formatUSD(totalEquity) : "离线"}
           icon={Wallet}
+          tooltip="交易所账户总权益，包含可用余额和持仓保证金"
         />
       </div>
 
@@ -505,27 +511,32 @@ export default function DashboardIndex({ loaderData }: Route.ComponentProps) {
           label="总决策数"
           value={`${totalDecisions}`}
           icon={Activity}
+          tooltip="AI 系统累计做出的交易决策总数"
         />
         <StatCard
           label="今日决策"
           value={`${todayDecisions}`}
           icon={Clock}
+          tooltip="今天 AI 系统做出的决策数量"
         />
         <StatCard
           label="累计交易"
           value={`${totalTrades} 笔`}
           icon={Target}
+          tooltip="累计实际执行的交易笔数（已平仓）"
         />
         <StatCard
           label="历史胜率"
           value={`${totalWinRate}%`}
           icon={Target}
+          tooltip="所有已平仓交易中盈利交易的占比"
         />
         <StatCard
           label="今日盈亏"
           value={formatUSD(todayStats.pnl)}
           variant={todayStats.pnl >= 0 ? "profit" : "loss"}
           icon={todayStats.pnl >= 0 ? TrendingUp : TrendingDown}
+          tooltip="今日已平仓交易的盈亏合计"
         />
       </div>
 
@@ -957,7 +968,7 @@ export default function DashboardIndex({ loaderData }: Route.ComponentProps) {
                       </span>
                     </div>
                     <p className="text-sm text-muted-foreground line-clamp-1">
-                      {decision.reasoning}
+                      {decision.reasoningZh || decision.reasoning}
                     </p>
                   </div>
                   <div className="text-right text-sm">

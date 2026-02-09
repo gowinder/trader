@@ -52,7 +52,8 @@ Output must be valid JSON matching the schema exactly. Do not add any extra expl
 
 ## Output Constraints
 - leverage: Must be >= 1 (no zero or negative leverage)
-- reasoning: Keep it concise (1-2 sentences maximum)
+- reasoning: Keep it concise (1-2 sentences maximum, in English)
+- reasoning_zh: Chinese translation of reasoning (1-2 sentences, in Chinese)
 - All numeric values: Use appropriate precision (2 decimals for prices, integers for leverage)"""
 
 TRADING_USER = """## Multi-Timeframe Analysis Summary
@@ -145,7 +146,12 @@ TRADING_SCHEMA = {
         "reasoning": {
             "type": "string",
             "maxLength": 200,
-            "description": "决策理由 (简短，1-2句话)",
+            "description": "决策理由 (简短，1-2句话，英文)",
+        },
+        "reasoning_zh": {
+            "type": "string",
+            "maxLength": 200,
+            "description": "决策理由的中文翻译 (简短，1-2句话，中文)",
         },
         "execution_urgency": {
             "type": "string",
@@ -163,6 +169,7 @@ TRADING_SCHEMA = {
         "take_profit_price",
         "order_type",
         "reasoning",
+        "reasoning_zh",
         "execution_urgency",
     ],
     "additionalProperties": False,

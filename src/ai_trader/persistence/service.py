@@ -63,11 +63,11 @@ class DecisionPersistenceService:
                 INSERT INTO decisions (
                     symbol, timeframe, action, confidence,
                     leverage, position_size_pct, entry_price,
-                    stop_loss, take_profit, reasoning,
+                    stop_loss, take_profit, reasoning, reasoning_zh,
                     llm_provider, llm_model, llm_raw_output, llm_tokens_used,
                     strategy_preset
                 ) VALUES (
-                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
+                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16
                 ) RETURNING id
                 """,
                 market_data.symbol,
@@ -80,6 +80,7 @@ class DecisionPersistenceService:
                 decision.stop_loss_price,
                 decision.take_profit_price,
                 decision.reasoning,
+                decision.reasoning_zh or None,
                 llm_provider,
                 llm_model,
                 llm_raw_output,

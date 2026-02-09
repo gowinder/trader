@@ -3,6 +3,12 @@ import type { Route } from "./+types/dashboard.decisions.$id";
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
 import { Button } from "~/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "~/components/ui/tabs";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "~/components/ui/tooltip";
 import { cn, formatDateTime, formatUSD, getPnlColorClass } from "~/lib/utils";
 import { ArrowLeft, ChevronDown, ChevronUp } from "lucide-react";
 import { useState } from "react";
@@ -68,6 +74,7 @@ export async function loader({ params }: Route.LoaderArgs) {
         ? parseFloat(decisionRow.takeProfit)
         : null,
       reasoning: decisionRow.reasoning,
+      reasoningZh: decisionRow.reasoningZh,
       llmProvider: decisionRow.llmProvider,
       llmModel: decisionRow.llmModel,
       llmRawOutput: decisionRow.llmRawOutput,
@@ -166,15 +173,15 @@ export default function DecisionDetailPage({ loaderData }: Route.ComponentProps)
           <div className="grid gap-6 md:grid-cols-2">
             <div className="space-y-4">
               <div className="flex justify-between">
-                <span className="text-muted-foreground">交易对</span>
+                <TipLabel label="交易对" tip="交易的加密货币合约对" />
                 <span className="font-medium">{decision.symbol}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-muted-foreground">时间周期</span>
+                <TipLabel label="时间周期" tip="K线分析的时间周期，如 1h, 4h, 1d" />
                 <span className="font-medium">{decision.timeframe}</span>
               </div>
               <div className="flex justify-between">
-                <span className="text-muted-foreground">动作</span>
+                <TipLabel label="动作" tip="AI 决策的交易动作：开多/开空/平多/平空/持有等" />
                 <span
                   className={cn(
                     "rounded px-2 py-1 text-sm font-medium",
@@ -189,31 +196,31 @@ export default function DecisionDetailPage({ loaderData }: Route.ComponentProps)
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-muted-foreground">置信度</span>
+                <TipLabel label="置信度" tip="AI 对本次决策的信心程度 (0-100%)，越高越确信" />
                 <span className="font-medium">{decision.confidence}%</span>
               </div>
             </div>
             <div className="space-y-4">
               <div className="flex justify-between">
-                <span className="text-muted-foreground">入场价格</span>
+                <TipLabel label="入场价格" tip="建议的入场价格" />
                 <span className="font-medium tabular-nums">
                   {decision.entryPrice ? formatUSD(decision.entryPrice) : "-"}
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-muted-foreground">止损</span>
+                <TipLabel label="止损" tip="止损价格，触及后自动平仓以控制亏损" />
                 <span className="font-medium tabular-nums text-destructive">
                   {decision.stopLoss ? formatUSD(decision.stopLoss) : "-"}
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-muted-foreground">止盈</span>
+                <TipLabel label="止盈" tip="止盈价格，触及后自动平仓以锁定利润" />
                 <span className="font-medium tabular-nums text-profit">
                   {decision.takeProfit ? formatUSD(decision.takeProfit) : "-"}
                 </span>
               </div>
               <div className="flex justify-between">
-                <span className="text-muted-foreground">杠杆 / 仓位</span>
+                <TipLabel label="杠杆 / 仓位" tip="杠杆倍数 / 仓位占可用余额的百分比" />
                 <span className="font-medium">
                   {decision.leverage ?? "-"}x / {decision.positionSizePct ?? "-"}%
                 </span>
@@ -223,7 +230,10 @@ export default function DecisionDetailPage({ loaderData }: Route.ComponentProps)
 
           <div className="mt-6">
             <p className="text-sm text-muted-foreground">决策理由</p>
-            <p className="mt-1">{decision.reasoning}</p>
+            <p className="mt-1">{decision.reasoningZh || decision.reasoning}</p>
+            {decision.reasoningZh && decision.reasoning && (
+              <p className="mt-1 text-sm text-muted-foreground">{decision.reasoning}</p>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -275,15 +285,15 @@ export default function DecisionDetailPage({ loaderData }: Route.ComponentProps)
                       <h4 className="font-medium">趋势</h4>
                       <div className="space-y-2 text-sm">
                         <div className="flex justify-between">
-                          <span className="text-muted-foreground">趋势方向</span>
+                          <TipLabel label="趋势方向" tip="综合多个技术指标判断的市场趋势方向" />
                           <span className="text-profit">{technical.trend}</span>
                         </div>
                         <div className="flex justify-between">
-                          <span className="text-muted-foreground">趋势信心</span>
+                          <TipLabel label="趋势信心" tip="AI 对当前趋势判断的置信度，越高越确定" />
                           <span>{technical.trendConfidence}%</span>
                         </div>
                         <div className="flex justify-between">
-                          <span className="text-muted-foreground">信号强度</span>
+                          <TipLabel label="信号强度" tip="当前交易信号的强度，从强卖到强买" />
                           <span>{technical.signalStrength}</span>
                         </div>
                       </div>
@@ -293,15 +303,15 @@ export default function DecisionDetailPage({ loaderData }: Route.ComponentProps)
                       <h4 className="font-medium">指标</h4>
                       <div className="space-y-2 text-sm">
                         <div className="flex justify-between">
-                          <span className="text-muted-foreground">RSI</span>
+                          <TipLabel label="RSI" tip="相对强弱指数 (0-100)：>70 超买可能回调，<30 超卖可能反弹" />
                           <span className="tabular-nums">{technical.rsi ?? "-"}</span>
                         </div>
                         <div className="flex justify-between">
-                          <span className="text-muted-foreground">MACD</span>
+                          <TipLabel label="MACD" tip="移动平均收敛散度：正值看多，负值看空，金叉/死叉为买卖信号" />
                           <span className="tabular-nums">{technical.macd ?? "-"}</span>
                         </div>
                         <div className="flex justify-between">
-                          <span className="text-muted-foreground">ATR</span>
+                          <TipLabel label="ATR" tip="平均真实波幅：衡量市场波动性，用于设置止损止盈距离" />
                           <span className="tabular-nums">{technical.atr ?? "-"}</span>
                         </div>
                       </div>
@@ -311,7 +321,7 @@ export default function DecisionDetailPage({ loaderData }: Route.ComponentProps)
                       <h4 className="font-medium">支撑阻力</h4>
                       <div className="space-y-2 text-sm">
                         <div>
-                          <span className="text-muted-foreground">支撑位: </span>
+                          <TipLabel label="支撑位" tip="价格下方的关键支撑价位，跌破可能加速下跌" />{": "}
                           <span className="tabular-nums">
                             {technical.supportLevels.length > 0
                               ? technical.supportLevels.map((l) => formatUSD(l)).join(", ")
@@ -319,7 +329,7 @@ export default function DecisionDetailPage({ loaderData }: Route.ComponentProps)
                           </span>
                         </div>
                         <div>
-                          <span className="text-muted-foreground">阻力位: </span>
+                          <TipLabel label="阻力位" tip="价格上方的关键阻力价位，突破可能加速上涨" />{": "}
                           <span className="tabular-nums">
                             {technical.resistanceLevels.length > 0
                               ? technical.resistanceLevels.map((l) => formatUSD(l)).join(", ")
@@ -353,7 +363,7 @@ export default function DecisionDetailPage({ loaderData }: Route.ComponentProps)
                 <div className="grid gap-6 md:grid-cols-2">
                   <div className="space-y-4">
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">风险等级</span>
+                      <TipLabel label="风险等级" tip="综合评估当前市场环境的风险程度：low(低)、medium(中)、high(高)" />
                       <span
                         className={cn(
                           "rounded px-2 py-1 text-sm font-medium",
@@ -366,15 +376,15 @@ export default function DecisionDetailPage({ loaderData }: Route.ComponentProps)
                       </span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">风险评分</span>
+                      <TipLabel label="风险评分" tip="风险量化评分 (0-100)，分数越高风险越大" />
                       <span>{risk.riskScore}/100</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">推荐杠杆</span>
+                      <TipLabel label="推荐杠杆" tip="根据当前风险水平推荐的杠杆倍数" />
                       <span>{risk.recommendedLeverage}x</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">推荐仓位</span>
+                      <TipLabel label="推荐仓位" tip="建议使用的仓位大小占可用余额的百分比" />
                       <span>{risk.recommendedPositionPct}%</span>
                     </div>
                   </div>
@@ -412,7 +422,7 @@ export default function DecisionDetailPage({ loaderData }: Route.ComponentProps)
                 <div className="grid gap-6 md:grid-cols-2">
                   <div className="space-y-4">
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">综合评分</span>
+                      <TipLabel label="综合评分" tip="新闻情绪综合得分，正值偏多，负值偏空" />
                       <span
                         className={cn(
                           "font-medium",
@@ -424,11 +434,11 @@ export default function DecisionDetailPage({ loaderData }: Route.ComponentProps)
                       </span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">新闻数量</span>
+                      <TipLabel label="新闻数量" tip="分析的相关新闻文章数量" />
                       <span>{sentiment.newsCount}</span>
                     </div>
                     <div className="flex justify-between">
-                      <span className="text-muted-foreground">看多 / 看空</span>
+                      <TipLabel label="看多 / 看空" tip="看多信号数量 / 看空信号数量" />
                       <span>
                         <span className="text-profit">{sentiment.bullishCount}</span>
                         {" / "}
@@ -487,6 +497,23 @@ export default function DecisionDetailPage({ loaderData }: Route.ComponentProps)
         </Card>
       )}
     </div>
+  );
+}
+
+function TipLabel({ label, tip }: { label: string; tip: string }) {
+  return (
+    <TooltipProvider delayDuration={200}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="text-muted-foreground cursor-help border-b border-dotted border-muted-foreground/50">
+            {label}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>
+          <p className="max-w-xs">{tip}</p>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }
 

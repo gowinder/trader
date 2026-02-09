@@ -30,6 +30,7 @@ interface DecisionSummary {
   stopLoss: number | null;
   takeProfit: number | null;
   reasoning: string | null;
+  reasoningZh: string | null;
   llmProvider: string | null;
   strategyPreset: string | null;
 }
@@ -104,6 +105,7 @@ export async function loader(_args: Route.LoaderArgs) {
         stopLoss: decisionsTable.stopLoss,
         takeProfit: decisionsTable.takeProfit,
         reasoning: decisionsTable.reasoning,
+        reasoningZh: decisionsTable.reasoningZh,
         llmProvider: decisionsTable.llmProvider,
         strategyPreset: decisionsTable.strategyPreset,
       })
@@ -121,6 +123,7 @@ export async function loader(_args: Route.LoaderArgs) {
       stopLoss: d.stopLoss ? parseFloat(d.stopLoss) : null,
       takeProfit: d.takeProfit ? parseFloat(d.takeProfit) : null,
       reasoning: d.reasoning,
+      reasoningZh: d.reasoningZh,
       llmProvider: d.llmProvider,
       strategyPreset: d.strategyPreset,
     }));
@@ -193,23 +196,27 @@ export default function PositionsPage({ loaderData }: Route.ComponentProps) {
           label="总交易数"
           value={`${stats.totalTrades}`}
           icon={Activity}
+          tooltip="已平仓的总交易笔数"
         />
         <StatCard
           label="胜率"
           value={`${stats.winRate}%`}
           icon={Target}
+          tooltip="盈利交易占总交易的百分比"
         />
         <StatCard
           label="总盈亏"
           value={formatUSD(stats.totalPnl)}
           variant={stats.totalPnl >= 0 ? "profit" : "loss"}
           icon={TrendingUp}
+          tooltip="所有已平仓交易的累计盈亏"
         />
         <StatCard
           label="平均收益率"
           value={formatPercent(stats.avgPnlPercent)}
           variant={stats.avgPnlPercent >= 0 ? "profit" : "loss"}
           icon={Percent}
+          tooltip="所有已平仓交易的平均收益率百分比"
         />
       </div>
 
@@ -493,8 +500,8 @@ function PositionRow({
                           )}
                         </td>
                         <td className="max-w-[200px] py-2 text-muted-foreground">
-                          <p className="truncate" title={d.reasoning ?? undefined}>
-                            {d.reasoning ?? "-"}
+                          <p className="truncate" title={(d.reasoningZh || d.reasoning) ?? undefined}>
+                            {d.reasoningZh || d.reasoning || "-"}
                           </p>
                         </td>
                         <td className="py-2">
