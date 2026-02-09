@@ -54,6 +54,7 @@ class TradingDecision(BaseModel):
     take_profit_price: Optional[float] = None
     order_type: Literal["market", "limit"] = "market"
     reasoning: str = Field(default="")
+    reasoning_zh: str = Field(default="")
     execution_urgency: Literal["immediate", "wait_for_price", "low_priority"] = (
         "wait_for_price"
     )

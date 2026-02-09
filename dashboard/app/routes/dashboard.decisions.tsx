@@ -64,6 +64,7 @@ export async function loader({ request }: Route.LoaderArgs) {
         stopLoss: decisionsTable.stopLoss,
         takeProfit: decisionsTable.takeProfit,
         reasoning: decisionsTable.reasoning,
+        reasoningZh: decisionsTable.reasoningZh,
         llmProvider: decisionsTable.llmProvider,
         strategyPreset: decisionsTable.strategyPreset,
       })
@@ -89,6 +90,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       stopLoss: d.stopLoss ? parseFloat(d.stopLoss) : null,
       takeProfit: d.takeProfit ? parseFloat(d.takeProfit) : null,
       reasoning: d.reasoning,
+      reasoningZh: d.reasoningZh,
       llmProvider: d.llmProvider,
       strategyPreset: d.strategyPreset,
       resultPnl: null, // TODO: 从 position_history 计算
@@ -314,9 +316,9 @@ export default function DecisionsPage({ loaderData }: Route.ComponentProps) {
                       <td className="max-w-xs px-4 py-3 text-sm text-muted-foreground">
                         <p
                           className="truncate"
-                          title={decision.reasoning ?? undefined}
+                          title={(decision.reasoningZh || decision.reasoning) ?? undefined}
                         >
-                          {decision.reasoning ?? "-"}
+                          {decision.reasoningZh || decision.reasoning || "-"}
                         </p>
                       </td>
                       <td className="px-4 py-3 text-center">

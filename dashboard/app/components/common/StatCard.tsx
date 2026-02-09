@@ -1,5 +1,11 @@
 import { cn, getPnlColorClass } from "~/lib/utils";
 import { Card, CardContent } from "~/components/ui/card";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "~/components/ui/tooltip";
 import type { LucideIcon } from "lucide-react";
 
 interface StatCardProps {
@@ -9,6 +15,7 @@ interface StatCardProps {
   change?: number;
   variant?: "default" | "profit" | "loss";
   className?: string;
+  tooltip?: string;
 }
 
 export function StatCard({
@@ -18,8 +25,9 @@ export function StatCard({
   change,
   variant = "default",
   className,
+  tooltip,
 }: StatCardProps) {
-  return (
+  const card = (
     <Card className={cn("", className)}>
       <CardContent className="p-4">
         <div className="flex items-center justify-between">
@@ -43,5 +51,18 @@ export function StatCard({
         )}
       </CardContent>
     </Card>
+  );
+
+  if (!tooltip) return card;
+
+  return (
+    <TooltipProvider delayDuration={300}>
+      <Tooltip>
+        <TooltipTrigger asChild>{card}</TooltipTrigger>
+        <TooltipContent>
+          <p>{tooltip}</p>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }

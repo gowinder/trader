@@ -37,6 +37,7 @@ export const decisions = pgTable(
     stopLoss: decimal("stop_loss", { precision: 20, scale: 8 }),
     takeProfit: decimal("take_profit", { precision: 20, scale: 8 }),
     reasoning: text("reasoning"),
+    reasoningZh: text("reasoning_zh"),
 
     // LLM 原始输出
     llmProvider: varchar("llm_provider", { length: 30 }),
