@@ -5,7 +5,8 @@ import { formatUSD, formatPercent, cn } from "~/lib/utils";
 import { TrendingUp, TrendingDown, Target, Activity, Clock, Wallet } from "lucide-react";
 import { db } from "db";
 import { decisions, dailyStats, positionHistory } from "db/schema";
-import { desc, sql, eq, gte } from "drizzle-orm";
+import { desc, sql, eq, gte, and, asc, isNotNull } from "drizzle-orm";
+import { useState, useMemo } from "react";
 import { createClient } from "redis";
 import {
   PieChart,
@@ -207,7 +208,28 @@ export async function loader(_args: Route.LoaderArgs) {
     console.error("Failed to fetch account state from Redis:", e);
   }
 
+  // 获取收益走势数据（所有 closed 仓位，按 exit_time 排序）
+  const pnlHistoryData = await db
+    .select({
+      exitTime: positionHistory.exitTime,
+      realizedPnl: positionHistory.realizedPnl,
+      symbol: positionHistory.symbol,
+    })
+    .from(positionHistory)
+    .where(
+      and(
+        eq(positionHistory.status, "closed"),
+        isNotNull(positionHistory.exitTime)
+      )
+    )
+    .orderBy(asc(positionHistory.exitTime));
+
   return {
+    pnlHistory: pnlHistoryData.map((p) => ({
+      exitTime: p.exitTime!.toISOString(),
+      realizedPnl: Number(p.realizedPnl) || 0,
+      symbol: p.symbol,
+    })),
     todayStats: {
       pnl: Number(stats.totalPnl) || 0,
       pnlPct: 0,
@@ -332,7 +354,47 @@ export default function DashboardIndex({ loaderData }: Route.ComponentProps) {
     totalTrades,
     totalWinRate,
     accountState,
+    pnlHistory,
   } = loaderData;
+
+  // 收益走势时间范围
+  const timeRanges = [
+    { key: "15m", label: "15分钟", ms: 15 * 60 * 1000 },
+    { key: "30m", label: "30分钟", ms: 30 * 60 * 1000 },
+    { key: "1h", label: "1小时", ms: 60 * 60 * 1000 },
+    { key: "12h", label: "12小时", ms: 12 * 60 * 60 * 1000 },
+    { key: "24h", label: "24小时", ms: 24 * 60 * 60 * 1000 },
+    { key: "1w", label: "1周", ms: 7 * 24 * 60 * 60 * 1000 },
+  ] as const;
+  const [selectedRange, setSelectedRange] = useState("24h");
+
+  const pnlCurveData = useMemo(() => {
+    const range = timeRanges.find((r) => r.key === selectedRange);
+    if (!range || !pnlHistory.length) return [];
+
+    const cutoff = Date.now() - range.ms;
+    const filtered = pnlHistory.filter(
+      (p) => new Date(p.exitTime).getTime() >= cutoff
+    );
+
+    let cumPnl = 0;
+    return filtered.map((p) => {
+      cumPnl += p.realizedPnl;
+      return {
+        time: p.exitTime,
+        pnl: p.realizedPnl,
+        cumPnl,
+      };
+    });
+  }, [pnlHistory, selectedRange]);
+
+  const formatTimeAxis = (iso: string) => {
+    const d = new Date(iso);
+    if (selectedRange === "1w") {
+      return `${(d.getMonth() + 1).toString().padStart(2, "0")}-${d.getDate().toString().padStart(2, "0")}`;
+    }
+    return `${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
+  };
 
   // 从账户状态中提取未实现 PNL
   const unrealizedPnl = accountState?.account?.unrealized_pnl ?? 0;
@@ -372,6 +434,70 @@ export default function DashboardIndex({ loaderData }: Route.ComponentProps) {
           icon={Wallet}
         />
       </div>
+
+      {/* 收益走势曲线 */}
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between pb-2">
+          <CardTitle className="text-base">收益走势</CardTitle>
+          <div className="flex gap-1">
+            {timeRanges.map((r) => (
+              <button
+                key={r.key}
+                onClick={() => setSelectedRange(r.key)}
+                className={cn(
+                  "px-2 py-1 text-xs rounded-md transition-colors",
+                  selectedRange === r.key
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-muted text-muted-foreground hover:bg-muted/80"
+                )}
+              >
+                {r.label}
+              </button>
+            ))}
+          </div>
+        </CardHeader>
+        <CardContent>
+          {pnlCurveData.length > 0 ? (
+            <ResponsiveContainer width="100%" height={260}>
+              <AreaChart data={pnlCurveData}>
+                <XAxis
+                  dataKey="time"
+                  tickFormatter={formatTimeAxis}
+                  fontSize={12}
+                />
+                <YAxis
+                  fontSize={12}
+                  tickFormatter={(v) => `$${v.toLocaleString()}`}
+                />
+                <Tooltip
+                  labelFormatter={(v) => {
+                    const d = new Date(v);
+                    return `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, "0")}-${d.getDate().toString().padStart(2, "0")} ${d.getHours().toString().padStart(2, "0")}:${d.getMinutes().toString().padStart(2, "0")}`;
+                  }}
+                  formatter={(v: number, name: string) => {
+                    const labels: Record<string, string> = {
+                      cumPnl: "累计盈亏",
+                      pnl: "单笔盈亏",
+                    };
+                    return [formatUSD(v), labels[name] || name];
+                  }}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="cumPnl"
+                  stroke="#3b82f6"
+                  fill="#3b82f6"
+                  fillOpacity={0.3}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          ) : (
+            <div className="flex h-[260px] items-center justify-center text-muted-foreground">
+              暂无收益数据
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Stats Grid */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
