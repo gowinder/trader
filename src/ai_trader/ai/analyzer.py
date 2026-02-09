@@ -64,4 +64,10 @@ class MarketAnalyzer:
             temperature=0.3,
         )
 
+        # LLM 有时返回嵌套结构如 {"analysis": {...}}，需要展开
+        if "trend" not in response and len(response) == 1:
+            inner = next(iter(response.values()))
+            if isinstance(inner, dict) and "trend" in inner:
+                response = inner
+
         return TechnicalAnalysisResult(**response)
