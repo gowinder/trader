@@ -342,10 +342,14 @@ class HybridDecisionEngine(DecisionEngine):
         quant_score = 0.0
         quant_confidence = 0.0
         if quant_signal:
-            if quant_signal.action == SignalAction.LONG:
+            if quant_signal.action in (SignalAction.LONG,):
                 quant_score = 0.5
-            elif quant_signal.action == SignalAction.SHORT:
+            elif quant_signal.action in (SignalAction.SHORT,):
                 quant_score = -0.5
+            elif quant_signal.action == SignalAction.CLOSE_LONG:
+                quant_score = -0.3  # 平多头 = 偏空信号
+            elif quant_signal.action == SignalAction.CLOSE_SHORT:
+                quant_score = 0.3  # 平空头 = 偏多信号
             quant_confidence = quant_signal.confidence
 
         # Sentiment adjustment
@@ -380,6 +384,15 @@ class HybridDecisionEngine(DecisionEngine):
             action = "open_long"
         elif final_score < -SCORE_THRESHOLD and final_confidence > CONFIDENCE_THRESHOLD:
             action = "open_short"
+
+        # 持仓时反向信号 → 先平仓
+        if current_position and current_position.size > 0:
+            if current_position.side == "long" and action == "open_short":
+                action = "close_long"
+                logger.info("Hybrid: reverse signal detected, closing long before opening short")
+            elif current_position.side == "short" and action == "open_long":
+                action = "close_short"
+                logger.info("Hybrid: reverse signal detected, closing short before opening long")
 
         # Apply sentiment safety checks
         if sentiment_result:

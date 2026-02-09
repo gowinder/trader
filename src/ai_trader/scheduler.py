@@ -554,6 +554,74 @@ class Scheduler:
         except Exception as e:
             logger.warning(f"Failed to publish account state: {e}")
 
+    async def _check_stop_loss_take_profit(
+        self, symbol: str, position, current_price: float
+    ) -> Optional[str]:
+        """检查当前持仓是否触发止损或止盈，返回平仓 action 或 None。"""
+        if not position or position.size <= 0:
+            return None
+
+        entry_price = position.entry_price
+        side = position.side.lower()
+
+        # 尝试从 decisions 表获取开仓决策的止损止盈
+        stop_loss = None
+        take_profit = None
+        if self.db_manager and self._current_position_id:
+            row = await self.db_manager.fetchrow(
+                """
+                SELECT d.stop_loss, d.take_profit
+                FROM position_history ph
+                JOIN decisions d ON d.id = ph.entry_decision_id
+                WHERE ph.id = $1
+                """,
+                self._current_position_id,
+            )
+            if row:
+                stop_loss = float(row["stop_loss"]) if row["stop_loss"] else None
+                take_profit = float(row["take_profit"]) if row["take_profit"] else None
+
+        # 如果数据库没有，用配置百分比计算
+        if stop_loss is None:
+            sl_pct = config.stop_loss_percent / 100.0
+            if side == "long":
+                stop_loss = entry_price * (1 - sl_pct)
+            else:
+                stop_loss = entry_price * (1 + sl_pct)
+
+        if take_profit is None:
+            tp_pct = config.take_profit_percent / 100.0
+            if side == "long":
+                take_profit = entry_price * (1 + tp_pct)
+            else:
+                take_profit = entry_price * (1 - tp_pct)
+
+        # 检查触发条件
+        if side == "long":
+            if current_price <= stop_loss:
+                logger.info(
+                    f"[SL TRIGGERED] {symbol} LONG: price={current_price} <= stop_loss={stop_loss}"
+                )
+                return "close_long"
+            if current_price >= take_profit:
+                logger.info(
+                    f"[TP TRIGGERED] {symbol} LONG: price={current_price} >= take_profit={take_profit}"
+                )
+                return "close_long"
+        else:  # short
+            if current_price >= stop_loss:
+                logger.info(
+                    f"[SL TRIGGERED] {symbol} SHORT: price={current_price} >= stop_loss={stop_loss}"
+                )
+                return "close_short"
+            if current_price <= take_profit:
+                logger.info(
+                    f"[TP TRIGGERED] {symbol} SHORT: price={current_price} <= take_profit={take_profit}"
+                )
+                return "close_short"
+
+        return None
+
     async def _persist_position_change(
         self,
         action: str,
@@ -814,6 +882,50 @@ class Scheduler:
                 f"Insufficient balance or failed to parse account: balance={balance}, equity={equity}"
             )
             return
+
+        # 1.5 止损止盈自动检查（在 LLM 决策之前）
+        if position and position.size > 0 and self._current_position_id:
+            sl_tp_action = await self._check_stop_loss_take_profit(
+                symbol, position, market_data.current_price
+            )
+            if sl_tp_action:
+                from .models.decision import TradingDecision
+
+                quantity = position.size
+                if config.trading_mode == "testnet":
+                    quantity = round(quantity, 6)
+                else:
+                    quantity = round(quantity, 1)
+
+                if quantity > 0:
+                    if config.trading_mode == "testnet":
+                        order_id = f"SIM-{symbol}-{sl_tp_action}"
+                        logger.info(f"[SL/TP AUTO] Order: {sl_tp_action} {quantity} {symbol}")
+                    else:
+                        sl_decision = TradingDecision(
+                            action=sl_tp_action,
+                            confidence=100.0,
+                            leverage=position.leverage,
+                            position_size_percent=0,
+                            reasoning=f"Auto {sl_tp_action}: SL/TP triggered at {market_data.current_price}",
+                            execution_urgency="immediate",
+                        )
+                        order_id = await self.order_mgr.execute_order(
+                            sl_decision, symbol, quantity
+                        )
+
+                    if self.persistence_service and order_id:
+                        await self._persist_position_change(
+                            action=sl_tp_action,
+                            symbol=symbol,
+                            price=market_data.current_price,
+                            size=quantity,
+                            leverage=position.leverage,
+                            position=position,
+                        )
+
+                    await self._publish_account_state(symbol, account, position, market_data.current_price)
+                    return
 
         # 2. 决策
         try:
