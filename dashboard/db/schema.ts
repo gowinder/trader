@@ -404,6 +404,42 @@ export const operationLogs = pgTable("operation_logs", {
   ipAddress: varchar("ip_address", { length: 50 }),
 });
 
+// ==================== 策略预设 ====================
+
+export const strategyPresets = pgTable(
+  "strategy_presets",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    name: varchar("name", { length: 50 }).unique().notNull(),
+    displayName: varchar("display_name", { length: 100 }).notNull(),
+    description: text("description"),
+    category: varchar("category", { length: 20 }).notNull(),
+    riskLevel: varchar("risk_level", { length: 20 }).notNull(),
+    configJson: jsonb("config_json").notNull(),
+    isSystem: boolean("is_system").default(true).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    nameIdx: uniqueIndex("idx_strategy_presets_name").on(table.name),
+  })
+);
+
+export const activeStrategy = pgTable(
+  "active_strategy",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    presetId: integer("preset_id")
+      .references(() => strategyPresets.id)
+      .notNull(),
+    activatedAt: timestamp("activated_at", { withTimezone: true }).notNull().defaultNow(),
+    deactivatedAt: timestamp("deactivated_at", { withTimezone: true }),
+  },
+  (table) => ({
+    activeIdx: index("idx_active_strategy_active").on(table.deactivatedAt),
+  })
+);
+
 // ==================== 关系定义 ====================
 
 export const decisionsRelations = relations(decisions, ({ one }) => ({
