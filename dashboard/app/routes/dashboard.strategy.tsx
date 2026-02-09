@@ -1,14 +1,17 @@
 import { useState } from "react";
 import type { Route } from "./+types/dashboard.strategy";
 
-export async function loader(_args: Route.LoaderArgs) {
-  const res = await fetch(
-    `${process.env.INTERNAL_API_URL || "http://localhost:5173"}/api/strategy-presets`
-  );
-  if (!res.ok) {
+export async function loader({ request }: Route.LoaderArgs) {
+  const baseUrl = new URL(request.url).origin;
+  try {
+    const res = await fetch(`${baseUrl}/api/strategy-presets`);
+    if (!res.ok) {
+      return { presets: [], activePresetId: null, activatedAt: null };
+    }
+    return await res.json();
+  } catch {
     return { presets: [], activePresetId: null, activatedAt: null };
   }
-  return await res.json();
 }
 
 interface PresetConfig {

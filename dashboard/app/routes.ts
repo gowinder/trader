@@ -10,6 +10,9 @@ export default [
   route("api/backtest-trigger", "routes/api.backtest-trigger.ts"),
   route("api/trading-config", "routes/api.trading-config.ts"),
   route("api/trading-trigger", "routes/api.trading-trigger.ts"),
+  route("api/strategy-presets", "routes/api.strategy-presets.ts"),
+  route("api/strategy-presets/activate", "routes/api.strategy-presets.activate.ts"),
+  route("api/strategy-presets/history", "routes/api.strategy-presets.history.ts"),
   route("dashboard", "routes/dashboard.tsx", [
     index("routes/dashboard._index.tsx"),
     route("chart", "routes/dashboard.chart.tsx"),
@@ -24,5 +27,6 @@ export default [
     route("alerts", "routes/dashboard.alerts.tsx"),
     route("control", "routes/dashboard.control.tsx"),
     route("settings", "routes/dashboard.settings.tsx"),
+    route("strategy", "routes/dashboard.strategy.tsx"),
   ]),
 ] satisfies RouteConfig;
