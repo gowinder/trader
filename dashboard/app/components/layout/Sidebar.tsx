@@ -8,6 +8,7 @@ import {
   BarChart3,
   FlaskConical,
   SlidersHorizontal,
+  Layers,
   Settings,
   Bell,
   Power,
@@ -24,6 +25,7 @@ const navItems = [
   { to: "/dashboard/llm-usage", icon: Cpu, label: "LLM" },
   { to: "/dashboard/backtest", icon: FlaskConical, label: "回测" },
   { to: "/dashboard/backtest-settings", icon: SlidersHorizontal, label: "回测设置" },
+  { to: "/dashboard/strategy", icon: Layers, label: "策略" },
 ];
 
 const bottomItems = [
