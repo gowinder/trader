@@ -126,6 +126,7 @@ class Scheduler:
 
             # Load initial config from Redis
             await self._load_trading_config()
+            await self._load_llm_providers_config()
 
             # Start config listener in background
             asyncio.create_task(self._config_listener())
@@ -200,6 +201,24 @@ class Scheduler:
         except Exception as e:
             logger.error(f"Failed to load trading config: {e}")
 
+    async def _load_llm_providers_config(self):
+        """从 Redis 加载 LLM provider 优先级配置"""
+        if not self._redis:
+            return
+
+        try:
+            data = await self._redis.get("llm:providers:config")
+            if data:
+                cfg = json.loads(data)
+                providers = cfg.get("providers", [])
+                if providers:
+                    from .ai.llm_manager import get_llm_manager
+                    manager = get_llm_manager()
+                    manager.update_providers(providers)
+                    logger.info(f"Loaded LLM providers config: {[p.get('name') for p in providers]}")
+        except Exception as e:
+            logger.error(f"Failed to load LLM providers config: {e}")
+
     async def _config_listener(self):
         """监听配置更新"""
         if not self._redis:
@@ -207,7 +226,7 @@ class Scheduler:
 
         try:
             pubsub = self._redis.pubsub()
-            await pubsub.subscribe("trading:config:updated", "strategy:preset:updated")
+            await pubsub.subscribe("trading:config:updated", "strategy:preset:updated", "llm:providers:updated")
 
             async for message in pubsub.listen():
                 if message["type"] == "message":
@@ -216,6 +235,14 @@ class Scheduler:
                         if channel == "strategy:preset:updated":
                             logger.info("Strategy preset update received")
                             await self._load_active_preset()
+                        elif channel == "llm:providers:updated":
+                            cfg = json.loads(message["data"])
+                            providers = cfg.get("providers", [])
+                            if providers:
+                                from .ai.llm_manager import get_llm_manager
+                                manager = get_llm_manager()
+                                manager.update_providers(providers)
+                                logger.info(f"LLM providers updated: {[p.get('name') for p in providers]}")
                         else:
                             cfg = json.loads(message["data"])
                             self._trading_enabled = cfg.get("enabled", True)

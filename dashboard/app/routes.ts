@@ -10,6 +10,7 @@ export default [
   route("api/backtest-trigger", "routes/api.backtest-trigger.ts"),
   route("api/trading-config", "routes/api.trading-config.ts"),
   route("api/trading-trigger", "routes/api.trading-trigger.ts"),
+  route("api/llm-providers", "routes/api.llm-providers.ts"),
   route("api/strategy-presets", "routes/api.strategy-presets.ts"),
   route("api/strategy-presets/activate", "routes/api.strategy-presets.activate.ts"),
   route("api/strategy-presets/history", "routes/api.strategy-presets.history.ts"),
