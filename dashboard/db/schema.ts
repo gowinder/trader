@@ -44,6 +44,9 @@ export const decisions = pgTable(
     llmRawOutput: text("llm_raw_output"),
     llmTokensUsed: integer("llm_tokens_used"),
 
+    // 策略预设
+    strategyPreset: varchar("strategy_preset", { length: 50 }),
+
     // 关联
     orderId: uuid("order_id").references(() => orders.id),
   },

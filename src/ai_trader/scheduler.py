@@ -174,6 +174,7 @@ class Scheduler:
 
             # 重建决策引擎
             self.decision_engine = HybridDecisionEngine(self.llm)
+            self.decision_engine.active_preset_name = self._active_preset_name
 
             # 更新信号过滤器间隔
             interval_sec = preset_config.get("min_trade_interval_seconds", 21600)
