@@ -65,6 +65,7 @@ export async function loader({ request }: Route.LoaderArgs) {
         takeProfit: decisionsTable.takeProfit,
         reasoning: decisionsTable.reasoning,
         llmProvider: decisionsTable.llmProvider,
+        strategyPreset: decisionsTable.strategyPreset,
       })
       .from(decisionsTable)
       .where(whereClause)
@@ -89,6 +90,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       takeProfit: d.takeProfit ? parseFloat(d.takeProfit) : null,
       reasoning: d.reasoning,
       llmProvider: d.llmProvider,
+      strategyPreset: d.strategyPreset,
       resultPnl: null, // TODO: 从 position_history 计算
     })),
     pagination: {
@@ -217,6 +219,9 @@ export default function DecisionsPage({ loaderData }: Route.ComponentProps) {
                     入场价
                   </th>
                   <th className="px-4 py-3 text-left text-sm font-medium">
+                    策略
+                  </th>
+                  <th className="px-4 py-3 text-left text-sm font-medium">
                     盈亏
                   </th>
                   <th className="px-4 py-3 text-left text-sm font-medium">
@@ -231,7 +236,7 @@ export default function DecisionsPage({ loaderData }: Route.ComponentProps) {
                 {decisions.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={8}
+                      colSpan={9}
                       className="px-4 py-8 text-center text-muted-foreground"
                     >
                       暂无数据
@@ -287,6 +292,15 @@ export default function DecisionsPage({ loaderData }: Route.ComponentProps) {
                         {decision.entryPrice
                           ? formatUSD(decision.entryPrice)
                           : "-"}
+                      </td>
+                      <td className="px-4 py-3 text-sm">
+                        {decision.strategyPreset ? (
+                          <span className="rounded bg-muted px-2 py-0.5 text-xs">
+                            {formatPresetName(decision.strategyPreset)}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">-</span>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-sm tabular-nums">
                         {decision.resultPnl !== null ? (
@@ -357,6 +371,19 @@ export default function DecisionsPage({ loaderData }: Route.ComponentProps) {
       </div>
     </div>
   );
+}
+
+function formatPresetName(name: string): string {
+  const map: Record<string, string> = {
+    steady_trend: "稳健趋势",
+    aggressive_trend: "激进趋势",
+    range_harvest: "震荡收割",
+    breakout_hunter: "突破猎手",
+    mild_scalping: "温和剥头皮",
+    aggressive_scalping: "激进剥头皮",
+    balanced_conservative: "均衡保守",
+  };
+  return map[name] || name;
 }
 
 function formatAction(action: string): string {

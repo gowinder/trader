@@ -62,6 +62,9 @@ class HybridDecisionEngine(DecisionEngine):
         self.persistence_service: Optional[DecisionPersistenceService] = None
         self._persistence_initialized = False
 
+        # 当前激活的策略预设名称
+        self.active_preset_name: Optional[str] = None
+
     def _init_sentiment_analyzer(self):
         """Initialize sentiment analyzer with configured data sources"""
         data_sources = []
@@ -252,6 +255,7 @@ class HybridDecisionEngine(DecisionEngine):
                     sentiment=sentiment_result,
                     llm_provider=config.llm_provider,
                     llm_model=config.llm_model,
+                    strategy_preset=self.active_preset_name,
                 )
             except Exception as e:
                 logger.error(f"Failed to persist decision: {e}")

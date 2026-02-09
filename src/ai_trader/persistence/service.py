@@ -38,6 +38,7 @@ class DecisionPersistenceService:
         llm_model: Optional[str] = None,
         llm_raw_output: Optional[str] = None,
         llm_tokens_used: Optional[int] = None,
+        strategy_preset: Optional[str] = None,
     ) -> UUID:
         """保存完整决策数据
 
@@ -63,9 +64,10 @@ class DecisionPersistenceService:
                     symbol, timeframe, action, confidence,
                     leverage, position_size_pct, entry_price,
                     stop_loss, take_profit, reasoning,
-                    llm_provider, llm_model, llm_raw_output, llm_tokens_used
+                    llm_provider, llm_model, llm_raw_output, llm_tokens_used,
+                    strategy_preset
                 ) VALUES (
-                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15
                 ) RETURNING id
                 """,
                 market_data.symbol,
@@ -82,6 +84,7 @@ class DecisionPersistenceService:
                 llm_model,
                 llm_raw_output,
                 llm_tokens_used,
+                strategy_preset,
             )
 
             # 2. 插入技术分析快照

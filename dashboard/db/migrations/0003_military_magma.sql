@@ -1,0 +1,1 @@
+ALTER TABLE "decisions" ADD COLUMN "strategy_preset" varchar(50);
