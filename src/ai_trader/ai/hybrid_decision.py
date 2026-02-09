@@ -385,7 +385,7 @@ class HybridDecisionEngine(DecisionEngine):
         elif final_score < -SCORE_THRESHOLD and final_confidence > CONFIDENCE_THRESHOLD:
             action = "open_short"
 
-        # 持仓时反向信号 → 先平仓
+        # 持仓时反向信号 → 先平仓；同方向重复信号 → hold
         if current_position and current_position.size > 0:
             if current_position.side == "long" and action == "open_short":
                 action = "close_long"
@@ -393,6 +393,12 @@ class HybridDecisionEngine(DecisionEngine):
             elif current_position.side == "short" and action == "open_long":
                 action = "close_short"
                 logger.info("Hybrid: reverse signal detected, closing short before opening long")
+            elif current_position.side == "long" and action == "open_long":
+                action = "hold"
+                logger.info("Hybrid: already holding long, ignoring duplicate open_long signal")
+            elif current_position.side == "short" and action == "open_short":
+                action = "hold"
+                logger.info("Hybrid: already holding short, ignoring duplicate open_short signal")
 
         # Apply sentiment safety checks
         if sentiment_result:

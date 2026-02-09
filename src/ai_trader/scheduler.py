@@ -867,6 +867,22 @@ class Scheduler:
             position = await self.position_mgr.get_position(symbol)
             account = await self.exchange.get_account()  # Now returns AccountInfo model
 
+            # Live 模式：重启后从数据库恢复 _current_position_id
+            if position and position.size > 0 and not self._current_position_id and self.db_manager:
+                row = await self.db_manager.fetchrow(
+                    """
+                    SELECT id FROM position_history
+                    WHERE symbol = $1 AND status = 'open' AND entry_size > 0
+                    ORDER BY entry_time DESC LIMIT 1
+                    """,
+                    symbol,
+                )
+                if row:
+                    self._current_position_id = row["id"]
+                    logger.info(f"Recovered position_id {self._current_position_id} for {symbol} from database")
+                else:
+                    logger.warning(f"Position exists in exchange but not found in database for {symbol}")
+
         # Extract account balance from AccountInfo
         balance = account.available_balance
         equity = account.total_equity
