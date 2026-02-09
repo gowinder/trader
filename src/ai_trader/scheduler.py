@@ -508,6 +508,22 @@ class Scheduler:
 
             elif action in ["close_long", "close_short"]:
                 # 平仓
+                if not self._current_position_id and self.db_manager:
+                    row = await self.db_manager.fetchrow(
+                        """
+                        SELECT id
+                        FROM position_history
+                        WHERE symbol = $1
+                          AND status = 'open'
+                          AND entry_size > 0
+                        ORDER BY entry_time DESC
+                        LIMIT 1
+                        """,
+                        symbol,
+                    )
+                    if row:
+                        self._current_position_id = row["id"]
+
                 if self._current_position_id and position:
                     # 计算盈亏
                     entry_price = position.entry_price
@@ -583,6 +599,92 @@ class Scheduler:
         """执行单次交易循环（兼容旧版单 symbol）"""
         await self.run_cycle_for_symbol(config.trading_symbol)
 
+    async def _load_testnet_virtual_position(self, symbol: str, mark_price: float):
+        """在 testnet 模式下从数据库恢复当前持仓，形成闭环。"""
+        if not self.db_manager:
+            self._current_position_id = None
+            return None
+
+        rows = await self.db_manager.fetch(
+            """
+            SELECT
+                id,
+                symbol,
+                side,
+                entry_price,
+                entry_size,
+                COALESCE(leverage, 1) AS leverage
+            FROM position_history
+            WHERE symbol = $1
+              AND status = 'open'
+              AND entry_size > 0
+            ORDER BY entry_time DESC
+            """,
+            symbol,
+        )
+
+        if not rows:
+            self._current_position_id = None
+            return None
+
+        if len(rows) > 1:
+            logger.warning(
+                f"Found {len(rows)} open positions for {symbol} in testnet, using latest one"
+            )
+
+        row = rows[0]
+        side = str(row["side"]).lower()
+        entry_price = float(row["entry_price"])
+        size = float(row["entry_size"])
+        leverage = max(1, int(float(row["leverage"])))
+
+        if side == "long":
+            unrealized_pnl = (mark_price - entry_price) * size
+        else:
+            unrealized_pnl = (entry_price - mark_price) * size
+
+        margin = (entry_price * size) / leverage if leverage > 0 else 0.0
+        roi = (unrealized_pnl / margin * 100) if margin > 0 else 0.0
+
+        from .exchange.base import Position
+
+        position = Position(
+            symbol=str(row["symbol"]),
+            side=side,
+            size=size,
+            entry_price=entry_price,
+            mark_price=mark_price,
+            unrealized_pnl=unrealized_pnl,
+            leverage=leverage,
+            margin_mode="isolated",
+            liquidation_price=None,
+            margin=margin,
+            roi=roi,
+        )
+
+        self._current_position_id = row["id"]
+        return position
+
+    async def _build_testnet_account_state(self, symbol: str, current_price: float):
+        """构建 testnet 虚拟账户状态（含本地持仓）。"""
+        from .exchange.base import AccountInfo
+
+        position = await self._load_testnet_virtual_position(symbol, current_price)
+        base_equity = 10000.0
+
+        margin_used = position.margin if position else 0.0
+        unrealized_pnl = position.unrealized_pnl if position else 0.0
+        total_equity = base_equity + unrealized_pnl
+        available_balance = max(total_equity - margin_used, 0.0)
+
+        account = AccountInfo(
+            total_equity=total_equity,
+            available_balance=available_balance,
+            margin_used=margin_used,
+            unrealized_pnl=unrealized_pnl,
+        )
+        return account, position
+
     async def run_cycle_for_symbol(self, symbol: str):
         """执行指定 symbol 的交易循环"""
         logger.info(f"Starting cycle for {symbol}")
@@ -597,16 +699,12 @@ class Scheduler:
         # For testnet mode, use simulated account/position data
         # CCXT no longer supports Binance Futures Testnet private API
         if config.trading_mode == "testnet":
-            from .exchange.base import AccountInfo, Position
-            # Simulated account with 10,000 USDT
-            account = AccountInfo(
-                total_equity=10000.0,
-                available_balance=10000.0,
-                margin_used=0.0,
-                unrealized_pnl=0.0,
+            account, position = await self._build_testnet_account_state(
+                symbol, market_data.current_price
             )
-            position = None  # No position in simulation
-            logger.info("Using simulated account data for testnet (CCXT deprecated private API)")
+            logger.info(
+                "Using simulated account data for testnet with virtual position tracking"
+            )
         else:
             position = await self.position_mgr.get_position(symbol)
             account = await self.exchange.get_account()  # Now returns AccountInfo model
@@ -669,32 +767,40 @@ class Scheduler:
 
             # Final check and execution
             if quantity > 0:
-                # WeEx requires stepSize of 0.1 for cmt_bnbusdt
-                # Round to 1 decimal place to match exchange requirement
-                quantity = round(quantity, 1)
-
-                # For testnet mode, skip actual order execution (CCXT deprecated private API)
                 if config.trading_mode == "testnet":
-                    order_id = f"SIM-{symbol}-{decision.action}"
-                    logger.info(f"[SIMULATED] Order: {decision.action} {quantity} {symbol}")
+                    # testnet 仿真保留更高精度，避免小仓位被 round 到 0
+                    quantity = round(quantity, 6)
                 else:
-                    order_id = await self.order_mgr.execute_order(
-                        decision, symbol, quantity
-                    )
+                    # WeEx 生产环境沿用现有 0.1 步长假设
+                    quantity = round(quantity, 1)
 
-                # Persist position changes
-                if self.persistence_service and order_id:
-                    await self._persist_position_change(
-                        action=decision.action,
-                        symbol=symbol,
-                        price=market_data.current_price,
-                        size=quantity,
-                        leverage=decision.leverage,
-                        position=position,
-                        decision=decision,
-                        technical=tech,
-                        market_state=tech.trend if tech else "unknown",
+                if quantity <= 0:
+                    logger.warning(
+                        f"Quantity became non-positive after rounding: action={decision.action}, symbol={symbol}"
                     )
+                else:
+                    # For testnet mode, skip actual order execution (CCXT deprecated private API)
+                    if config.trading_mode == "testnet":
+                        order_id = f"SIM-{symbol}-{decision.action}"
+                        logger.info(f"[SIMULATED] Order: {decision.action} {quantity} {symbol}")
+                    else:
+                        order_id = await self.order_mgr.execute_order(
+                            decision, symbol, quantity
+                        )
+
+                    # Persist position changes
+                    if self.persistence_service and order_id:
+                        await self._persist_position_change(
+                            action=decision.action,
+                            symbol=symbol,
+                            price=market_data.current_price,
+                            size=quantity,
+                            leverage=decision.leverage,
+                            position=position,
+                            decision=decision,
+                            technical=tech,
+                            market_state=tech.trend if tech else "unknown",
+                        )
 
         # 4. 报告
         # Get position after trade (wait a bit? or just report 'submitted')
