@@ -182,6 +182,15 @@ class Scheduler:
             # 在 advisory_service 就绪后启动执行队列监听
             if self._redis:
                 asyncio.create_task(self._advisory_execute_listener())
+                asyncio.create_task(self._telegram_actions_listener())
+            # 启动 Telegram 回调处理
+            if notifier.enabled and self._redis:
+                from .advisory.telegram import start_callback_handler
+                asyncio.create_task(start_callback_handler(
+                    bot_token=config.telegram_bot_token,
+                    chat_id=config.telegram_chat_id,
+                    redis_client=self._redis,
+                ))
             logger.info("Advisory system initialized")
         except Exception as e:
             logger.error(f"Failed to initialize advisory system: {e}")
@@ -295,7 +304,7 @@ class Scheduler:
 
         try:
             pubsub = self._redis.pubsub()
-            await pubsub.subscribe("trading:config:updated", "strategy:preset:updated", "llm:providers:updated", "advisory:config:updated")
+            await pubsub.subscribe("trading:config:updated", "strategy:preset:updated", "llm:providers:updated", "advisory:config:updated", "advisory:llm_config:updated")
 
             async for message in pubsub.listen():
                 if message["type"] == "message":
@@ -318,6 +327,17 @@ class Scheduler:
                                 new_trigger_cfg = TriggerConfig(**cfg)
                                 self._advisory_service.trigger_mgr.update_config(new_trigger_cfg)
                                 logger.info(f"Advisory trigger config updated: {cfg}")
+                        elif channel == "advisory:llm_config:updated":
+                            llm_cfg = json.loads(message["data"])
+                            if self._advisory_service:
+                                new_client = AdvisoryLLMClient(
+                                    provider=llm_cfg.get("provider", ""),
+                                    model=llm_cfg.get("model", ""),
+                                    base_url=llm_cfg.get("base_url"),
+                                    api_key=llm_cfg.get("api_key", ""),
+                                )
+                                self._advisory_service.engine.llm_client = new_client
+                                logger.info(f"Advisory LLM config updated: provider={llm_cfg.get('provider')}, model={llm_cfg.get('model')}")
                         else:
                             cfg = json.loads(message["data"])
                             self._trading_enabled = cfg.get("enabled", True)
@@ -846,6 +866,72 @@ class Scheduler:
 
         except Exception as e:
             logger.error(f"Failed to persist position change: {e}")
+
+    async def _telegram_actions_listener(self):
+        """监听 Telegram 操作队列，将按钮操作同步到数据库"""
+        if not self._redis or not self._advisory_service:
+            return
+        persistence = self._advisory_service.persistence
+        if not persistence:
+            return
+        logger.info("Telegram actions listener started")
+        while self.running:
+            try:
+                result = await self._redis.brpop("advisory:telegram_actions", timeout=5)
+                if result:
+                    _, action_json = result
+                    action_data = json.loads(action_json)
+                    advisory_id = action_data.get("advisory_id")
+                    idx = action_data.get("index", 0)
+                    action_type = action_data.get("action")
+
+                    # 获取该 advisory 的所有建议
+                    advisories = await persistence.get_pending_advisories(limit=100)
+                    target_suggestion_id = None
+                    for adv in advisories:
+                        if str(adv.get("id")) == advisory_id:
+                            suggestions = adv.get("suggestions", [])
+                            if isinstance(suggestions, list) and idx < len(suggestions):
+                                target_suggestion_id = suggestions[idx].get("id")
+                            break
+
+                    if not target_suggestion_id:
+                        logger.warning(f"Telegram action: suggestion not found for advisory={advisory_id} idx={idx}")
+                        continue
+
+                    from uuid import UUID
+                    sid = UUID(str(target_suggestion_id))
+
+                    if action_type == "accept":
+                        await persistence.update_suggestion_status(sid, "accepted")
+                    elif action_type == "reject":
+                        await persistence.update_suggestion_status(sid, "rejected")
+                        await persistence.try_resolve_advisory_for_suggestion(sid)
+                    elif action_type == "confirm":
+                        await persistence.update_suggestion_status(sid, "confirmed")
+                        # 入队执行
+                        for adv in advisories:
+                            if str(adv.get("id")) == advisory_id:
+                                suggestions = adv.get("suggestions", [])
+                                if idx < len(suggestions):
+                                    s = suggestions[idx]
+                                    await self._redis.lpush("advisory:execute_tasks", json.dumps({
+                                        "suggestion_id": str(sid),
+                                        "type": s.get("type"),
+                                        "target": s.get("target"),
+                                        "action": s.get("action"),
+                                        "detail": s.get("detail"),
+                                    }))
+                                break
+                    elif action_type == "cancel":
+                        # cancel 相当于从 accepted 回退到 pending
+                        await persistence.update_suggestion_status(sid, "pending")
+
+                    logger.info(f"Telegram action processed: {action_type} advisory={advisory_id} idx={idx}")
+            except Exception as e:
+                if self.running:
+                    logger.error(f"Telegram actions listener error: {e}")
+                await asyncio.sleep(5)
 
     async def _advisory_execute_listener(self):
         """监听 advisory 执行队列"""
