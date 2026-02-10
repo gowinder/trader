@@ -115,7 +115,12 @@ class TelegramNotifier:
                 if len(parts) != 3:
                     return
 
-                action_type, advisory_id, idx = parts[0], parts[1], int(parts[2])
+                action_type, advisory_id = parts[0], parts[1]
+                try:
+                    idx = int(parts[2])
+                except ValueError:
+                    logger.warning(f"Invalid callback data: {data}")
+                    return
 
                 if str(query.message.chat_id) != self.chat_id:
                     return

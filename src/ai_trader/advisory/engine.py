@@ -85,16 +85,19 @@ class AdvisoryEngine:
     def _parse_result(self, raw: Dict[str, Any]) -> AdvisoryResult:
         suggestions = []
         for s in raw.get("suggestions", []):
-            suggestions.append(Suggestion(
-                type=SuggestionType(s["type"]),
-                target=s["target"],
-                action=s["action"],
-                detail=s.get("detail", {}),
-                reasoning=s["reasoning"],
-                risk_note=s["risk_note"],
-            ))
+            try:
+                suggestions.append(Suggestion(
+                    type=SuggestionType(s.get("type", "param_adjust")),
+                    target=s.get("target", "global"),
+                    action=s.get("action", "unknown"),
+                    detail=s.get("detail", {}),
+                    reasoning=s.get("reasoning", ""),
+                    risk_note=s.get("risk_note", ""),
+                ))
+            except (ValueError, KeyError) as e:
+                logger.warning(f"Skipping malformed suggestion: {e}, raw={s}")
         return AdvisoryResult(
-            urgency=Urgency(raw["urgency"]),
+            urgency=Urgency(raw.get("urgency", "low")),
             suggestions=suggestions,
-            market_summary=raw["market_summary"],
+            market_summary=raw.get("market_summary", ""),
         )
