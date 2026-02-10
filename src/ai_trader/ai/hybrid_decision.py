@@ -421,6 +421,38 @@ class HybridDecisionEngine(DecisionEngine):
         decision = base_decision.model_copy(deep=True)
         decision.action = action
         decision.confidence = final_confidence * 100.0  # Convert back to 0-100 for TradingDecision model
+
+        # Fill missing price fields when hybrid fusion results in open/add action
+        if action in ["open_long", "open_short", "add_long", "add_short"]:
+            current_price = market_data.current_price
+            if not decision.entry_price:
+                decision.entry_price = current_price
+            atr = market_data.indicators.atr if market_data.indicators and market_data.indicators.atr else 0
+            if atr > 0:
+                if not decision.stop_loss_price:
+                    if "long" in action:
+                        decision.stop_loss_price = current_price - (2.0 * atr)
+                    else:
+                        decision.stop_loss_price = current_price + (2.0 * atr)
+                if not decision.take_profit_price:
+                    if "long" in action:
+                        decision.take_profit_price = current_price + (3.0 * atr)
+                    else:
+                        decision.take_profit_price = current_price - (3.0 * atr)
+            else:
+                stop_pct = config.stop_loss_percent / 100.0
+                tp_pct = config.take_profit_percent / 100.0
+                if not decision.stop_loss_price:
+                    if "long" in action:
+                        decision.stop_loss_price = current_price * (1 - stop_pct)
+                    else:
+                        decision.stop_loss_price = current_price * (1 + stop_pct)
+                if not decision.take_profit_price:
+                    if "long" in action:
+                        decision.take_profit_price = current_price * (1 + tp_pct)
+                    else:
+                        decision.take_profit_price = current_price * (1 - tp_pct)
+
         decision.reasoning += (
             f"\n\nHybrid Decision Fusion:\n"
             f"- AI score: {ai_score:+.2f} (confidence: {ai_confidence:.2f}, weight: {weights['ai']:.2f})\n"
