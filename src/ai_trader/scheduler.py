@@ -185,11 +185,9 @@ class Scheduler:
                 asyncio.create_task(self._telegram_actions_listener())
             # 启动 Telegram 回调处理
             if notifier.enabled and self._redis:
-                from .advisory.telegram import start_callback_handler
-                asyncio.create_task(start_callback_handler(
-                    bot_token=config.telegram_bot_token,
-                    chat_id=config.telegram_chat_id,
+                asyncio.create_task(notifier.start_callback_handler(
                     redis_client=self._redis,
+                    persistence=persistence,
                 ))
             logger.info("Advisory system initialized")
         except Exception as e:
@@ -336,7 +334,7 @@ class Scheduler:
                                     base_url=llm_cfg.get("base_url"),
                                     api_key=llm_cfg.get("api_key", ""),
                                 )
-                                self._advisory_service.engine.llm_client = new_client
+                                self._advisory_service.engine.llm = new_client
                                 logger.info(f"Advisory LLM config updated: provider={llm_cfg.get('provider')}, model={llm_cfg.get('model')}")
                         else:
                             cfg = json.loads(message["data"])
