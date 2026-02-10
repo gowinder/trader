@@ -60,6 +60,7 @@ class TelegramNotifier:
         self.bot_token = bot_token
         self.chat_id = chat_id
         self._bot = None
+        self._app = None  # Telegram Application (for callback handler)
         if HAS_TELEGRAM and bot_token:
             self._bot = Bot(token=bot_token)
 
@@ -185,6 +186,22 @@ class TelegramNotifier:
             await app.initialize()
             await app.start()
             await app.updater.start_polling(drop_pending_updates=True)
+            self._app = app
             logger.info("Telegram callback handler started")
         except Exception as e:
             logger.error(f"Failed to start Telegram callback handler: {e}")
+
+    async def stop(self):
+        """停止 Telegram Application 并释放资源"""
+        if self._app:
+            try:
+                if self._app.updater and self._app.updater.running:
+                    await self._app.updater.stop()
+                if self._app.running:
+                    await self._app.stop()
+                await self._app.shutdown()
+                logger.info("Telegram callback handler stopped")
+            except Exception as e:
+                logger.error(f"Failed to stop Telegram callback handler: {e}")
+            finally:
+                self._app = None
