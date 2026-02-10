@@ -913,13 +913,18 @@ class Scheduler:
                         # 原子校验: 仅 accepted -> confirmed，防止重复执行
                         ok = await persistence.update_suggestion_status_if(sid, "confirmed", "accepted")
                         if ok:
-                            await self._redis.lpush("advisory:execute_tasks", json.dumps({
-                                "suggestion_id": str(sid),
-                                "type": suggestion.get("type"),
-                                "target": suggestion.get("target"),
-                                "action": suggestion.get("action"),
-                                "detail": suggestion.get("detail"),
-                            }))
+                            try:
+                                await self._redis.lpush("advisory:execute_tasks", json.dumps({
+                                    "suggestion_id": str(sid),
+                                    "type": suggestion.get("type"),
+                                    "target": suggestion.get("target"),
+                                    "action": suggestion.get("action"),
+                                    "detail": suggestion.get("detail"),
+                                }))
+                            except Exception as queue_err:
+                                # 入队失败，回滚状态
+                                await persistence.update_suggestion_status_if(sid, "accepted", "confirmed")
+                                logger.error(f"Telegram confirm queue failed, rolled back: {queue_err}")
                         else:
                             logger.warning(f"Telegram confirm skipped: suggestion {sid} not in 'accepted' state")
                     elif action_type == "cancel":
