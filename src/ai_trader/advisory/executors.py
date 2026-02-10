@@ -41,6 +41,9 @@ class ConfigExecutor:
         new_max = detail.get("leverage_max")
         if new_max is None:
             return ExecutionResult(success=False, message="缺少 leverage_max 参数")
+        if not isinstance(new_max, (int, float)) or new_max < 1 or new_max > 20:
+            return ExecutionResult(success=False, message=f"非法杠杆倍数: {new_max}，须在 [1, 20] 之间")
+        new_max = int(new_max)
         config_data = await self._redis.get("trading:config")
         config = json.loads(config_data) if config_data else {"enabled": True, "decisionInterval": runtime_config.decision_interval // 60 if runtime_config.decision_interval >= 60 else 1}
         config["leverage_max"] = new_max
@@ -50,9 +53,21 @@ class ConfigExecutor:
         runtime_config.leverage_max = new_max
         return ExecutionResult(success=True, message=f"Leverage max 已调整为 {new_max}x", detail={"leverage_max": new_max})
 
+    _PARAM_BOUNDS = {
+        "stop_loss_percent": (0.1, 50.0),
+        "take_profit_percent": (0.1, 200.0),
+    }
+
     async def _adjust_param(self, param_name: str, value: Any) -> ExecutionResult:
         if value is None:
             return ExecutionResult(success=False, message=f"缺少 {param_name} 参数")
+        if not isinstance(value, (int, float)):
+            return ExecutionResult(success=False, message=f"{param_name} 必须为数值类型，当前: {type(value).__name__}")
+        bounds = self._PARAM_BOUNDS.get(param_name)
+        if bounds:
+            lo, hi = bounds
+            if value < lo or value > hi:
+                return ExecutionResult(success=False, message=f"{param_name} 值 {value} 超出允许范围 [{lo}, {hi}]")
         config_data = await self._redis.get("trading:config")
         config = json.loads(config_data) if config_data else {"enabled": True, "decisionInterval": runtime_config.decision_interval // 60 if runtime_config.decision_interval >= 60 else 1}
         config[param_name] = value

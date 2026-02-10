@@ -618,6 +618,9 @@ class Scheduler:
     async def stop(self):
         """停止调度器"""
         self.running = False
+        # 停止 Telegram callback handler
+        if self._advisory_service and hasattr(self._advisory_service, 'notifier') and self._advisory_service.notifier:
+            await self._advisory_service.notifier.stop()
         if hasattr(self, "exchange") and self.exchange:
             await self.exchange.close()
         if hasattr(self, "llm") and self.llm:
