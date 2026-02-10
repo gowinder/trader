@@ -983,11 +983,16 @@ class Scheduler:
                             persist_action = f"reduce_{pre_position.side}"
                         ticker = await self.exchange.get_ticker(target) if hasattr(self, "exchange") and self.exchange else None
                         current_price = ticker.last_price if ticker else (pre_position.entry_price or 0)
+                        # 计算实际变动数量：减仓用实际减仓量，平仓用全仓
+                        persist_size = pre_position.size
+                        if action == "reduce_position":
+                            raw_pct = detail.get("reduce_percent", 50) if isinstance(detail, dict) else 50
+                            persist_size = pre_position.size * (raw_pct / 100)
                         await self._persist_position_change(
                             action=persist_action,
                             symbol=target,
                             price=current_price,
-                            size=pre_position.size,
+                            size=persist_size,
                             leverage=pre_position.leverage or 1,
                             position=pre_position,
                             market_state="advisory",
@@ -1016,11 +1021,14 @@ class Scheduler:
             logger.error(f"Advisory suggestion execution failed: {e}")
             if self._advisory_service and self._advisory_service.persistence and suggestion_id:
                 from uuid import UUID
+                sid = UUID(suggestion_id) if isinstance(suggestion_id, str) else suggestion_id
                 await self._advisory_service.persistence.update_suggestion_status(
-                    UUID(suggestion_id) if isinstance(suggestion_id, str) else suggestion_id,
+                    sid,
                     "failed",
                     execution_result={"error": str(e)},
                 )
+                # 异常路径也需要检查 advisory 收敛
+                await self._advisory_service.persistence.try_resolve_advisory_for_suggestion(sid)
 
     async def _run_advisory_check(self):
         """运行 advisory 检查"""
