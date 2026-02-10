@@ -444,6 +444,59 @@ export const activeStrategy = pgTable(
   })
 );
 
+// ==================== AI Advisory ====================
+
+export const advisories = pgTable(
+  "advisories",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+
+    triggerType: varchar("trigger_type", { length: 30 }).notNull(),
+    triggerDetail: jsonb("trigger_detail"),
+    urgency: varchar("urgency", { length: 10 }).notNull(),
+    marketSummary: text("market_summary"),
+    status: varchar("status", { length: 20 }).notNull().default("pending"),
+
+    llmProvider: varchar("llm_provider", { length: 30 }),
+    llmModel: varchar("llm_model", { length: 100 }),
+    tokensUsed: integer("tokens_used"),
+
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+  },
+  (table) => ({
+    timeIdx: index("idx_advisories_time").on(table.createdAt),
+    statusIdx: index("idx_advisories_status").on(table.status),
+  })
+);
+
+export const advisorySuggestions = pgTable(
+  "advisory_suggestions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    advisoryId: uuid("advisory_id")
+      .notNull()
+      .references(() => advisories.id, { onDelete: "cascade" }),
+
+    type: varchar("type", { length: 20 }).notNull(),
+    target: varchar("target", { length: 30 }).notNull(),
+    action: varchar("action", { length: 50 }).notNull(),
+    detail: jsonb("detail"),
+    reasoning: text("reasoning"),
+    riskNote: text("risk_note"),
+
+    status: varchar("status", { length: 20 }).notNull().default("pending"),
+    executionResult: jsonb("execution_result"),
+    rejectionReason: text("rejection_reason"),
+
+    updatedAt: timestamp("updated_at", { withTimezone: true }),
+  },
+  (table) => ({
+    advisoryIdx: index("idx_advisory_suggestions_advisory").on(table.advisoryId),
+    statusIdx: index("idx_advisory_suggestions_status").on(table.status),
+  })
+);
+
 // ==================== 关系定义 ====================
 
 export const decisionsRelations = relations(decisions, ({ one }) => ({
@@ -481,5 +534,16 @@ export const backtestEquityRelations = relations(backtestEquity, ({ one }) => ({
   backtest: one(backtests, {
     fields: [backtestEquity.backtestId],
     references: [backtests.id],
+  }),
+}));
+
+export const advisoriesRelations = relations(advisories, ({ many }) => ({
+  suggestions: many(advisorySuggestions),
+}));
+
+export const advisorySuggestionsRelations = relations(advisorySuggestions, ({ one }) => ({
+  advisory: one(advisories, {
+    fields: [advisorySuggestions.advisoryId],
+    references: [advisories.id],
   }),
 }));
