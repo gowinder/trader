@@ -970,7 +970,30 @@ class Scheduler:
                 result = await executor.execute(action, target, detail)
             elif suggestion_type == "position_action":
                 executor = TradeExecutor(self.order_mgr, self.position_mgr)
+                # 执行前获取仓位信息用于持久化
+                pre_position = await self.position_mgr.get_position(target) if self.position_mgr else None
                 result = await executor.execute(action, target, detail)
+                # 执行成功后同步持仓持久化
+                if result.success and pre_position and self.persistence_service:
+                    try:
+                        persist_action = action
+                        if action == "close_position":
+                            persist_action = f"close_{pre_position.side}"
+                        elif action == "reduce_position":
+                            persist_action = f"reduce_{pre_position.side}"
+                        ticker = await self.exchange.get_ticker(target) if hasattr(self, "exchange") and self.exchange else None
+                        current_price = ticker.last_price if ticker else (pre_position.entry_price or 0)
+                        await self._persist_position_change(
+                            action=persist_action,
+                            symbol=target,
+                            price=current_price,
+                            size=pre_position.size,
+                            leverage=pre_position.leverage or 1,
+                            position=pre_position,
+                            market_state="advisory",
+                        )
+                    except Exception as persist_err:
+                        logger.error(f"Advisory position persist failed: {persist_err}")
             elif suggestion_type == "symbol_change":
                 executor = SymbolExecutor(self._redis)
                 result = await executor.execute(action, target, detail)
