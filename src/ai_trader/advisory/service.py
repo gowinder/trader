@@ -47,9 +47,10 @@ class AdvisoryService:
                 result = self.trigger_mgr.price_volatility.check(
                     current_price=ctx.get("current", 0),
                     previous_price=ctx.get("previous", 0),
+                    symbol=symbol,
                 )
                 if result:
-                    triggered.append((TriggerType.PRICE_VOLATILITY, {**result, "symbol": symbol}))
+                    triggered.append((TriggerType.PRICE_VOLATILITY, result))
 
         # 3. Consecutive loss
         if self.trigger_mgr.config.consecutive_loss_enabled:
@@ -61,9 +62,10 @@ class AdvisoryService:
         if self.trigger_mgr.config.unrealized_pnl_enabled:
             for p in positions:
                 pnl_pct = p.get("roi", 0) or 0
-                result = self.trigger_mgr.unrealized_pnl.check(float(pnl_pct))
+                sym = p.get("symbol", "_global")
+                result = self.trigger_mgr.unrealized_pnl.check(float(pnl_pct), symbol=sym)
                 if result:
-                    triggered.append((TriggerType.UNREALIZED_PNL, {**result, "symbol": p.get("symbol", "")}))
+                    triggered.append((TriggerType.UNREALIZED_PNL, result))
 
         # 5. Sentiment shift
         if self.trigger_mgr.config.sentiment_shift_enabled and sentiment:
