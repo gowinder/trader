@@ -195,10 +195,10 @@ class Scheduler:
                 self._advisory_tasks.append(asyncio.create_task(self._telegram_actions_listener()))
             # 启动 Telegram 回调处理
             if notifier.enabled and self._redis:
-                asyncio.create_task(notifier.start_callback_handler(
+                self._advisory_tasks.append(asyncio.create_task(notifier.start_callback_handler(
                     redis_client=self._redis,
                     persistence=persistence,
-                ))
+                )))
             logger.info("Advisory system initialized")
         except Exception as e:
             logger.error(f"Failed to initialize advisory system: {e}")
@@ -1096,12 +1096,26 @@ class Scheduler:
                 "ai_weight": config.ai_weight,
             }
 
+            # 收集账户信息
+            account_summary = None
+            try:
+                account = await self.exchange.get_account()
+                if account:
+                    account_summary = {
+                        "total_equity": account.total_equity,
+                        "available_balance": account.available_balance,
+                        "margin_used": getattr(account, 'margin_used', None),
+                    }
+            except Exception:
+                pass
+
             await self._advisory_service.check_and_run(
                 symbols=symbols, positions=positions,
                 market_data=market_data, sentiment=None,
                 current_config=current_config,
                 consecutive_losses=self._consecutive_losses,
                 price_context=price_context,
+                account_summary=account_summary,
             )
         except Exception as e:
             logger.error(f"Advisory check error: {e}")
