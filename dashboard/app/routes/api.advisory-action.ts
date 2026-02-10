@@ -21,13 +21,13 @@ export async function action({ request }: ActionFunctionArgs) {
       await sql`
         UPDATE advisory_suggestions
         SET status = 'accepted', updated_at = NOW()
-        WHERE id = ${suggestionId}
+        WHERE id = ${suggestionId} AND status = 'pending'
       `;
     } else if (userAction === "reject") {
       await sql`
         UPDATE advisory_suggestions
         SET status = 'rejected', rejection_reason = ${rejectionReason || null}, updated_at = NOW()
-        WHERE id = ${suggestionId}
+        WHERE id = ${suggestionId} AND status IN ('pending', 'accepted')
       `;
     } else if (userAction === "confirm") {
       // 原子更新状态：仅 accepted → confirmed，防止重复执行
@@ -40,20 +40,30 @@ export async function action({ request }: ActionFunctionArgs) {
 
       if (updated.length > 0) {
         const suggestion = updated[0];
-        const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
-        const redis = createClient({ url: redisUrl });
-        await redis.connect();
-        await redis.lPush(
-          "advisory:execute_tasks",
-          JSON.stringify({
-            suggestion_id: suggestionId,
-            type: suggestion.type,
-            target: suggestion.target,
-            action: suggestion.action,
-            detail: suggestion.detail,
-          })
-        );
-        await redis.disconnect();
+        try {
+          const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
+          const redis = createClient({ url: redisUrl });
+          await redis.connect();
+          await redis.lPush(
+            "advisory:execute_tasks",
+            JSON.stringify({
+              suggestion_id: suggestionId,
+              type: suggestion.type,
+              target: suggestion.target,
+              action: suggestion.action,
+              detail: suggestion.detail,
+            })
+          );
+          await redis.disconnect();
+        } catch (redisError) {
+          // Redis 入队失败时回滚 DB 状态
+          await sql`
+            UPDATE advisory_suggestions
+            SET status = 'accepted', updated_at = NOW()
+            WHERE id = ${suggestionId} AND status = 'confirmed'
+          `;
+          throw redisError;
+        }
       }
     }
 
