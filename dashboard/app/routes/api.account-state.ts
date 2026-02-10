@@ -3,13 +3,13 @@ import { createClient } from "redis";
 
 export async function loader(_args: LoaderFunctionArgs) {
   const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
+  let client: ReturnType<typeof createClient> | null = null;
 
   try {
-    const client = createClient({ url: redisUrl });
+    client = createClient({ url: redisUrl });
     await client.connect();
 
     const stateJson = await client.get("trading:account_state");
-    await client.disconnect();
 
     if (!stateJson) {
       return Response.json({
@@ -31,5 +31,7 @@ export async function loader(_args: LoaderFunctionArgs) {
       { success: false, error: message },
       { status: 500 }
     );
+  } finally {
+    if (client) { try { await client.disconnect(); } catch { /* ignore */ } }
   }
 }
