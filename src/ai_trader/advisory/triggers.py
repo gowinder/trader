@@ -23,15 +23,16 @@ class TriggerConfig:
 class BaseTrigger:
     def __init__(self, cooldown_minutes: int = 30):
         self.cooldown_minutes = cooldown_minutes
-        self._last_fired: Optional[datetime] = None
+        self._last_fired: Dict[str, datetime] = {}
 
-    def _is_cooldown(self) -> bool:
-        if self._last_fired is None:
+    def _is_cooldown(self, key: str = "_global") -> bool:
+        last = self._last_fired.get(key)
+        if last is None:
             return False
-        return datetime.now() - self._last_fired < timedelta(minutes=self.cooldown_minutes)
+        return datetime.now() - last < timedelta(minutes=self.cooldown_minutes)
 
-    def _mark_fired(self):
-        self._last_fired = datetime.now()
+    def _mark_fired(self, key: str = "_global"):
+        self._last_fired[key] = datetime.now()
 
 
 class PriceVolatilityTrigger(BaseTrigger):
@@ -39,19 +40,20 @@ class PriceVolatilityTrigger(BaseTrigger):
         super().__init__(cooldown_minutes)
         self.threshold = threshold
 
-    def check(self, current_price: float, previous_price: float, interval_minutes: int = 5) -> Optional[Dict[str, Any]]:
-        if self._is_cooldown():
+    def check(self, current_price: float, previous_price: float, interval_minutes: int = 5, symbol: str = "_global") -> Optional[Dict[str, Any]]:
+        if self._is_cooldown(symbol):
             return None
         if previous_price == 0:
             return None
         change_pct = ((current_price - previous_price) / previous_price) * 100
         if abs(change_pct) >= self.threshold:
-            self._mark_fired()
+            self._mark_fired(symbol)
             return {
                 "change_pct": round(change_pct, 2),
                 "current_price": current_price,
                 "previous_price": previous_price,
                 "interval_minutes": interval_minutes,
+                "symbol": symbol,
             }
         return None
 
@@ -75,12 +77,12 @@ class UnrealizedPnLTrigger(BaseTrigger):
         super().__init__(cooldown_minutes)
         self.threshold = threshold
 
-    def check(self, unrealized_pnl_pct: float) -> Optional[Dict[str, Any]]:
-        if self._is_cooldown():
+    def check(self, unrealized_pnl_pct: float, symbol: str = "_global") -> Optional[Dict[str, Any]]:
+        if self._is_cooldown(symbol):
             return None
         if unrealized_pnl_pct <= self.threshold:
-            self._mark_fired()
-            return {"unrealized_pnl_pct": round(unrealized_pnl_pct, 2)}
+            self._mark_fired(symbol)
+            return {"unrealized_pnl_pct": round(unrealized_pnl_pct, 2), "symbol": symbol}
         return None
 
 

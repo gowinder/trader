@@ -30,17 +30,12 @@ export async function action({ request }: ActionFunctionArgs) {
         WHERE id = ${suggestionId}
       `;
     } else if (userAction === "confirm") {
-      await sql`
-        UPDATE advisory_suggestions
-        SET status = 'confirmed', updated_at = NOW()
-        WHERE id = ${suggestionId}
-      `;
-
       const [suggestion] = await sql`
         SELECT * FROM advisory_suggestions WHERE id = ${suggestionId}
       `;
 
       if (suggestion) {
+        // 先入队 Redis，成功后再更新 DB 状态
         const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
         const redis = createClient({ url: redisUrl });
         await redis.connect();
@@ -56,18 +51,26 @@ export async function action({ request }: ActionFunctionArgs) {
         );
         await redis.disconnect();
       }
+
+      await sql`
+        UPDATE advisory_suggestions
+        SET status = 'confirmed', updated_at = NOW()
+        WHERE id = ${suggestionId}
+      `;
     }
 
-    // Check if all suggestions resolved -> resolve advisory
+    // Check if all suggestions in terminal state -> resolve advisory
+    // Terminal states: rejected, executed, failed
+    // Non-terminal: pending, accepted, confirmed
     const [{ advisory_id: advisoryId }] = await sql`
       SELECT advisory_id FROM advisory_suggestions WHERE id = ${suggestionId}
     `;
-    const [{ pendingCount }] = await sql`
-      SELECT COUNT(*)::int as "pendingCount"
+    const [{ activeCount }] = await sql`
+      SELECT COUNT(*)::int as "activeCount"
       FROM advisory_suggestions
-      WHERE advisory_id = ${advisoryId} AND status = 'pending'
+      WHERE advisory_id = ${advisoryId} AND status NOT IN ('rejected', 'executed', 'failed')
     `;
-    if (pendingCount === 0) {
+    if (activeCount === 0) {
       await sql`
         UPDATE advisories SET status = 'resolved', resolved_at = NOW()
         WHERE id = ${advisoryId}

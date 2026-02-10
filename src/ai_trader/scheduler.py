@@ -75,6 +75,7 @@ class Scheduler:
         # Advisory system
         self._advisory_service: Optional[AdvisoryService] = None
         self._price_history: dict = {}
+        self._consecutive_losses: int = 0
 
         # Redis for dynamic config
         self._redis: Optional[redis.Redis] = None
@@ -294,7 +295,7 @@ class Scheduler:
 
         try:
             pubsub = self._redis.pubsub()
-            await pubsub.subscribe("trading:config:updated", "strategy:preset:updated", "llm:providers:updated")
+            await pubsub.subscribe("trading:config:updated", "strategy:preset:updated", "llm:providers:updated", "advisory:config:updated")
 
             async for message in pubsub.listen():
                 if message["type"] == "message":
@@ -311,6 +312,12 @@ class Scheduler:
                                 manager = get_llm_manager()
                                 manager.update_providers(providers)
                                 logger.info(f"LLM providers updated: {[p.get('name') for p in providers]}")
+                        elif channel == "advisory:config:updated":
+                            cfg = json.loads(message["data"])
+                            if self._advisory_service:
+                                new_trigger_cfg = TriggerConfig(**cfg)
+                                self._advisory_service.trigger_mgr.update_config(new_trigger_cfg)
+                                logger.info(f"Advisory trigger config updated: {cfg}")
                         else:
                             cfg = json.loads(message["data"])
                             self._trading_enabled = cfg.get("enabled", True)
@@ -541,8 +548,7 @@ class Scheduler:
     async def start(self):
         """启动调度器"""
         self.running = True
-        symbols = config.symbols_list
-        logger.info(f"Scheduler started for {len(symbols)} symbol(s): {', '.join(symbols)}")
+        logger.info(f"Scheduler started for {len(config.symbols_list)} symbol(s): {', '.join(config.symbols_list)}")
 
         # Initialize persistence if enabled
         await self._init_persistence()
@@ -561,8 +567,8 @@ class Scheduler:
                 continue
 
             try:
-                # Run cycle for each symbol
-                for symbol in symbols:
+                # Run cycle for each symbol (re-read from config for hot-reload)
+                for symbol in config.symbols_list:
                     try:
                         await self.run_cycle_for_symbol(symbol)
                     except Exception as e:
@@ -790,6 +796,12 @@ class Scheduler:
                     logger.info(f"Position closed and persisted: {self._current_position_id}, pnl={pnl:.2f}")
                     self._current_position_id = None
 
+                    # 更新连续亏损计数
+                    if pnl < 0:
+                        self._consecutive_losses += 1
+                    else:
+                        self._consecutive_losses = 0
+
                     # Collect trade memory and submit reflection task (async)
                     if self.memory_collector and decision:
                         result = TradeResult(
@@ -939,7 +951,8 @@ class Scheduler:
             await self._advisory_service.check_and_run(
                 symbols=symbols, positions=positions,
                 market_data=market_data, sentiment=None,
-                current_config=current_config, consecutive_losses=0,
+                current_config=current_config,
+                consecutive_losses=self._consecutive_losses,
                 price_context=price_context,
             )
         except Exception as e:
