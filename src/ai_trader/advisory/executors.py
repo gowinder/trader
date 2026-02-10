@@ -153,11 +153,18 @@ class SymbolExecutor:
             logger.error(f"Symbol execution failed: {e}")
             return ExecutionResult(success=False, message=str(e))
 
+    async def _get_current_symbols(self, config: Dict) -> list:
+        """获取当前交易对列表，优先从 Redis config，回退到运行时配置"""
+        symbols_str = config.get("trading_symbols", "")
+        symbols = [s.strip() for s in symbols_str.split(",") if s.strip()]
+        if not symbols:
+            symbols = list(runtime_config.symbols_list)
+        return symbols
+
     async def _add_symbol(self, symbol: str) -> ExecutionResult:
         config_data = await self._redis.get("trading:config")
         config = json.loads(config_data) if config_data else {"enabled": True, "decisionInterval": runtime_config.decision_interval // 60 if runtime_config.decision_interval >= 60 else 1}
-        symbols = config.get("trading_symbols", "").split(",")
-        symbols = [s.strip() for s in symbols if s.strip()]
+        symbols = await self._get_current_symbols(config)
         if symbol in symbols:
             return ExecutionResult(success=False, message=f"{symbol} 已在监控列表中")
         symbols.append(symbol)
@@ -169,8 +176,7 @@ class SymbolExecutor:
     async def _remove_symbol(self, symbol: str) -> ExecutionResult:
         config_data = await self._redis.get("trading:config")
         config = json.loads(config_data) if config_data else {"enabled": True, "decisionInterval": runtime_config.decision_interval // 60 if runtime_config.decision_interval >= 60 else 1}
-        symbols = config.get("trading_symbols", "").split(",")
-        symbols = [s.strip() for s in symbols if s.strip()]
+        symbols = await self._get_current_symbols(config)
         if symbol not in symbols:
             return ExecutionResult(success=False, message=f"{symbol} 不在监控列表中")
         symbols.remove(symbol)

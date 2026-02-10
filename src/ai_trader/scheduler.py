@@ -1020,10 +1020,10 @@ class Scheduler:
                             "roi": pos.roi, "leverage": pos.leverage,
                         })
                     ticker = await self.exchange.get_ticker(symbol)
-                    current_price = ticker.get("last", 0) if ticker else 0
+                    current_price = ticker.last_price if ticker else 0
                     market_data[symbol] = {
                         "current_price": current_price,
-                        "change_24h": ticker.get("percentage", 0) if ticker else 0,
+                        "change_24h": ticker.change_24h if ticker else 0,
                     }
                     previous = self._price_history.get(symbol)
                     if previous:
