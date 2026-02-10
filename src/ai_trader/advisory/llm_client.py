@@ -1,7 +1,7 @@
 """Advisory 专用 LLM 客户端"""
 
 from typing import Optional, Dict, List, Any
-from ..ai.providers.base import HTTPBasedProvider
+from ..ai.providers.base import HTTPBasedProvider, BaseLLMProvider
 from ..config import config
 from ..utils.logger import logger
 
@@ -16,6 +16,15 @@ class _AdvisoryProvider(HTTPBasedProvider):
     @property
     def provider_name(self) -> str:
         return self._name
+
+
+def _create_provider(name: str, api_key: str, model: str, base_url: str, timeout: float) -> BaseLLMProvider:
+    """根据 provider 名称创建对应实现"""
+    if name == "gemini":
+        from ..ai.providers.gemini import GeminiProvider
+        return GeminiProvider(api_key=api_key, model=model, base_url=base_url, timeout=timeout)
+    # openrouter / deepseek / 其他 OpenAI 兼容协议
+    return _AdvisoryProvider(api_key=api_key, model=model, base_url=base_url, timeout=timeout, name=name)
 
 
 class AdvisoryLLMClient:
@@ -35,12 +44,12 @@ class AdvisoryLLMClient:
         self._base_url = base_url or config.advisory_llm_base_url or "https://openrouter.ai/api/v1"
         self._timeout = timeout if timeout is not None else config.advisory_llm_timeout
 
-        self._provider = _AdvisoryProvider(
+        self._provider = _create_provider(
+            name=self._provider_name,
             api_key=self._api_key,
             model=self._model,
             base_url=self._base_url,
             timeout=self._timeout,
-            name=self._provider_name,
         )
 
     async def chat(
