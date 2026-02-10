@@ -366,7 +366,7 @@ export default function AdvisoryPage() {
                                         size="sm"
                                         variant="outline"
                                         disabled={isActioning}
-                                        onClick={() => handleAction(s.id, "reject")}
+                                        onClick={() => handleAction(s.id, "cancel")}
                                       >
                                         取消
                                       </Button>
