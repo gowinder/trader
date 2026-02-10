@@ -31,3 +31,16 @@ def test_config_defaults():
     assert config.weex_api_url == "https://api-contract.weex.com"
     assert config.ai_model == "deepseek/deepseek-chat"
     assert config.stop_loss_percent == 5.0
+
+
+def test_advisory_config_defaults():
+    """Test advisory config default values"""
+    from ai_trader.config import TradingConfig
+    cfg = TradingConfig(_env_file=None)
+    assert cfg.advisory_enabled is False
+    assert cfg.advisory_interval_minutes == 60
+    assert cfg.advisory_llm_provider == "openrouter"
+    assert cfg.advisory_llm_model == "deepseek/deepseek-chat"
+    assert cfg.advisory_llm_timeout == 120.0
+    assert cfg.telegram_bot_token == ""
+    assert cfg.telegram_chat_id == ""
