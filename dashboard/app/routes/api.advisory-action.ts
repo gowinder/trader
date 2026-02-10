@@ -18,24 +18,39 @@ export async function action({ request }: ActionFunctionArgs) {
 
   try {
     if (userAction === "accept") {
-      await sql`
+      const acceptResult = await sql`
         UPDATE advisory_suggestions
         SET status = 'accepted', updated_at = NOW()
         WHERE id = ${suggestionId} AND status = 'pending'
+        RETURNING id
       `;
+      if (acceptResult.length === 0) {
+        await sql.end();
+        return Response.json({ error: "Suggestion not found or not in pending state" }, { status: 409 });
+      }
     } else if (userAction === "reject") {
-      await sql`
+      const rejectResult = await sql`
         UPDATE advisory_suggestions
         SET status = 'rejected', rejection_reason = ${rejectionReason || null}, updated_at = NOW()
         WHERE id = ${suggestionId} AND status IN ('pending', 'accepted')
+        RETURNING id
       `;
+      if (rejectResult.length === 0) {
+        await sql.end();
+        return Response.json({ error: "Suggestion not found or not in valid state" }, { status: 409 });
+      }
     } else if (userAction === "cancel") {
       // 从 accepted 回退到 pending
-      await sql`
+      const cancelResult = await sql`
         UPDATE advisory_suggestions
         SET status = 'pending', updated_at = NOW()
         WHERE id = ${suggestionId} AND status = 'accepted'
+        RETURNING id
       `;
+      if (cancelResult.length === 0) {
+        await sql.end();
+        return Response.json({ error: "Suggestion not found or not in accepted state" }, { status: 409 });
+      }
     } else if (userAction !== "confirm") {
       await sql.end();
       return Response.json({ error: `Unsupported action: ${userAction}` }, { status: 400 });
