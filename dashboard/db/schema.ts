@@ -478,6 +478,7 @@ export const advisorySuggestions = pgTable(
       .notNull()
       .references(() => advisories.id, { onDelete: "cascade" }),
 
+    sortOrder: integer("sort_order").notNull().default(0),
     type: varchar("type", { length: 20 }).notNull(),
     target: varchar("target", { length: 30 }).notNull(),
     action: varchar("action", { length: 50 }).notNull(),

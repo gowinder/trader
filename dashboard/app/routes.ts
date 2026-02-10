@@ -14,6 +14,10 @@ export default [
   route("api/strategy-presets", "routes/api.strategy-presets.ts"),
   route("api/strategy-presets/activate", "routes/api.strategy-presets.activate.ts"),
   route("api/strategy-presets/history", "routes/api.strategy-presets.history.ts"),
+  route("api/advisory", "routes/api.advisory.ts"),
+  route("api/advisory-action", "routes/api.advisory-action.ts"),
+  route("api/advisory-settings", "routes/api.advisory-settings.ts"),
+  route("api/account-state", "routes/api.account-state.ts"),
   route("dashboard", "routes/dashboard.tsx", [
     index("routes/dashboard._index.tsx"),
     route("chart", "routes/dashboard.chart.tsx"),
@@ -29,5 +33,7 @@ export default [
     route("control", "routes/dashboard.control.tsx"),
     route("settings", "routes/dashboard.settings.tsx"),
     route("strategy", "routes/dashboard.strategy.tsx"),
+    route("advisory", "routes/dashboard.advisory.tsx"),
+    route("advisory-settings", "routes/dashboard.advisory-settings.tsx"),
   ]),
 ] satisfies RouteConfig;
