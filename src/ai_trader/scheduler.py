@@ -883,22 +883,16 @@ class Scheduler:
                     idx = action_data.get("index", 0)
                     action_type = action_data.get("action")
 
-                    # 获取该 advisory 的所有建议
-                    advisories = await persistence.get_pending_advisories(limit=100)
-                    target_suggestion_id = None
-                    for adv in advisories:
-                        if str(adv.get("id")) == advisory_id:
-                            suggestions = adv.get("suggestions", [])
-                            if isinstance(suggestions, list) and idx < len(suggestions):
-                                target_suggestion_id = suggestions[idx].get("id")
-                            break
-
-                    if not target_suggestion_id:
+                    # 定向查询建议（按 advisory_id + sort_order）
+                    from uuid import UUID as _UUID
+                    suggestion = await persistence.get_suggestion_by_advisory_and_index(
+                        _UUID(advisory_id), idx
+                    )
+                    if not suggestion:
                         logger.warning(f"Telegram action: suggestion not found for advisory={advisory_id} idx={idx}")
                         continue
 
-                    from uuid import UUID
-                    sid = UUID(str(target_suggestion_id))
+                    sid = suggestion["id"]
 
                     if action_type == "accept":
                         await persistence.update_suggestion_status(sid, "accepted")
@@ -908,19 +902,13 @@ class Scheduler:
                     elif action_type == "confirm":
                         await persistence.update_suggestion_status(sid, "confirmed")
                         # 入队执行
-                        for adv in advisories:
-                            if str(adv.get("id")) == advisory_id:
-                                suggestions = adv.get("suggestions", [])
-                                if idx < len(suggestions):
-                                    s = suggestions[idx]
-                                    await self._redis.lpush("advisory:execute_tasks", json.dumps({
-                                        "suggestion_id": str(sid),
-                                        "type": s.get("type"),
-                                        "target": s.get("target"),
-                                        "action": s.get("action"),
-                                        "detail": s.get("detail"),
-                                    }))
-                                break
+                        await self._redis.lpush("advisory:execute_tasks", json.dumps({
+                            "suggestion_id": str(sid),
+                            "type": suggestion.get("type"),
+                            "target": suggestion.get("target"),
+                            "action": suggestion.get("action"),
+                            "detail": suggestion.get("detail"),
+                        }))
                     elif action_type == "cancel":
                         # cancel 相当于从 accepted 回退到 pending
                         await persistence.update_suggestion_status(sid, "pending")

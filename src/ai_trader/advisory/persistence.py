@@ -44,15 +44,16 @@ class AdvisoryPersistenceService:
                 tokens_used,
             )
 
-            for s in result.suggestions:
+            for idx, s in enumerate(result.suggestions):
                 await conn.execute(
                     """
                     INSERT INTO advisory_suggestions (
-                        advisory_id, type, target, action, detail,
+                        advisory_id, sort_order, type, target, action, detail,
                         reasoning, risk_note, status
-                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
                     """,
                     advisory_id,
+                    idx,
                     s.type.value,
                     s.target,
                     s.action,
@@ -95,7 +96,7 @@ class AdvisoryPersistenceService:
                     'action', s.action, 'detail', s.detail,
                     'reasoning', s.reasoning, 'risk_note', s.risk_note,
                     'status', s.status
-                ) ORDER BY s.id
+                ) ORDER BY s.sort_order
             ) as suggestions
             FROM advisories a
             LEFT JOIN advisory_suggestions s ON s.advisory_id = a.id
@@ -107,6 +108,21 @@ class AdvisoryPersistenceService:
             limit,
         )
         return [dict(r) for r in rows]
+
+    async def get_suggestion_by_advisory_and_index(
+        self, advisory_id: UUID, sort_order: int
+    ) -> Optional[Dict]:
+        """按 advisory_id + sort_order 定向查询单条建议"""
+        row = await self.db.pool.fetchrow(
+            """
+            SELECT id, type, target, action, detail, status
+            FROM advisory_suggestions
+            WHERE advisory_id = $1 AND sort_order = $2
+            """,
+            advisory_id,
+            sort_order,
+        )
+        return dict(row) if row else None
 
     async def resolve_advisory(self, advisory_id: UUID):
         """标记 advisory 为已处理"""

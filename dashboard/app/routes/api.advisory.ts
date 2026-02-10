@@ -20,7 +20,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
                   'reasoning', s.reasoning, 'risk_note', s.risk_note,
                   'status', s.status, 'execution_result', s.execution_result,
                   'rejection_reason', s.rejection_reason
-                )
+                ) ORDER BY s.sort_order
               ) FILTER (WHERE s.id IS NOT NULL), '[]'
             ) as suggestions
           FROM advisories a
@@ -39,7 +39,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
                   'reasoning', s.reasoning, 'risk_note', s.risk_note,
                   'status', s.status, 'execution_result', s.execution_result,
                   'rejection_reason', s.rejection_reason
-                )
+                ) ORDER BY s.sort_order
               ) FILTER (WHERE s.id IS NOT NULL), '[]'
             ) as suggestions
           FROM advisories a
