@@ -136,7 +136,24 @@ class Scheduler:
             logger.warning("Advisory requires persistence, but persistence not initialized")
             return
         try:
-            llm_client = AdvisoryLLMClient()
+            # 从 Redis 读取已保存的 LLM 配置
+            llm_kwargs = {}
+            if self._redis:
+                try:
+                    llm_data = await self._redis.get("advisory:llm_config")
+                    if llm_data:
+                        llm_cfg = json.loads(llm_data)
+                        if llm_cfg.get("provider"):
+                            llm_kwargs["provider"] = llm_cfg["provider"]
+                        if llm_cfg.get("model"):
+                            llm_kwargs["model"] = llm_cfg["model"]
+                        if llm_cfg.get("base_url"):
+                            llm_kwargs["base_url"] = llm_cfg["base_url"]
+                        if llm_cfg.get("api_key"):
+                            llm_kwargs["api_key"] = llm_cfg["api_key"]
+                except Exception:
+                    pass
+            llm_client = AdvisoryLLMClient(**llm_kwargs)
             persistence = AdvisoryPersistenceService(self.db_manager) if self.db_manager else None
             context_builder = AdvisoryContextBuilder(db=self.db_manager)
             engine = AdvisoryEngine(llm_client, persistence, context_builder)
@@ -161,6 +178,9 @@ class Scheduler:
                 engine=engine, trigger_manager=trigger_mgr,
                 notifier=notifier, persistence=persistence,
             )
+            # 在 advisory_service 就绪后启动执行队列监听
+            if self._redis:
+                asyncio.create_task(self._advisory_execute_listener())
             logger.info("Advisory system initialized")
         except Exception as e:
             logger.error(f"Failed to initialize advisory system: {e}")
@@ -180,7 +200,6 @@ class Scheduler:
             asyncio.create_task(self._config_listener())
             asyncio.create_task(self._manual_trigger_listener())
             asyncio.create_task(self._backtest_task_listener())
-            asyncio.create_task(self._advisory_execute_listener())
         except Exception as e:
             logger.warning(f"Redis not available, using static config: {e}")
             self._redis = None
@@ -297,6 +316,14 @@ class Scheduler:
                             self._trading_enabled = cfg.get("enabled", True)
                             interval_minutes = cfg.get("decisionInterval", 1)
                             self._decision_interval = interval_minutes * 60
+                            # 同步交易对配置变更
+                            if "trading_symbols" in cfg:
+                                config.trading_symbols = cfg["trading_symbols"]
+                                logger.info(f"Trading symbols updated: {config.symbols_list}")
+                            # 同步其他运行时参数
+                            for param in ["stop_loss_percent", "take_profit_percent", "leverage_max", "quant_weight", "ai_weight"]:
+                                if param in cfg:
+                                    setattr(config, param, cfg[param])
                             logger.info(f"Config updated: enabled={self._trading_enabled}, interval={interval_minutes}m")
                     except Exception as e:
                         logger.error(f"Failed to parse config update: {e}")
