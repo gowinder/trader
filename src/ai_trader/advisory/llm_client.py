@@ -27,13 +27,13 @@ class AdvisoryLLMClient:
         api_key: str = "",
         model: str = "",
         base_url: Optional[str] = None,
-        timeout: float = 120.0,
+        timeout: Optional[float] = None,
     ):
         self._provider_name = provider or config.advisory_llm_provider
         self._api_key = api_key or config.advisory_llm_api_key or config.llm_api_key
         self._model = model or config.advisory_llm_model
         self._base_url = base_url or config.advisory_llm_base_url or "https://openrouter.ai/api/v1"
-        self._timeout = timeout or config.advisory_llm_timeout
+        self._timeout = timeout if timeout is not None else config.advisory_llm_timeout
 
         self._provider = _AdvisoryProvider(
             api_key=self._api_key,
