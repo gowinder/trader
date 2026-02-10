@@ -40,9 +40,9 @@ export async function action({ request }: ActionFunctionArgs) {
 
       if (updated.length > 0) {
         const suggestion = updated[0];
+        const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
+        const redis = createClient({ url: redisUrl });
         try {
-          const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
-          const redis = createClient({ url: redisUrl });
           await redis.connect();
           await redis.lPush(
             "advisory:execute_tasks",
@@ -54,7 +54,6 @@ export async function action({ request }: ActionFunctionArgs) {
               detail: suggestion.detail,
             })
           );
-          await redis.disconnect();
         } catch (redisError) {
           // Redis 入队失败时回滚 DB 状态
           await sql`
@@ -63,16 +62,22 @@ export async function action({ request }: ActionFunctionArgs) {
             WHERE id = ${suggestionId} AND status = 'confirmed'
           `;
           throw redisError;
+        } finally {
+          try { await redis.disconnect(); } catch { /* ignore disconnect errors */ }
         }
       }
     }
 
     // Check if all suggestions in terminal state -> resolve advisory
-    // Terminal states: rejected, executed, failed
-    // Non-terminal: pending, accepted, confirmed
-    const [{ advisory_id: advisoryId }] = await sql`
+    const suggestionRow = await sql`
       SELECT advisory_id FROM advisory_suggestions WHERE id = ${suggestionId}
     `;
+    if (suggestionRow.length === 0) {
+      await sql.end();
+      return Response.json({ error: "Suggestion not found" }, { status: 404 });
+    }
+    const advisoryId = suggestionRow[0].advisory_id;
+
     const [{ activeCount }] = await sql`
       SELECT COUNT(*)::int as "activeCount"
       FROM advisory_suggestions

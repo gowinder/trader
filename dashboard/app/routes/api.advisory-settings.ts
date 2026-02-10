@@ -56,8 +56,12 @@ export async function action({ request }: ActionFunctionArgs) {
       await client.publish("advisory:config:updated", JSON.stringify(body.triggerConfig));
     }
     if (body.llmConfig) {
-      await client.set(LLM_CONFIG_KEY, JSON.stringify(body.llmConfig));
-      await client.publish("advisory:llm_config:updated", JSON.stringify(body.llmConfig));
+      // 合并已有配置，保留 api_key 等字段不被覆盖
+      const existingRaw = await client.get(LLM_CONFIG_KEY);
+      const existing = existingRaw ? JSON.parse(existingRaw) : {};
+      const merged = { ...existing, ...body.llmConfig };
+      await client.set(LLM_CONFIG_KEY, JSON.stringify(merged));
+      await client.publish("advisory:llm_config:updated", JSON.stringify(merged));
     }
 
     await client.disconnect();
