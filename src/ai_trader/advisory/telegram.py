@@ -93,3 +93,78 @@ class TelegramNotifier:
             await self._bot.send_message(chat_id=self.chat_id, text=text)
         except Exception as e:
             logger.error(f"Failed to send execution result: {e}")
+
+    async def start_callback_handler(self, redis_client, persistence):
+        """启动 Telegram callback 处理"""
+        if not HAS_TELEGRAM or not self.enabled:
+            logger.debug("Telegram callback handler not started (not configured)")
+            return
+
+        try:
+            from telegram.ext import Application, CallbackQueryHandler
+
+            app = Application.builder().token(self.bot_token).build()
+
+            async def handle_callback(update, context):
+                query = update.callback_query
+                await query.answer()
+
+                data = query.data
+                parts = data.split(":")
+                if len(parts) != 3:
+                    return
+
+                action_type, advisory_id, idx = parts[0], parts[1], int(parts[2])
+
+                if str(query.message.chat_id) != self.chat_id:
+                    return
+
+                import json
+
+                if action_type == "accept":
+                    # Push to Redis for Dashboard to handle confirmation
+                    await redis_client.lpush(
+                        "advisory:telegram_actions",
+                        json.dumps({"advisory_id": advisory_id, "index": idx, "action": "accept"})
+                    )
+                    keyboard = InlineKeyboardMarkup([
+                        [
+                            InlineKeyboardButton("\u26a0\ufe0f \u786e\u8ba4\u6267\u884c?", callback_data=f"confirm:{advisory_id}:{idx}"),
+                            InlineKeyboardButton("\u21a9\ufe0f \u53d6\u6d88", callback_data=f"cancel:{advisory_id}:{idx}"),
+                        ]
+                    ])
+                    await query.edit_message_reply_markup(reply_markup=keyboard)
+                elif action_type == "reject":
+                    await redis_client.lpush(
+                        "advisory:telegram_actions",
+                        json.dumps({"advisory_id": advisory_id, "index": idx, "action": "reject"})
+                    )
+                    await query.edit_message_text(
+                        text=query.message.text + f"\n\n\u274c \u5efa\u8bae #{idx+1} \u5df2\u62d2\u7edd"
+                    )
+                elif action_type == "confirm":
+                    await redis_client.lpush(
+                        "advisory:telegram_actions",
+                        json.dumps({"advisory_id": advisory_id, "index": idx, "action": "confirm"})
+                    )
+                    await query.edit_message_text(
+                        text=query.message.text + f"\n\n\u23f3 \u5efa\u8bae #{idx+1} \u6267\u884c\u4e2d..."
+                    )
+                elif action_type == "cancel":
+                    await redis_client.lpush(
+                        "advisory:telegram_actions",
+                        json.dumps({"advisory_id": advisory_id, "index": idx, "action": "cancel"})
+                    )
+                    await query.edit_message_text(
+                        text=query.message.text + f"\n\n\u21a9\ufe0f \u5efa\u8bae #{idx+1} \u5df2\u53d6\u6d88"
+                    )
+
+                logger.info(f"Telegram callback: {action_type} advisory={advisory_id} idx={idx}")
+
+            app.add_handler(CallbackQueryHandler(handle_callback))
+            await app.initialize()
+            await app.start()
+            await app.updater.start_polling(drop_pending_updates=True)
+            logger.info("Telegram callback handler started")
+        except Exception as e:
+            logger.error(f"Failed to start Telegram callback handler: {e}")
