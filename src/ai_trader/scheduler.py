@@ -31,6 +31,13 @@ from .memory import TradeMemoryCollector
 from .ai.usage_tracker import get_usage_tracker
 from .reflection.service import ReflectionClient
 from .optimization import ParameterRegistry, ShadowRunner
+from .advisory.service import AdvisoryService
+from .advisory.engine import AdvisoryEngine
+from .advisory.llm_client import AdvisoryLLMClient
+from .advisory.persistence import AdvisoryPersistenceService
+from .advisory.context import AdvisoryContextBuilder
+from .advisory.triggers import TriggerManager, TriggerConfig
+from .advisory.telegram import TelegramNotifier
 
 
 class Scheduler:
@@ -64,6 +71,10 @@ class Scheduler:
         self.parameter_registry = ParameterRegistry()
 
         self.running = False
+
+        # Advisory system
+        self._advisory_service: Optional[AdvisoryService] = None
+        self._price_history: dict = {}
 
         # Redis for dynamic config
         self._redis: Optional[redis.Redis] = None
@@ -116,6 +127,43 @@ class Scheduler:
             logger.error(f"Failed to initialize persistence service: {e}")
             self.db_manager = None
             self.persistence_service = None
+
+    async def _init_advisory(self):
+        """初始化 Advisory 系统"""
+        if not config.advisory_enabled:
+            return
+        if not self._persistence_initialized:
+            logger.warning("Advisory requires persistence, but persistence not initialized")
+            return
+        try:
+            llm_client = AdvisoryLLMClient()
+            persistence = AdvisoryPersistenceService(self.db_manager) if self.db_manager else None
+            context_builder = AdvisoryContextBuilder(db=self.db_manager)
+            engine = AdvisoryEngine(llm_client, persistence, context_builder)
+
+            trigger_config = TriggerConfig(interval_minutes=config.advisory_interval_minutes)
+            if self._redis:
+                try:
+                    data = await self._redis.get("advisory:trigger_config")
+                    if data:
+                        cfg = json.loads(data)
+                        trigger_config = TriggerConfig(**cfg)
+                except Exception:
+                    pass
+
+            trigger_mgr = TriggerManager(trigger_config)
+            notifier = TelegramNotifier(
+                bot_token=config.telegram_bot_token,
+                chat_id=config.telegram_chat_id,
+            )
+
+            self._advisory_service = AdvisoryService(
+                engine=engine, trigger_manager=trigger_mgr,
+                notifier=notifier, persistence=persistence,
+            )
+            logger.info("Advisory system initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize advisory system: {e}")
 
     async def _init_redis(self):
         """初始化 Redis 连接"""
@@ -474,6 +522,9 @@ class Scheduler:
         # Initialize Redis for dynamic config
         await self._init_redis()
 
+        # Initialize Advisory system
+        await self._init_advisory()
+
         while self.running:
             # Check if trading is enabled
             if not self._trading_enabled:
@@ -488,6 +539,9 @@ class Scheduler:
                         await self.run_cycle_for_symbol(symbol)
                     except Exception as e:
                         logger.error(f"Error in cycle for {symbol}: {e}")
+
+                # Run advisory check
+                await self._run_advisory_check()
             except Exception as e:
                 logger.error(f"Error in main cycle: {e}")
 
@@ -752,6 +806,56 @@ class Scheduler:
 
         except Exception as e:
             logger.error(f"Failed to persist position change: {e}")
+
+    async def _run_advisory_check(self):
+        """运行 advisory 检查"""
+        if not self._advisory_service:
+            return
+        try:
+            symbols = config.symbols_list
+            positions = []
+            market_data = {}
+            price_context = {}
+
+            for symbol in symbols:
+                try:
+                    pos = await self.position_mgr.get_position(symbol)
+                    if pos and pos.size > 0:
+                        positions.append({
+                            "symbol": pos.symbol, "side": pos.side,
+                            "size": pos.size, "entry_price": pos.entry_price,
+                            "unrealized_pnl": pos.unrealized_pnl,
+                            "roi": pos.roi, "leverage": pos.leverage,
+                        })
+                    ticker = await self.exchange.get_ticker(symbol)
+                    current_price = ticker.get("last", 0) if ticker else 0
+                    market_data[symbol] = {
+                        "current_price": current_price,
+                        "change_24h": ticker.get("percentage", 0) if ticker else 0,
+                    }
+                    previous = self._price_history.get(symbol)
+                    if previous:
+                        price_context[symbol] = {"current": current_price, "previous": previous}
+                    self._price_history[symbol] = current_price
+                except Exception as e:
+                    logger.debug(f"Advisory data collection error for {symbol}: {e}")
+
+            current_config = {
+                "stop_loss_percent": config.stop_loss_percent,
+                "take_profit_percent": config.take_profit_percent,
+                "leverage_max": config.leverage_max,
+                "quant_weight": config.quant_weight,
+                "ai_weight": config.ai_weight,
+            }
+
+            await self._advisory_service.check_and_run(
+                symbols=symbols, positions=positions,
+                market_data=market_data, sentiment=None,
+                current_config=current_config, consecutive_losses=0,
+                price_context=price_context,
+            )
+        except Exception as e:
+            logger.error(f"Advisory check error: {e}")
 
     async def run_cycle(self):
         """执行单次交易循环（兼容旧版单 symbol）"""
