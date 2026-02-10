@@ -608,8 +608,12 @@ class Scheduler:
                     except Exception as e:
                         logger.error(f"Error in cycle for {symbol}: {e}")
 
-                # Run advisory check
-                await self._run_advisory_check()
+                # Run advisory check (后台执行，不阻塞主循环)
+                if self._advisory_service:
+                    task = asyncio.create_task(self._run_advisory_check())
+                    self._advisory_tasks.append(task)
+                    # 清理已完成的 tasks 避免列表无限增长
+                    self._advisory_tasks = [t for t in self._advisory_tasks if not t.done()]
             except Exception as e:
                 logger.error(f"Error in main cycle: {e}")
 
@@ -993,37 +997,40 @@ class Scheduler:
                 executor = ConfigExecutor(self._redis)
                 result = await executor.execute(action, target, detail)
             elif suggestion_type == "position_action":
-                # 使用 symbol 锁防止与主交易循环并发操作同一 symbol
-                async with self._get_symbol_lock(target):
-                    executor = TradeExecutor(self.order_mgr, self.position_mgr)
-                    # 执行前获取仓位信息用于持久化
-                    pre_position = await self.position_mgr.get_position(target) if self.position_mgr else None
-                    result = await executor.execute(action, target, detail)
-                    # 执行成功后同步持仓持久化（在锁内避免与主循环竞态）
-                    if result.success and pre_position and self.persistence_service:
-                        try:
-                            persist_action = action
-                            if action == "close_position":
-                                persist_action = f"close_{pre_position.side}"
-                            elif action == "reduce_position":
-                                persist_action = f"reduce_{pre_position.side}"
-                            ticker = await self.exchange.get_ticker(target) if hasattr(self, "exchange") and self.exchange else None
-                            current_price = ticker.last_price if ticker else (pre_position.entry_price or 0)
-                            persist_size = pre_position.size
-                            if action == "reduce_position":
-                                raw_pct = detail.get("reduce_percent", 50) if isinstance(detail, dict) else 50
-                                persist_size = pre_position.size * (raw_pct / 100)
-                            await self._persist_position_change(
-                                action=persist_action,
-                                symbol=target,
-                                price=current_price,
-                                size=persist_size,
-                                leverage=pre_position.leverage or 1,
-                                position=pre_position,
-                                market_state="advisory",
-                            )
-                        except Exception as persist_err:
-                            logger.error(f"Advisory position persist failed: {persist_err}")
+                if not self.position_mgr:
+                    result = ExecutionResult(success=False, message="Position manager not initialized")
+                else:
+                    # 使用 symbol 锁防止与主交易循环并发操作同一 symbol
+                    async with self._get_symbol_lock(target):
+                        executor = TradeExecutor(self.order_mgr, self.position_mgr)
+                        # 执行前获取仓位信息用于持久化
+                        pre_position = await self.position_mgr.get_position(target)
+                        result = await executor.execute(action, target, detail)
+                        # 执行成功后同步持仓持久化（在锁内避免与主循环竞态）
+                        if result.success and pre_position and self.persistence_service:
+                            try:
+                                persist_action = action
+                                if action == "close_position":
+                                    persist_action = f"close_{pre_position.side}"
+                                elif action == "reduce_position":
+                                    persist_action = f"reduce_{pre_position.side}"
+                                ticker = await self.exchange.get_ticker(target) if hasattr(self, "exchange") and self.exchange else None
+                                current_price = ticker.last_price if ticker else (pre_position.entry_price or 0)
+                                persist_size = pre_position.size
+                                if action == "reduce_position":
+                                    raw_pct = detail.get("reduce_percent", 50) if isinstance(detail, dict) else 50
+                                    persist_size = pre_position.size * (raw_pct / 100)
+                                await self._persist_position_change(
+                                    action=persist_action,
+                                    symbol=target,
+                                    price=current_price,
+                                    size=persist_size,
+                                    leverage=pre_position.leverage or 1,
+                                    position=pre_position,
+                                    market_state="advisory",
+                                )
+                            except Exception as persist_err:
+                                logger.error(f"Advisory position persist failed: {persist_err}")
             elif suggestion_type == "symbol_change":
                 executor = SymbolExecutor(self._redis)
                 result = await executor.execute(action, target, detail)
