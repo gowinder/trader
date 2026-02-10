@@ -84,11 +84,14 @@ class ConfigExecutor:
         updated = {}
         for key in ["quant_weight", "ai_weight", "sentiment_weight"]:
             if key in detail:
-                config[key] = detail[key]
-                updated[key] = detail[key]
+                val = detail[key]
+                if not isinstance(val, (int, float)) or val < 0 or val > 1.0:
+                    return ExecutionResult(success=False, message=f"{key} 值 {val} 超出允许范围 [0, 1.0]")
+                config[key] = val
+                updated[key] = val
                 # 同步更新运行时配置
                 if hasattr(runtime_config, key):
-                    setattr(runtime_config, key, detail[key])
+                    setattr(runtime_config, key, val)
         await self._redis.set("trading:config", json.dumps(config))
         await self._redis.publish("trading:config:updated", json.dumps(config))
         return ExecutionResult(success=True, message=f"权重已调整: {updated}", detail=updated)

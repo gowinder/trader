@@ -77,6 +77,7 @@ class Scheduler:
 
         # Advisory system
         self._advisory_service: Optional[AdvisoryService] = None
+        self._advisory_tasks: list = []
         self._price_history: dict = {}
         self._consecutive_losses: int = 0
 
@@ -190,8 +191,8 @@ class Scheduler:
             )
             # 在 advisory_service 就绪后启动执行队列监听
             if self._redis:
-                asyncio.create_task(self._advisory_execute_listener())
-                asyncio.create_task(self._telegram_actions_listener())
+                self._advisory_tasks.append(asyncio.create_task(self._advisory_execute_listener()))
+                self._advisory_tasks.append(asyncio.create_task(self._telegram_actions_listener()))
             # 启动 Telegram 回调处理
             if notifier.enabled and self._redis:
                 asyncio.create_task(notifier.start_callback_handler(
@@ -618,9 +619,20 @@ class Scheduler:
     async def stop(self):
         """停止调度器"""
         self.running = False
-        # 停止 Telegram callback handler
-        if self._advisory_service and hasattr(self._advisory_service, 'notifier') and self._advisory_service.notifier:
-            await self._advisory_service.notifier.stop()
+        # 取消 advisory 后台 tasks
+        for task in self._advisory_tasks:
+            if not task.done():
+                task.cancel()
+        self._advisory_tasks.clear()
+        # 停止 advisory 相关资源
+        if self._advisory_service:
+            if hasattr(self._advisory_service, 'notifier') and self._advisory_service.notifier:
+                await self._advisory_service.notifier.stop()
+            if hasattr(self._advisory_service, 'engine') and self._advisory_service.engine and hasattr(self._advisory_service.engine, 'llm'):
+                try:
+                    await self._advisory_service.engine.llm.close()
+                except Exception:
+                    pass
         if hasattr(self, "exchange") and self.exchange:
             await self.exchange.close()
         if hasattr(self, "llm") and self.llm:
