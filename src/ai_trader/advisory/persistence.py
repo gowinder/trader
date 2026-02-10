@@ -38,7 +38,7 @@ class AdvisoryPersistenceService:
                 json.dumps(trigger_detail),
                 result.urgency.value,
                 result.market_summary,
-                "pending",
+                "resolved" if not result.suggestions else "pending",
                 llm_provider,
                 llm_model,
                 tokens_used,
@@ -95,7 +95,7 @@ class AdvisoryPersistenceService:
                     'action', s.action, 'detail', s.detail,
                     'reasoning', s.reasoning, 'risk_note', s.risk_note,
                     'status', s.status
-                )
+                ) ORDER BY s.id
             ) as suggestions
             FROM advisories a
             LEFT JOIN advisory_suggestions s ON s.advisory_id = a.id
