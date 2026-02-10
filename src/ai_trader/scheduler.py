@@ -61,8 +61,8 @@ class Scheduler:
         self.persistence_service: Optional[DecisionPersistenceService] = None
         self._persistence_initialized = False
 
-        # Track current position for persistence
-        self._current_position_id: Optional[UUID] = None
+        # Track current position for persistence (per symbol)
+        self._current_position_ids: dict = {}  # symbol -> UUID
 
         # Memory and optimization system
         self.memory_collector: Optional[TradeMemoryCollector] = None
@@ -688,7 +688,7 @@ class Scheduler:
         # 尝试从 decisions 表获取开仓决策的止损止盈
         stop_loss = None
         take_profit = None
-        if self.db_manager and self._current_position_id:
+        if self.db_manager and self._current_position_ids.get(symbol):
             row = await self.db_manager.fetchrow(
                 """
                 SELECT d.stop_loss, d.take_profit
@@ -696,7 +696,7 @@ class Scheduler:
                 JOIN decisions d ON d.id = ph.entry_decision_id
                 WHERE ph.id = $1
                 """,
-                self._current_position_id,
+                self._current_position_ids.get(symbol),
             )
             if row:
                 stop_loss = float(row["stop_loss"]) if row["stop_loss"] else None
@@ -782,12 +782,12 @@ class Scheduler:
                     entry_size=size,
                     leverage=leverage,
                 )
-                self._current_position_id = position_id
+                self._current_position_ids[symbol] = position_id
                 logger.info(f"Position opened and persisted: {position_id}")
 
             elif action in ["close_long", "close_short"]:
                 # 平仓
-                if not self._current_position_id and self.db_manager:
+                if not self._current_position_ids.get(symbol) and self.db_manager:
                     row = await self.db_manager.fetchrow(
                         """
                         SELECT id
@@ -801,9 +801,9 @@ class Scheduler:
                         symbol,
                     )
                     if row:
-                        self._current_position_id = row["id"]
+                        self._current_position_ids[symbol] = row["id"]
 
-                if self._current_position_id and position:
+                if self._current_position_ids.get(symbol) and position:
                     # 计算盈亏
                     entry_price = position.entry_price
                     pnl = (price - entry_price) * size
@@ -812,7 +812,7 @@ class Scheduler:
                     pnl_percent = (pnl / (entry_price * size)) * 100
 
                     await self.persistence_service.save_position_close(
-                        position_id=self._current_position_id,
+                        position_id=self._current_position_ids.get(symbol),
                         exit_price=price,
                         realized_pnl=pnl,
                         pnl_percent=pnl_percent,
@@ -826,8 +826,8 @@ class Scheduler:
                         is_win=pnl > 0,
                     )
 
-                    logger.info(f"Position closed and persisted: {self._current_position_id}, pnl={pnl:.2f}")
-                    self._current_position_id = None
+                    logger.info(f"Position closed and persisted: {self._current_position_ids.get(symbol)}, pnl={pnl:.2f}")
+                    self._current_position_ids.pop(symbol, None)
 
                     # 更新连续亏损计数
                     if pnl < 0:
@@ -1098,7 +1098,7 @@ class Scheduler:
     async def _load_testnet_virtual_position(self, symbol: str, mark_price: float):
         """在 testnet 模式下从数据库恢复当前持仓，形成闭环。"""
         if not self.db_manager:
-            self._current_position_id = None
+            self._current_position_ids.pop(symbol, None)
             return None
 
         rows = await self.db_manager.fetch(
@@ -1120,7 +1120,7 @@ class Scheduler:
         )
 
         if not rows:
-            self._current_position_id = None
+            self._current_position_ids.pop(symbol, None)
             return None
 
         if len(rows) > 1:
@@ -1158,7 +1158,7 @@ class Scheduler:
             roi=roi,
         )
 
-        self._current_position_id = row["id"]
+        self._current_position_ids[symbol] = row["id"]
         return position
 
     async def _build_testnet_account_state(self, symbol: str, current_price: float):
@@ -1210,8 +1210,8 @@ class Scheduler:
             position = await self.position_mgr.get_position(symbol)
             account = await self.exchange.get_account()  # Now returns AccountInfo model
 
-            # Live 模式：重启后从数据库恢复 _current_position_id
-            if position and position.size > 0 and not self._current_position_id and self.db_manager:
+            # Live 模式：重启后从数据库恢复 _current_position_ids
+            if position and position.size > 0 and not self._current_position_ids.get(symbol) and self.db_manager:
                 row = await self.db_manager.fetchrow(
                     """
                     SELECT id FROM position_history
@@ -1221,8 +1221,8 @@ class Scheduler:
                     symbol,
                 )
                 if row:
-                    self._current_position_id = row["id"]
-                    logger.info(f"Recovered position_id {self._current_position_id} for {symbol} from database")
+                    self._current_position_ids[symbol] = row["id"]
+                    logger.info(f"Recovered position_id {self._current_position_ids[symbol]} for {symbol} from database")
                 else:
                     logger.warning(f"Position exists in exchange but not found in database for {symbol}")
 
@@ -1243,7 +1243,7 @@ class Scheduler:
             return
 
         # 1.5 止损止盈自动检查（在 LLM 决策之前）
-        if position and position.size > 0 and self._current_position_id:
+        if position and position.size > 0 and self._current_position_ids.get(symbol):
             sl_tp_action = await self._check_stop_loss_take_profit(
                 symbol, position, market_data.current_price
             )
