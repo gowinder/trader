@@ -142,7 +142,14 @@ class AdvisoryPersistenceService:
             advisory_id,
             sort_order,
         )
-        return dict(row) if row else None
+        if not row:
+            return None
+        d = dict(row)
+        # asyncpg 可能将 jsonb 以字符串返回，确保 detail 为 dict
+        if isinstance(d.get("detail"), str):
+            import json as _json
+            d["detail"] = _json.loads(d["detail"])
+        return d
 
     async def resolve_advisory(self, advisory_id: UUID):
         """标记 advisory 为已处理"""

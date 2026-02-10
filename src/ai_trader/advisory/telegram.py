@@ -121,43 +121,63 @@ class TelegramNotifier:
 
                 import json
 
+                def _rebuild_keyboard(original_markup, advisory_id, idx, replacement_row):
+                    """替换指定 idx 的按钮行，保留其余行"""
+                    new_rows = []
+                    if original_markup and original_markup.inline_keyboard:
+                        for row in original_markup.inline_keyboard:
+                            # 检查该行是否属于当前 idx
+                            row_matches = any(
+                                btn.callback_data and btn.callback_data.endswith(f":{advisory_id}:{idx}")
+                                for btn in row
+                            )
+                            if row_matches:
+                                if replacement_row is not None:
+                                    new_rows.append(replacement_row)
+                            else:
+                                new_rows.append(row)
+                    return InlineKeyboardMarkup(new_rows) if new_rows else None
+
                 if action_type == "accept":
-                    # Push to Redis for Dashboard to handle confirmation
                     await redis_client.lpush(
                         "advisory:telegram_actions",
                         json.dumps({"advisory_id": advisory_id, "index": idx, "action": "accept"})
                     )
-                    keyboard = InlineKeyboardMarkup([
-                        [
-                            InlineKeyboardButton("\u26a0\ufe0f \u786e\u8ba4\u6267\u884c?", callback_data=f"confirm:{advisory_id}:{idx}"),
-                            InlineKeyboardButton("\u21a9\ufe0f \u53d6\u6d88", callback_data=f"cancel:{advisory_id}:{idx}"),
-                        ]
-                    ])
-                    await query.edit_message_reply_markup(reply_markup=keyboard)
+                    confirm_row = [
+                        InlineKeyboardButton(f"\u26a0\ufe0f \u786e\u8ba4#{idx+1}?", callback_data=f"confirm:{advisory_id}:{idx}"),
+                        InlineKeyboardButton(f"\u21a9\ufe0f \u53d6\u6d88#{idx+1}", callback_data=f"cancel:{advisory_id}:{idx}"),
+                    ]
+                    new_markup = _rebuild_keyboard(query.message.reply_markup, advisory_id, idx, confirm_row)
+                    await query.edit_message_reply_markup(reply_markup=new_markup)
                 elif action_type == "reject":
                     await redis_client.lpush(
                         "advisory:telegram_actions",
                         json.dumps({"advisory_id": advisory_id, "index": idx, "action": "reject"})
                     )
-                    await query.edit_message_text(
-                        text=query.message.text + f"\n\n\u274c \u5efa\u8bae #{idx+1} \u5df2\u62d2\u7edd"
-                    )
+                    # 移除该建议的按钮行，保留其余
+                    new_markup = _rebuild_keyboard(query.message.reply_markup, advisory_id, idx, None)
+                    await query.edit_message_reply_markup(reply_markup=new_markup)
                 elif action_type == "confirm":
                     await redis_client.lpush(
                         "advisory:telegram_actions",
                         json.dumps({"advisory_id": advisory_id, "index": idx, "action": "confirm"})
                     )
-                    await query.edit_message_text(
-                        text=query.message.text + f"\n\n\u23f3 \u5efa\u8bae #{idx+1} \u6267\u884c\u4e2d..."
-                    )
+                    # 移除该建议的按钮行，保留其余
+                    new_markup = _rebuild_keyboard(query.message.reply_markup, advisory_id, idx, None)
+                    text = query.message.text + f"\n\n\u23f3 \u5efa\u8bae #{idx+1} \u6267\u884c\u4e2d..."
+                    await query.edit_message_text(text=text, reply_markup=new_markup)
                 elif action_type == "cancel":
                     await redis_client.lpush(
                         "advisory:telegram_actions",
                         json.dumps({"advisory_id": advisory_id, "index": idx, "action": "cancel"})
                     )
-                    await query.edit_message_text(
-                        text=query.message.text + f"\n\n\u21a9\ufe0f \u5efa\u8bae #{idx+1} \u5df2\u53d6\u6d88"
-                    )
+                    # 恢复为 accept/reject 按钮
+                    restore_row = [
+                        InlineKeyboardButton(f"\u2705 \u91c7\u7eb3 #{idx+1}", callback_data=f"accept:{advisory_id}:{idx}"),
+                        InlineKeyboardButton(f"\u274c \u62d2\u7edd #{idx+1}", callback_data=f"reject:{advisory_id}:{idx}"),
+                    ]
+                    new_markup = _rebuild_keyboard(query.message.reply_markup, advisory_id, idx, restore_row)
+                    await query.edit_message_reply_markup(reply_markup=new_markup)
 
                 logger.info(f"Telegram callback: {action_type} advisory={advisory_id} idx={idx}")
 
