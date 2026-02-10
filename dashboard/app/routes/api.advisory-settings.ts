@@ -57,6 +57,7 @@ export async function action({ request }: ActionFunctionArgs) {
     }
     if (body.llmConfig) {
       await client.set(LLM_CONFIG_KEY, JSON.stringify(body.llmConfig));
+      await client.publish("advisory:llm_config:updated", JSON.stringify(body.llmConfig));
     }
 
     await client.disconnect();
