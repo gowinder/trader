@@ -117,3 +117,22 @@ class AdvisoryPersistenceService:
             """,
             advisory_id,
         )
+
+    async def try_resolve_advisory_for_suggestion(self, suggestion_id: UUID):
+        """检查建议所属 advisory 是否所有建议都已进入终态，如果是则自动 resolve"""
+        row = await self.db.pool.fetchrow(
+            "SELECT advisory_id FROM advisory_suggestions WHERE id = $1",
+            suggestion_id,
+        )
+        if not row:
+            return
+        advisory_id = row["advisory_id"]
+        active = await self.db.pool.fetchval(
+            """
+            SELECT COUNT(*) FROM advisory_suggestions
+            WHERE advisory_id = $1 AND status NOT IN ('rejected', 'executed', 'failed')
+            """,
+            advisory_id,
+        )
+        if active == 0:
+            await self.resolve_advisory(advisory_id)

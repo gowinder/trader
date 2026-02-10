@@ -889,12 +889,14 @@ class Scheduler:
 
             if self._advisory_service and self._advisory_service.persistence and suggestion_id:
                 from uuid import UUID
+                sid = UUID(suggestion_id) if isinstance(suggestion_id, str) else suggestion_id
                 status = "executed" if result.success else "failed"
                 await self._advisory_service.persistence.update_suggestion_status(
-                    UUID(suggestion_id) if isinstance(suggestion_id, str) else suggestion_id,
-                    status,
+                    sid, status,
                     execution_result={"success": result.success, "message": result.message},
                 )
+                # 检查是否所有建议都已终态，自动 resolve advisory
+                await self._advisory_service.persistence.try_resolve_advisory_for_suggestion(sid)
 
             logger.info(f"Advisory suggestion executed: {suggestion_id} -> {result.success}: {result.message}")
         except Exception as e:

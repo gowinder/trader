@@ -52,10 +52,11 @@ export async function action({ request }: ActionFunctionArgs) {
         await redis.disconnect();
       }
 
+      // 仅当状态为 accepted 时才更新为 confirmed，防止覆盖已执行的终态
       await sql`
         UPDATE advisory_suggestions
         SET status = 'confirmed', updated_at = NOW()
-        WHERE id = ${suggestionId}
+        WHERE id = ${suggestionId} AND status = 'accepted'
       `;
     }
 
