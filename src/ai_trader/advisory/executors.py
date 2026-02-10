@@ -182,6 +182,8 @@ class SymbolExecutor:
         symbols = await self._get_current_symbols(config)
         if symbol not in symbols:
             return ExecutionResult(success=False, message=f"{symbol} 不在监控列表中")
+        if len(symbols) <= 1:
+            return ExecutionResult(success=False, message=f"无法移除最后一个交易对 {symbol}，至少保留一个")
         symbols.remove(symbol)
         config["trading_symbols"] = ",".join(symbols)
         await self._redis.set("trading:config", json.dumps(config))

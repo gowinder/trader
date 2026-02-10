@@ -29,6 +29,13 @@ export async function action({ request }: ActionFunctionArgs) {
         SET status = 'rejected', rejection_reason = ${rejectionReason || null}, updated_at = NOW()
         WHERE id = ${suggestionId} AND status IN ('pending', 'accepted')
       `;
+    } else if (userAction === "cancel") {
+      // 从 accepted 回退到 pending
+      await sql`
+        UPDATE advisory_suggestions
+        SET status = 'pending', updated_at = NOW()
+        WHERE id = ${suggestionId} AND status = 'accepted'
+      `;
     } else if (userAction !== "confirm") {
       await sql.end();
       return Response.json({ error: `Unsupported action: ${userAction}` }, { status: 400 });

@@ -18,28 +18,16 @@ export async function loader({ request }: LoaderFunctionArgs) {
     const triggerConfig = await client.get(TRIGGER_CONFIG_KEY);
     const llmConfig = await client.get(LLM_CONFIG_KEY);
 
+    // 返回 Redis 中的配置，null 表示尚未配置（前端用自身默认值展示）
+    let parsedLlmConfig = null;
+    if (llmConfig) {
+      const cfg = JSON.parse(llmConfig);
+      const { api_key, ...safe } = cfg;
+      parsedLlmConfig = safe;
+    }
     return Response.json({
-      triggerConfig: triggerConfig ? JSON.parse(triggerConfig) : {
-        interval_minutes: 60,
-        price_volatility_enabled: true,
-        price_volatility_threshold: 5.0,
-        consecutive_loss_enabled: true,
-        consecutive_loss_threshold: 3,
-        unrealized_pnl_enabled: true,
-        unrealized_pnl_threshold: -5.0,
-        sentiment_shift_enabled: true,
-        cooldown_minutes: 30,
-      },
-      llmConfig: (() => {
-        const cfg = llmConfig ? JSON.parse(llmConfig) : {
-          provider: "openrouter",
-          model: "deepseek/deepseek-chat",
-          base_url: "",
-        };
-        // 过滤敏感字段，不返回给前端
-        const { api_key, ...safe } = cfg;
-        return safe;
-      })(),
+      triggerConfig: triggerConfig ? JSON.parse(triggerConfig) : null,
+      llmConfig: parsedLlmConfig,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
