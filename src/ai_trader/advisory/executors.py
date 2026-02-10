@@ -110,7 +110,9 @@ class TradeExecutor:
             reasoning="Advisory system recommended close",
             reasoning_zh="AI顾问系统建议平仓",
         )
-        await self._order_mgr.execute_order(decision, symbol, position.size)
+        result = await self._order_mgr.execute_order(decision, symbol, position.size)
+        if result is None:
+            return ExecutionResult(success=False, message=f"平仓下单失败: {symbol}")
         return ExecutionResult(success=True, message=f"已平仓 {symbol} ({position.side}, {position.size})")
 
     async def _reduce_position(self, symbol: str, detail: Dict) -> ExecutionResult:
@@ -129,7 +131,9 @@ class TradeExecutor:
             reasoning="Advisory system recommended reduce",
             reasoning_zh="AI顾问系统建议减仓",
         )
-        await self._order_mgr.execute_order(decision, symbol, reduce_size)
+        result = await self._order_mgr.execute_order(decision, symbol, reduce_size)
+        if result is None:
+            return ExecutionResult(success=False, message=f"减仓下单失败: {symbol}")
         return ExecutionResult(success=True, message=f"已减仓 {symbol} {reduce_pct*100:.0f}% ({reduce_size})")
 
 
