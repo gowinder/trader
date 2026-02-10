@@ -42,7 +42,7 @@ class ConfigExecutor:
         if new_max is None:
             return ExecutionResult(success=False, message="缺少 leverage_max 参数")
         config_data = await self._redis.get("trading:config")
-        config = json.loads(config_data) if config_data else {}
+        config = json.loads(config_data) if config_data else {"enabled": True, "decisionInterval": runtime_config.decision_interval // 60 if runtime_config.decision_interval >= 60 else 1}
         config["leverage_max"] = new_max
         await self._redis.set("trading:config", json.dumps(config))
         await self._redis.publish("trading:config:updated", json.dumps(config))
@@ -54,7 +54,7 @@ class ConfigExecutor:
         if value is None:
             return ExecutionResult(success=False, message=f"缺少 {param_name} 参数")
         config_data = await self._redis.get("trading:config")
-        config = json.loads(config_data) if config_data else {}
+        config = json.loads(config_data) if config_data else {"enabled": True, "decisionInterval": runtime_config.decision_interval // 60 if runtime_config.decision_interval >= 60 else 1}
         config[param_name] = value
         await self._redis.set("trading:config", json.dumps(config))
         await self._redis.publish("trading:config:updated", json.dumps(config))
@@ -65,7 +65,7 @@ class ConfigExecutor:
 
     async def _adjust_weights(self, detail: Dict) -> ExecutionResult:
         config_data = await self._redis.get("trading:config")
-        config = json.loads(config_data) if config_data else {}
+        config = json.loads(config_data) if config_data else {"enabled": True, "decisionInterval": runtime_config.decision_interval // 60 if runtime_config.decision_interval >= 60 else 1}
         updated = {}
         for key in ["quant_weight", "ai_weight", "sentiment_weight"]:
             if key in detail:
@@ -155,7 +155,7 @@ class SymbolExecutor:
 
     async def _add_symbol(self, symbol: str) -> ExecutionResult:
         config_data = await self._redis.get("trading:config")
-        config = json.loads(config_data) if config_data else {}
+        config = json.loads(config_data) if config_data else {"enabled": True, "decisionInterval": runtime_config.decision_interval // 60 if runtime_config.decision_interval >= 60 else 1}
         symbols = config.get("trading_symbols", "").split(",")
         symbols = [s.strip() for s in symbols if s.strip()]
         if symbol in symbols:
@@ -168,7 +168,7 @@ class SymbolExecutor:
 
     async def _remove_symbol(self, symbol: str) -> ExecutionResult:
         config_data = await self._redis.get("trading:config")
-        config = json.loads(config_data) if config_data else {}
+        config = json.loads(config_data) if config_data else {"enabled": True, "decisionInterval": runtime_config.decision_interval // 60 if runtime_config.decision_interval >= 60 else 1}
         symbols = config.get("trading_symbols", "").split(",")
         symbols = [s.strip() for s in symbols if s.strip()]
         if symbol not in symbols:

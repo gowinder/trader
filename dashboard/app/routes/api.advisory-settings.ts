@@ -30,11 +30,16 @@ export async function loader({ request }: LoaderFunctionArgs) {
         sentiment_shift_enabled: true,
         cooldown_minutes: 30,
       },
-      llmConfig: llmConfig ? JSON.parse(llmConfig) : {
-        provider: "openrouter",
-        model: "deepseek/deepseek-chat",
-        base_url: "",
-      },
+      llmConfig: (() => {
+        const cfg = llmConfig ? JSON.parse(llmConfig) : {
+          provider: "openrouter",
+          model: "deepseek/deepseek-chat",
+          base_url: "",
+        };
+        // 过滤敏感字段，不返回给前端
+        const { api_key, ...safe } = cfg;
+        return safe;
+      })(),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
