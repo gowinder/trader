@@ -30,12 +30,16 @@ export async function action({ request }: ActionFunctionArgs) {
         WHERE id = ${suggestionId}
       `;
     } else if (userAction === "confirm") {
-      const [suggestion] = await sql`
-        SELECT * FROM advisory_suggestions WHERE id = ${suggestionId}
+      // 原子更新状态：仅 accepted → confirmed，防止重复执行
+      const updated = await sql`
+        UPDATE advisory_suggestions
+        SET status = 'confirmed', updated_at = NOW()
+        WHERE id = ${suggestionId} AND status = 'accepted'
+        RETURNING id, type, target, action, detail
       `;
 
-      if (suggestion) {
-        // 先入队 Redis，成功后再更新 DB 状态
+      if (updated.length > 0) {
+        const suggestion = updated[0];
         const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
         const redis = createClient({ url: redisUrl });
         await redis.connect();
@@ -51,13 +55,6 @@ export async function action({ request }: ActionFunctionArgs) {
         );
         await redis.disconnect();
       }
-
-      // 仅当状态为 accepted 时才更新为 confirmed，防止覆盖已执行的终态
-      await sql`
-        UPDATE advisory_suggestions
-        SET status = 'confirmed', updated_at = NOW()
-        WHERE id = ${suggestionId} AND status = 'accepted'
-      `;
     }
 
     // Check if all suggestions in terminal state -> resolve advisory
