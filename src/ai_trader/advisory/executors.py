@@ -119,7 +119,10 @@ class TradeExecutor:
         position = await self._position_mgr.get_position(symbol)
         if not position:
             return ExecutionResult(success=False, message=f"仓位不存在: {symbol}")
-        reduce_pct = detail.get("reduce_percent", 50) / 100
+        raw_pct = detail.get("reduce_percent", 50)
+        if not isinstance(raw_pct, (int, float)) or raw_pct <= 0 or raw_pct > 100:
+            return ExecutionResult(success=False, message=f"非法减仓比例: {raw_pct}，须在 (0, 100] 之间")
+        reduce_pct = raw_pct / 100
         reduce_size = position.size * reduce_pct
         from ..models.decision import TradingDecision
         reduce_action = "reduce_long" if position.side == "long" else "reduce_short"

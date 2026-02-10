@@ -29,7 +29,10 @@ export async function action({ request }: ActionFunctionArgs) {
         SET status = 'rejected', rejection_reason = ${rejectionReason || null}, updated_at = NOW()
         WHERE id = ${suggestionId} AND status IN ('pending', 'accepted')
       `;
-    } else if (userAction === "confirm") {
+    } else if (userAction !== "confirm") {
+      await sql.end();
+      return Response.json({ error: `Unsupported action: ${userAction}` }, { status: 400 });
+    } else {
       // 原子更新状态：仅 accepted → confirmed，防止重复执行
       const updated = await sql`
         UPDATE advisory_suggestions
