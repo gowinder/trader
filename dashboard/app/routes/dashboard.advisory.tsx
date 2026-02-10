@@ -15,7 +15,6 @@ import {
   ChevronUp,
   AlertTriangle,
   TrendingUp,
-  Shield,
   Settings,
   RefreshCw,
   Check,
@@ -54,18 +53,17 @@ const urgencyConfig: Record<string, { label: string; color: string; bg: string }
 };
 
 const triggerTypeMap: Record<string, string> = {
-  periodic: "定时分析",
-  price_alert: "价格预警",
-  risk_alert: "风险预警",
-  news_event: "新闻事件",
-  manual: "手动触发",
+  scheduled: "定时分析",
+  price_volatility: "价格波动",
+  consecutive_loss: "连续亏损",
+  unrealized_pnl: "浮动亏损",
+  sentiment_shift: "情绪变化",
 };
 
 const suggestionTypeIcon: Record<string, typeof TrendingUp> = {
-  trade: TrendingUp,
-  risk: Shield,
-  config: Settings,
-  alert: AlertTriangle,
+  param_adjust: Settings,
+  position_action: TrendingUp,
+  symbol_change: RefreshCw,
 };
 
 const statusMap: Record<string, { label: string; color: string }> = {
