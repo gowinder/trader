@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any
 
+from ..config import config as runtime_config
 from ..utils.logger import logger
 
 
@@ -45,6 +46,8 @@ class ConfigExecutor:
         config["leverage_max"] = new_max
         await self._redis.set("trading:config", json.dumps(config))
         await self._redis.publish("trading:config:updated", json.dumps(config))
+        # 同步更新运行时配置
+        runtime_config.leverage_max = new_max
         return ExecutionResult(success=True, message=f"Leverage max 已调整为 {new_max}x", detail={"leverage_max": new_max})
 
     async def _adjust_param(self, param_name: str, value: Any) -> ExecutionResult:
@@ -55,6 +58,9 @@ class ConfigExecutor:
         config[param_name] = value
         await self._redis.set("trading:config", json.dumps(config))
         await self._redis.publish("trading:config:updated", json.dumps(config))
+        # 同步更新运行时配置
+        if hasattr(runtime_config, param_name):
+            setattr(runtime_config, param_name, value)
         return ExecutionResult(success=True, message=f"{param_name} 已调整为 {value}", detail={param_name: value})
 
     async def _adjust_weights(self, detail: Dict) -> ExecutionResult:
@@ -65,6 +71,9 @@ class ConfigExecutor:
             if key in detail:
                 config[key] = detail[key]
                 updated[key] = detail[key]
+                # 同步更新运行时配置
+                if hasattr(runtime_config, key):
+                    setattr(runtime_config, key, detail[key])
         await self._redis.set("trading:config", json.dumps(config))
         await self._redis.publish("trading:config:updated", json.dumps(config))
         return ExecutionResult(success=True, message=f"权重已调整: {updated}", detail=updated)

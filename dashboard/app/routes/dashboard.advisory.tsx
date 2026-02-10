@@ -273,7 +273,9 @@ export default function AdvisoryPage() {
                                     </span>
                                   </div>
                                   {s.detail && (
-                                    <p className="text-sm text-muted-foreground">{s.detail}</p>
+                                    <p className="text-sm text-muted-foreground">
+                                      {typeof s.detail === "object" ? JSON.stringify(s.detail) : s.detail}
+                                    </p>
                                   )}
                                   {s.reasoning && (
                                     <p className="text-sm">{s.reasoning}</p>
@@ -289,7 +291,7 @@ export default function AdvisoryPage() {
                                       "text-xs",
                                       s.status === "executed" ? "text-green-600 dark:text-green-400" : "text-red-600 dark:text-red-400"
                                     )}>
-                                      结果: {s.execution_result}
+                                      结果: {typeof s.execution_result === "object" ? JSON.stringify(s.execution_result) : s.execution_result}
                                     </p>
                                   )}
                                   {s.rejection_reason && (
