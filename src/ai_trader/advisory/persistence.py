@@ -86,6 +86,26 @@ class AdvisoryPersistenceService:
             suggestion_id,
         )
 
+    async def update_suggestion_status_if(
+        self,
+        suggestion_id: UUID,
+        new_status: str,
+        expected_status: str,
+    ) -> bool:
+        """原子条件更新: 仅当当前状态为 expected_status 时才更新，返回是否成功"""
+        result = await self.db.pool.fetchval(
+            """
+            UPDATE advisory_suggestions
+            SET status = $1, updated_at = NOW()
+            WHERE id = $2 AND status = $3
+            RETURNING id
+            """,
+            new_status,
+            suggestion_id,
+            expected_status,
+        )
+        return result is not None
+
     async def get_pending_advisories(self, limit: int = 50) -> List[Dict]:
         """获取待处理的 advisories"""
         rows = await self.db.pool.fetch(

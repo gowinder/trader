@@ -328,6 +328,7 @@ class Scheduler:
                         elif channel == "advisory:llm_config:updated":
                             llm_cfg = json.loads(message["data"])
                             if self._advisory_service:
+                                old_client = self._advisory_service.engine.llm
                                 new_client = AdvisoryLLMClient(
                                     provider=llm_cfg.get("provider", ""),
                                     model=llm_cfg.get("model", ""),
@@ -335,6 +336,11 @@ class Scheduler:
                                     api_key=llm_cfg.get("api_key", ""),
                                 )
                                 self._advisory_service.engine.llm = new_client
+                                if old_client:
+                                    try:
+                                        await old_client.close()
+                                    except Exception:
+                                        pass
                                 logger.info(f"Advisory LLM config updated: provider={llm_cfg.get('provider')}, model={llm_cfg.get('model')}")
                         else:
                             cfg = json.loads(message["data"])
@@ -895,23 +901,30 @@ class Scheduler:
                     sid = suggestion["id"]
 
                     if action_type == "accept":
-                        await persistence.update_suggestion_status(sid, "accepted")
+                        await persistence.update_suggestion_status_if(sid, "accepted", "pending")
                     elif action_type == "reject":
-                        await persistence.update_suggestion_status(sid, "rejected")
-                        await persistence.try_resolve_advisory_for_suggestion(sid)
+                        # reject 可以从 pending 或 accepted 状态触发
+                        ok = await persistence.update_suggestion_status_if(sid, "rejected", "pending")
+                        if not ok:
+                            ok = await persistence.update_suggestion_status_if(sid, "rejected", "accepted")
+                        if ok:
+                            await persistence.try_resolve_advisory_for_suggestion(sid)
                     elif action_type == "confirm":
-                        await persistence.update_suggestion_status(sid, "confirmed")
-                        # 入队执行
-                        await self._redis.lpush("advisory:execute_tasks", json.dumps({
-                            "suggestion_id": str(sid),
-                            "type": suggestion.get("type"),
-                            "target": suggestion.get("target"),
-                            "action": suggestion.get("action"),
-                            "detail": suggestion.get("detail"),
-                        }))
+                        # 原子校验: 仅 accepted -> confirmed，防止重复执行
+                        ok = await persistence.update_suggestion_status_if(sid, "confirmed", "accepted")
+                        if ok:
+                            await self._redis.lpush("advisory:execute_tasks", json.dumps({
+                                "suggestion_id": str(sid),
+                                "type": suggestion.get("type"),
+                                "target": suggestion.get("target"),
+                                "action": suggestion.get("action"),
+                                "detail": suggestion.get("detail"),
+                            }))
+                        else:
+                            logger.warning(f"Telegram confirm skipped: suggestion {sid} not in 'accepted' state")
                     elif action_type == "cancel":
-                        # cancel 相当于从 accepted 回退到 pending
-                        await persistence.update_suggestion_status(sid, "pending")
+                        # cancel 从 accepted 回退到 pending
+                        await persistence.update_suggestion_status_if(sid, "pending", "accepted")
 
                     logger.info(f"Telegram action processed: {action_type} advisory={advisory_id} idx={idx}")
             except Exception as e:
