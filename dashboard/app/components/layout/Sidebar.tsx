@@ -1,3 +1,4 @@
+import { useEffect, useState, useCallback } from "react";
 import { NavLink } from "react-router";
 import { cn } from "~/lib/utils";
 import {
@@ -14,6 +15,8 @@ import {
   Power,
   ScrollText,
   Cpu,
+  BrainCircuit,
+  SlidersVertical,
 } from "lucide-react";
 
 const navItems = [
@@ -28,6 +31,11 @@ const navItems = [
   { to: "/dashboard/strategy", icon: Layers, label: "策略" },
 ];
 
+const advisoryItems = [
+  { to: "/dashboard/advisory", icon: BrainCircuit, label: "AI 建议", hasBadge: true },
+  { to: "/dashboard/advisory-settings", icon: SlidersVertical, label: "建议设置", hasBadge: false },
+];
+
 const bottomItems = [
   { to: "/dashboard/logs", icon: ScrollText, label: "日志" },
   { to: "/dashboard/alerts", icon: Bell, label: "告警" },
@@ -35,7 +43,42 @@ const bottomItems = [
   { to: "/dashboard/settings", icon: Settings, label: "设置" },
 ];
 
+function useAdvisoryPendingCount() {
+  const [pendingCount, setPendingCount] = useState(0);
+
+  const fetchPendingCount = useCallback(async () => {
+    try {
+      const res = await fetch("/api/advisory?status=pending");
+      if (res.ok) {
+        const data = await res.json();
+        setPendingCount(data.pendingCount ?? 0);
+      }
+    } catch {
+      // silently ignore fetch errors
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchPendingCount();
+    const interval = setInterval(fetchPendingCount, 60_000);
+    return () => clearInterval(interval);
+  }, [fetchPendingCount]);
+
+  return pendingCount;
+}
+
+function PendingBadge({ count }: { count: number }) {
+  if (count <= 0) return null;
+  return (
+    <span className="ml-auto flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-bold text-white">
+      {count > 99 ? "99+" : count}
+    </span>
+  );
+}
+
 export function Sidebar() {
+  const pendingCount = useAdvisoryPendingCount();
+
   return (
     <aside className="flex h-screen w-16 flex-col border-r bg-card lg:w-56">
       {/* Logo */}
@@ -65,6 +108,29 @@ export function Sidebar() {
             <span className="hidden lg:inline">{item.label}</span>
           </NavLink>
         ))}
+
+        {/* Advisory Section */}
+        <div className="my-2 border-t pt-2">
+          {advisoryItems.map((item) => (
+            <NavLink
+              key={item.to}
+              to={item.to}
+              className={({ isActive }) =>
+                cn(
+                  "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
+                  "hover:bg-accent hover:text-accent-foreground",
+                  isActive
+                    ? "bg-accent text-accent-foreground"
+                    : "text-muted-foreground"
+                )
+              }
+            >
+              <item.icon className="h-5 w-5 shrink-0" />
+              <span className="hidden lg:inline">{item.label}</span>
+              {item.hasBadge && <PendingBadge count={pendingCount} />}
+            </NavLink>
+          ))}
+        </div>
       </nav>
 
       {/* Bottom Navigation */}
