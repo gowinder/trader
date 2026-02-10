@@ -180,6 +180,7 @@ class Scheduler:
             asyncio.create_task(self._config_listener())
             asyncio.create_task(self._manual_trigger_listener())
             asyncio.create_task(self._backtest_task_listener())
+            asyncio.create_task(self._advisory_execute_listener())
         except Exception as e:
             logger.warning(f"Redis not available, using static config: {e}")
             self._redis = None
@@ -806,6 +807,66 @@ class Scheduler:
 
         except Exception as e:
             logger.error(f"Failed to persist position change: {e}")
+
+    async def _advisory_execute_listener(self):
+        """监听 advisory 执行队列"""
+        if not self._redis or not self._advisory_service:
+            return
+        logger.info("Advisory execution queue listener started")
+        while self.running:
+            try:
+                result = await self._redis.brpop("advisory:execute_tasks", timeout=5)
+                if result:
+                    _, task_json = result
+                    task = json.loads(task_json)
+                    await self._execute_advisory_suggestion(task)
+            except Exception as e:
+                if self.running:
+                    logger.error(f"Advisory execution error: {e}")
+                await asyncio.sleep(5)
+
+    async def _execute_advisory_suggestion(self, task: dict):
+        """执行单条 advisory suggestion"""
+        from .advisory.executors import ConfigExecutor, TradeExecutor, SymbolExecutor, ExecutionResult
+
+        suggestion_id = task.get("suggestion_id")
+        suggestion_type = task.get("type")
+        target = task.get("target", "")
+        action = task.get("action", "")
+        detail = task.get("detail", {})
+
+        try:
+            if suggestion_type == "param_adjust":
+                executor = ConfigExecutor(self._redis)
+                result = await executor.execute(action, target, detail)
+            elif suggestion_type == "position_action":
+                executor = TradeExecutor(self.order_mgr, self.position_mgr)
+                result = await executor.execute(action, target, detail)
+            elif suggestion_type == "symbol_change":
+                executor = SymbolExecutor(self._redis)
+                result = await executor.execute(action, target, detail)
+            else:
+                result = ExecutionResult(success=False, message=f"未知类型: {suggestion_type}")
+
+            if self._advisory_service and self._advisory_service.persistence and suggestion_id:
+                from uuid import UUID
+                status = "executed" if result.success else "failed"
+                await self._advisory_service.persistence.update_suggestion_status(
+                    UUID(suggestion_id) if isinstance(suggestion_id, str) else suggestion_id,
+                    status,
+                    execution_result={"success": result.success, "message": result.message},
+                )
+
+            logger.info(f"Advisory suggestion executed: {suggestion_id} -> {result.success}: {result.message}")
+        except Exception as e:
+            logger.error(f"Advisory suggestion execution failed: {e}")
+            if self._advisory_service and self._advisory_service.persistence and suggestion_id:
+                from uuid import UUID
+                await self._advisory_service.persistence.update_suggestion_status(
+                    UUID(suggestion_id) if isinstance(suggestion_id, str) else suggestion_id,
+                    "failed",
+                    execution_result={"error": str(e)},
+                )
 
     async def _run_advisory_check(self):
         """运行 advisory 检查"""
