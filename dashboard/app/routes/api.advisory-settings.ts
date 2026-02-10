@@ -12,11 +12,11 @@ async function getRedisClient() {
 }
 
 export async function loader({ request }: LoaderFunctionArgs) {
+  let client: Awaited<ReturnType<typeof getRedisClient>> | null = null;
   try {
-    const client = await getRedisClient();
+    client = await getRedisClient();
     const triggerConfig = await client.get(TRIGGER_CONFIG_KEY);
     const llmConfig = await client.get(LLM_CONFIG_KEY);
-    await client.disconnect();
 
     return Response.json({
       triggerConfig: triggerConfig ? JSON.parse(triggerConfig) : {
@@ -44,6 +44,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     return Response.json({ error: message }, { status: 500 });
+  } finally {
+    if (client) { try { await client.disconnect(); } catch { /* ignore */ } }
   }
 }
 
@@ -52,9 +54,10 @@ export async function action({ request }: ActionFunctionArgs) {
     return Response.json({ error: "Method not allowed" }, { status: 405 });
   }
 
+  let client: Awaited<ReturnType<typeof getRedisClient>> | null = null;
   try {
     const body = await request.json();
-    const client = await getRedisClient();
+    client = await getRedisClient();
 
     if (body.triggerConfig) {
       await client.set(TRIGGER_CONFIG_KEY, JSON.stringify(body.triggerConfig));
@@ -69,10 +72,11 @@ export async function action({ request }: ActionFunctionArgs) {
       await client.publish("advisory:llm_config:updated", JSON.stringify(merged));
     }
 
-    await client.disconnect();
     return Response.json({ success: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     return Response.json({ error: message }, { status: 500 });
+  } finally {
+    if (client) { try { await client.disconnect(); } catch { /* ignore */ } }
   }
 }
