@@ -548,3 +548,29 @@ export const advisorySuggestionsRelations = relations(advisorySuggestions, ({ on
     references: [advisories.id],
   }),
 }));
+
+// ==================== LLM Provider 配置 ====================
+
+export const llmProviders = pgTable("llm_providers", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  name: varchar("name", { length: 50 }).notNull().unique(),
+  displayName: varchar("display_name", { length: 100 }).notNull(),
+  providerType: varchar("provider_type", { length: 30 }).notNull(),
+  apiKeyEncrypted: text("api_key_encrypted"),
+  baseUrl: varchar("base_url", { length: 500 }),
+  timeout: integer("timeout").notNull().default(60),
+  models: jsonb("models").$type<string[]>().notNull().default([]),
+  isBuiltin: boolean("is_builtin").notNull().default(false),
+  isEnabled: boolean("is_enabled").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const llmRoutingConfig = pgTable("llm_routing_config", {
+  id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+  scope: varchar("scope", { length: 30 }).notNull(),
+  providerId: integer("provider_id").notNull().references(() => llmProviders.id, { onDelete: "cascade" }),
+  model: varchar("model", { length: 100 }).notNull(),
+  priority: integer("priority").notNull().default(0),
+  isEnabled: boolean("is_enabled").notNull().default(true),
+});

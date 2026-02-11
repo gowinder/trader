@@ -43,6 +43,13 @@
       "when": 1770716844268,
       "tag": "0005_curvy_tony_stark",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1770778321080,
+      "tag": "0006_round_black_bolt",
+      "breakpoints": true
     }
   ]
 }
