@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { Eye, EyeOff, Plus, Trash2, X, ChevronUp, ChevronDown, Save } from "lucide-react";
+import { Eye, EyeOff, Plus, Trash2, X, ChevronUp, ChevronDown, Save, RefreshCw, Zap } from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -53,6 +53,13 @@ export default function SettingsPage() {
   const [showKey, setShowKey] = useState<Record<number, boolean>>({});
   const [newModelInput, setNewModelInput] = useState<Record<number, string>>({});
   const [savingProvider, setSavingProvider] = useState<Record<number, boolean>>({});
+
+  // fetch models & test
+  const [fetchingModels, setFetchingModels] = useState<Record<number, boolean>>({});
+  const [testingProvider, setTestingProvider] = useState<Record<number, boolean>>({});
+  const [testResult, setTestResult] = useState<Record<number, { success: boolean; message: string } | null>>({});
+  const [modelPickerOpen, setModelPickerOpen] = useState<Record<number, boolean>>({});
+  const [availableModels, setAvailableModels] = useState<Record<number, string[]>>({});
 
   // add provider modal
   const [showAddModal, setShowAddModal] = useState(false);
@@ -219,6 +226,82 @@ export default function SettingsPage() {
     if (edit.models.includes(val)) return;
     updateCardEdit(providerId, { models: [...edit.models, val] });
     setNewModelInput((prev) => ({ ...prev, [providerId]: "" }));
+  };
+
+  const handleFetchModels = async (p: Provider) => {
+    setFetchingModels((s) => ({ ...s, [p.id]: true }));
+    try {
+      const body: Record<string, unknown> = { providerId: p.id };
+      const editedKey = cardEdits[p.id]?.apiKey;
+      if (editedKey) body.apiKey = editedKey;
+      const res = await fetch("/api/llm-config/models", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (res.ok && data.models) {
+        if (data.models.length === 0) {
+          showToast("error", data.message || "未获取到模型");
+        } else {
+          setAvailableModels((s) => ({ ...s, [p.id]: data.models }));
+          setModelPickerOpen((s) => ({ ...s, [p.id]: true }));
+          showToast("success", `获取到 ${data.models.length} 个模型`);
+        }
+      } else {
+        showToast("error", data.error || "获取模型列表失败");
+      }
+    } catch {
+      showToast("error", "网络错误");
+    } finally {
+      setFetchingModels((s) => ({ ...s, [p.id]: false }));
+    }
+  };
+
+  const handleTestProvider = async (p: Provider) => {
+    const edit = getCardEdit(p);
+    if (edit.models.length === 0) {
+      showToast("error", "请先添加至少一个模型");
+      return;
+    }
+    const model = edit.models[0];
+    setTestingProvider((s) => ({ ...s, [p.id]: true }));
+    setTestResult((s) => ({ ...s, [p.id]: null }));
+    try {
+      const body: Record<string, unknown> = { providerId: p.id, model };
+      const editedKey = cardEdits[p.id]?.apiKey;
+      if (editedKey) body.apiKey = editedKey;
+      const res = await fetch("/api/llm-config/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      setTestResult((s) => ({
+        ...s,
+        [p.id]: { success: data.success, message: data.message },
+      }));
+      showToast(data.success ? "success" : "error", data.message);
+    } catch {
+      setTestResult((s) => ({
+        ...s,
+        [p.id]: { success: false, message: "网络错误" },
+      }));
+      showToast("error", "网络错误");
+    } finally {
+      setTestingProvider((s) => ({ ...s, [p.id]: false }));
+    }
+  };
+
+  const toggleModelSelection = (providerId: number, model: string) => {
+    const p = providers.find((x) => x.id === providerId);
+    if (!p) return;
+    const edit = getCardEdit(p);
+    if (edit.models.includes(model)) {
+      updateCardEdit(providerId, { models: edit.models.filter((m) => m !== model) });
+    } else {
+      updateCardEdit(providerId, { models: [...edit.models, model] });
+    }
   };
 
   // ── Routing helpers ───────────────────────────────────────────────────
@@ -536,7 +619,18 @@ export default function SettingsPage() {
 
                   {/* Models */}
                   <div>
-                    <label className="block text-sm text-muted-foreground mb-1">模型列表</label>
+                    <div className="flex items-center justify-between mb-1">
+                      <label className="text-sm text-muted-foreground">模型列表</label>
+                      <button
+                        type="button"
+                        onClick={() => handleFetchModels(p)}
+                        disabled={fetchingModels[p.id]}
+                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs border border-border hover:bg-accent disabled:opacity-50"
+                      >
+                        <RefreshCw className={`h-3 w-3 ${fetchingModels[p.id] ? "animate-spin" : ""}`} />
+                        {fetchingModels[p.id] ? "获取中..." : "获取模型"}
+                      </button>
+                    </div>
                     <div className="flex flex-wrap gap-1.5 mb-2">
                       {edit.models.map((m) => (
                         <span key={m} className={tagCls}>
@@ -554,6 +648,36 @@ export default function SettingsPage() {
                         <span className="text-xs text-muted-foreground">暂无模型</span>
                       )}
                     </div>
+
+                    {/* Model Picker */}
+                    {modelPickerOpen[p.id] && availableModels[p.id]?.length > 0 && (
+                      <div className="mb-2 rounded-md border border-border bg-background p-2 max-h-48 overflow-y-auto">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="text-xs text-muted-foreground">可用模型（点击选择/取消）</span>
+                          <button
+                            type="button"
+                            onClick={() => setModelPickerOpen((s) => ({ ...s, [p.id]: false }))}
+                            className="text-muted-foreground hover:text-foreground"
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        </div>
+                        <div className="space-y-0.5">
+                          {availableModels[p.id].map((m) => (
+                            <label key={m} className="flex items-center gap-2 px-1 py-0.5 rounded hover:bg-accent cursor-pointer text-xs">
+                              <input
+                                type="checkbox"
+                                checked={edit.models.includes(m)}
+                                onChange={() => toggleModelSelection(p.id, m)}
+                                className="rounded"
+                              />
+                              <span className="truncate">{m}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
                     <input
                       type="text"
                       value={newModelInput[p.id] || ""}
@@ -571,24 +695,40 @@ export default function SettingsPage() {
                 </div>
 
                 {/* Card Footer */}
-                <div className="flex items-center justify-end gap-2 px-6 py-3 border-t border-border">
-                  {!p.isBuiltin && (
+                <div className="flex items-center gap-2 px-6 py-3 border-t border-border">
+                  {testResult[p.id] && (
+                    <span className={`text-xs mr-auto ${testResult[p.id]!.success ? "text-green-400" : "text-red-400"}`}>
+                      {testResult[p.id]!.message}
+                    </span>
+                  )}
+                  <div className="flex items-center gap-2 ml-auto">
+                    {!p.isBuiltin && (
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteProvider(p)}
+                        className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md text-sm text-red-400 hover:bg-red-500/10"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" /> 删除
+                      </button>
+                    )}
                     <button
                       type="button"
-                      onClick={() => handleDeleteProvider(p)}
-                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md text-sm text-red-400 hover:bg-red-500/10"
+                      onClick={() => handleTestProvider(p)}
+                      disabled={testingProvider[p.id] || edit.models.length === 0}
+                      className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md border border-border text-sm hover:bg-accent disabled:opacity-50"
                     >
-                      <Trash2 className="h-3.5 w-3.5" /> 删除
+                      <Zap className={`h-3.5 w-3.5 ${testingProvider[p.id] ? "animate-pulse" : ""}`} />
+                      {testingProvider[p.id] ? "测试中..." : "测试"}
                     </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => handleSaveProvider(p)}
-                    disabled={savingProvider[p.id]}
-                    className="inline-flex items-center gap-1 px-4 py-1.5 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
-                  >
-                    <Save className="h-3.5 w-3.5" /> {savingProvider[p.id] ? "保存中..." : "保存"}
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => handleSaveProvider(p)}
+                      disabled={savingProvider[p.id]}
+                      className="inline-flex items-center gap-1 px-4 py-1.5 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
+                    >
+                      <Save className="h-3.5 w-3.5" /> {savingProvider[p.id] ? "保存中..." : "保存"}
+                    </button>
+                  </div>
                 </div>
               </div>
             );

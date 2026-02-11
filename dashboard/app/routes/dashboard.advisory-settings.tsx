@@ -1,4 +1,5 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { Plus, Trash2, ChevronUp, ChevronDown, Save } from "lucide-react";
 
 interface TriggerConfig {
   interval_minutes: number;
@@ -12,10 +13,17 @@ interface TriggerConfig {
   cooldown_minutes: number;
 }
 
-interface LlmConfig {
-  provider: string;
+interface ProviderInfo {
+  id: number;
+  name: string;
+  displayName: string;
+  models: string[];
+  isEnabled: boolean;
+}
+
+interface LlmRoutingItem {
+  providerId: number;
   model: string;
-  base_url: string;
 }
 
 const DEFAULT_TRIGGER: TriggerConfig = {
@@ -30,28 +38,17 @@ const DEFAULT_TRIGGER: TriggerConfig = {
   cooldown_minutes: 30,
 };
 
-const DEFAULT_LLM: LlmConfig = {
-  provider: "openrouter",
-  model: "deepseek/deepseek-chat",
-  base_url: "",
-};
-
 export default function AdvisorySettingsPage() {
   const [triggerConfig, setTriggerConfig] = useState<TriggerConfig>(DEFAULT_TRIGGER);
-  const [llmConfig, setLlmConfig] = useState<LlmConfig>(DEFAULT_LLM);
+  const [providers, setProviders] = useState<ProviderInfo[]>([]);
+  const [advisoryRouting, setAdvisoryRouting] = useState<LlmRoutingItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [savingRouting, setSavingRouting] = useState(false);
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
-  useEffect(() => {
-    fetch("/api/advisory-settings")
-      .then((res) => res.json())
-      .then((data) => {
-        if (data.triggerConfig) setTriggerConfig(data.triggerConfig);
-        if (data.llmConfig) setLlmConfig(data.llmConfig);
-      })
-      .catch((err) => console.error("Failed to load settings:", err))
-      .finally(() => setLoading(false));
+  const showToast = useCallback((type: "success" | "error", message: string) => {
+    setToast({ type, message });
   }, []);
 
   useEffect(() => {
@@ -61,25 +58,108 @@ export default function AdvisorySettingsPage() {
     }
   }, [toast]);
 
-  const handleSave = async () => {
+  useEffect(() => {
+    Promise.all([
+      fetch("/api/advisory-settings").then((r) => r.json()),
+      fetch("/api/llm-config/providers").then((r) => r.json()),
+      fetch("/api/llm-config/routing?scope=advisory").then((r) => r.json()),
+    ])
+      .then(([settingsData, provData, routingData]) => {
+        if (settingsData.triggerConfig) setTriggerConfig(settingsData.triggerConfig);
+        if (provData.providers) {
+          setProviders(
+            provData.providers.map((p: ProviderInfo) => ({
+              id: p.id,
+              name: p.name,
+              displayName: p.displayName,
+              models: p.models,
+              isEnabled: p.isEnabled,
+            }))
+          );
+        }
+        if (routingData.routing?.length > 0) {
+          setAdvisoryRouting(
+            routingData.routing.map((r: { providerId: number; model: string }) => ({
+              providerId: r.providerId,
+              model: r.model,
+            }))
+          );
+        }
+      })
+      .catch((err) => console.error("Failed to load settings:", err))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const enabledProviders = providers.filter((p) => p.isEnabled);
+
+  const handleSaveTrigger = async () => {
     setSaving(true);
     try {
       const res = await fetch("/api/advisory-settings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ triggerConfig, llmConfig }),
+        body: JSON.stringify({ triggerConfig }),
       });
-      if (res.ok) {
-        setToast({ type: "success", message: "设置已保存" });
-      } else {
-        const data = await res.json();
-        setToast({ type: "error", message: data.error || "保存失败" });
-      }
+      if (res.ok) showToast("success", "触发器配置已保存");
+      else showToast("error", "保存失败");
     } catch {
-      setToast({ type: "error", message: "网络错误，保存失败" });
+      showToast("error", "网络错误");
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleSaveRouting = async () => {
+    setSavingRouting(true);
+    try {
+      const res = await fetch("/api/llm-config/routing", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scope: "advisory",
+          items: advisoryRouting.map((r, i) => ({
+            providerId: r.providerId,
+            model: r.model,
+            priority: i + 1,
+          })),
+        }),
+      });
+      if (res.ok) showToast("success", "Advisory LLM 调度已保存");
+      else showToast("error", "保存失败");
+    } catch {
+      showToast("error", "网络错误");
+    } finally {
+      setSavingRouting(false);
+    }
+  };
+
+  const addRoutingItem = () => {
+    if (enabledProviders.length === 0) return;
+    const first = enabledProviders[0];
+    setAdvisoryRouting((prev) => [
+      ...prev,
+      { providerId: first.id, model: first.models[0] || "" },
+    ]);
+  };
+
+  const removeRoutingItem = (index: number) => {
+    setAdvisoryRouting((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const moveRoutingItem = (index: number, dir: -1 | 1) => {
+    setAdvisoryRouting((prev) => {
+      const arr = [...prev];
+      const target = index + dir;
+      if (target < 0 || target >= arr.length) return arr;
+      [arr[index], arr[target]] = [arr[target], arr[index]];
+      return arr;
+    });
+  };
+
+  const updateRoutingItem = (index: number, patch: Partial<LlmRoutingItem>) => {
+    setAdvisoryRouting((prev) =>
+      prev.map((r, i) => (i === index ? { ...r, ...patch } : r))
+    );
   };
 
   if (loading) {
@@ -89,6 +169,11 @@ export default function AdvisorySettingsPage() {
       </div>
     );
   }
+
+  const inputCls =
+    "w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary";
+  const selectCls =
+    "rounded-md border border-border bg-background px-2 py-1 text-sm flex-1 min-w-0";
 
   return (
     <div className="p-6 space-y-6">
@@ -123,7 +208,7 @@ export default function AdvisorySettingsPage() {
                 onChange={(e) =>
                   setTriggerConfig({ ...triggerConfig, interval_minutes: Number(e.target.value) })
                 }
-                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                className={inputCls}
               />
               <p className="text-xs text-muted-foreground mt-1">范围: 5 - 240 分钟</p>
             </div>
@@ -136,7 +221,7 @@ export default function AdvisorySettingsPage() {
                 onChange={(e) =>
                   setTriggerConfig({ ...triggerConfig, cooldown_minutes: Number(e.target.value) })
                 }
-                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                className={inputCls}
               />
               <p className="text-xs text-muted-foreground mt-1">同一交易对建议的最小间隔</p>
             </div>
@@ -180,7 +265,7 @@ export default function AdvisorySettingsPage() {
                   })
                 }
                 disabled={!triggerConfig.price_volatility_enabled}
-                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-50"
+                className={inputCls + " disabled:opacity-50"}
               />
             </div>
 
@@ -220,7 +305,7 @@ export default function AdvisorySettingsPage() {
                   })
                 }
                 disabled={!triggerConfig.consecutive_loss_enabled}
-                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-50"
+                className={inputCls + " disabled:opacity-50"}
               />
             </div>
 
@@ -259,7 +344,7 @@ export default function AdvisorySettingsPage() {
                   })
                 }
                 disabled={!triggerConfig.unrealized_pnl_enabled}
-                className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary disabled:opacity-50"
+                className={inputCls + " disabled:opacity-50"}
               />
               <p className="text-xs text-muted-foreground mt-1">负值表示亏损触发</p>
             </div>
@@ -291,42 +376,115 @@ export default function AdvisorySettingsPage() {
             </div>
           </div>
         </div>
+
+        <div className="flex justify-end mt-4">
+          <button
+            onClick={handleSaveTrigger}
+            disabled={saving}
+            className="inline-flex items-center gap-1 px-4 py-1.5 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
+          >
+            <Save className="h-3.5 w-3.5" /> {saving ? "保存中..." : "保存触发器"}
+          </button>
+        </div>
       </div>
 
-      {/* LLM Configuration */}
+      {/* Advisory LLM Routing */}
       <div className="rounded-lg border border-border bg-card p-6">
-        <h2 className="text-lg font-semibold mb-4">LLM 配置</h2>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div>
-            <label className="block text-sm text-muted-foreground mb-1">Provider</label>
-            <input
-              type="text"
-              value={llmConfig.provider}
-              onChange={(e) => setLlmConfig({ ...llmConfig, provider: e.target.value })}
-              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-              placeholder="openrouter"
-            />
-          </div>
-          <div>
-            <label className="block text-sm text-muted-foreground mb-1">Model</label>
-            <input
-              type="text"
-              value={llmConfig.model}
-              onChange={(e) => setLlmConfig({ ...llmConfig, model: e.target.value })}
-              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-              placeholder="deepseek/deepseek-chat"
-            />
-          </div>
-          <div>
-            <label className="block text-sm text-muted-foreground mb-1">Base URL (可选)</label>
-            <input
-              type="text"
-              value={llmConfig.base_url}
-              onChange={(e) => setLlmConfig({ ...llmConfig, base_url: e.target.value })}
-              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
-              placeholder="留空使用默认"
-            />
-          </div>
+        <h2 className="text-lg font-semibold mb-2">Advisory LLM 调度</h2>
+        <p className="text-xs text-muted-foreground mb-4">
+          按优先级排列，排在前面的优先调用，失败后自动回退到下一个
+        </p>
+
+        <div className="space-y-2 mb-4">
+          {advisoryRouting.length === 0 && (
+            <p className="text-sm text-muted-foreground py-4 text-center">暂无调度项，请点击下方添加</p>
+          )}
+          {advisoryRouting.map((item, idx) => {
+            const prov = providers.find((p) => p.id === item.providerId);
+            return (
+              <div
+                key={`adv-${idx}`}
+                className="flex items-center gap-2 rounded-md border border-border p-2"
+              >
+                <span className="text-xs text-muted-foreground w-6 text-center">{idx + 1}</span>
+
+                <select
+                  value={item.providerId}
+                  onChange={(e) => {
+                    const newId = Number(e.target.value);
+                    const np = providers.find((p) => p.id === newId);
+                    updateRoutingItem(idx, {
+                      providerId: newId,
+                      model: np?.models[0] || "",
+                    });
+                  }}
+                  className={selectCls}
+                >
+                  {enabledProviders.map((ep) => (
+                    <option key={ep.id} value={ep.id}>
+                      {ep.displayName}
+                    </option>
+                  ))}
+                </select>
+
+                <select
+                  value={item.model}
+                  onChange={(e) => updateRoutingItem(idx, { model: e.target.value })}
+                  className={selectCls}
+                >
+                  {(prov?.models || []).map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+
+                <button
+                  type="button"
+                  onClick={() => moveRoutingItem(idx, -1)}
+                  disabled={idx === 0}
+                  className="p-1 text-muted-foreground hover:text-foreground disabled:opacity-30"
+                >
+                  <ChevronUp className="h-4 w-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={() => moveRoutingItem(idx, 1)}
+                  disabled={idx === advisoryRouting.length - 1}
+                  className="p-1 text-muted-foreground hover:text-foreground disabled:opacity-30"
+                >
+                  <ChevronDown className="h-4 w-4" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => removeRoutingItem(idx)}
+                  className="p-1 text-red-400 hover:text-red-300"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={addRoutingItem}
+            disabled={enabledProviders.length === 0}
+            className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md border border-border text-sm hover:bg-accent disabled:opacity-50"
+          >
+            <Plus className="h-3.5 w-3.5" /> 添加
+          </button>
+          <button
+            type="button"
+            onClick={handleSaveRouting}
+            disabled={savingRouting}
+            className="inline-flex items-center gap-1 px-4 py-1.5 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
+          >
+            <Save className="h-3.5 w-3.5" /> {savingRouting ? "保存中..." : "保存调度"}
+          </button>
         </div>
       </div>
 
@@ -339,17 +497,6 @@ export default function AdvisorySettingsPage() {
             Telegram 配置通过环境变量 (.env) 管理，请在服务端设置 TELEGRAM_BOT_TOKEN 和 TELEGRAM_CHAT_ID
           </span>
         </div>
-      </div>
-
-      {/* Save Button */}
-      <div className="flex justify-end">
-        <button
-          onClick={handleSave}
-          disabled={saving}
-          className="px-6 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors disabled:opacity-50"
-        >
-          {saving ? "保存中..." : "保存设置"}
-        </button>
       </div>
     </div>
   );

@@ -131,6 +131,22 @@ class HTTPBasedProvider(BaseLLMProvider):
         try:
             url = f"{self.base_url}/chat/completions"
             r = await self._client.post(url, headers=headers, json=payload)
+
+            # 400 且有 response_format 时，去掉 response_format 重试（兼容本地 LLM 服务）
+            if r.status_code == 400 and "response_format" in payload:
+                import logging
+                logging.warning(
+                    f"{self.provider_name}: 400 with response_format, retrying without it"
+                )
+                payload.pop("response_format")
+                if schema:
+                    # 用 system prompt 引导 JSON 输出
+                    payload["messages"] = [
+                        {"role": "system", "content": "You must respond with valid JSON only. No markdown, no explanation."},
+                        *payload["messages"],
+                    ]
+                r = await self._client.post(url, headers=headers, json=payload)
+
             r.raise_for_status()
             data = r.json()
             return self._parse_response(data, schema)

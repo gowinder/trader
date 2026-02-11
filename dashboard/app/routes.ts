@@ -13,6 +13,8 @@ export default [
   route("api/llm-providers", "routes/api.llm-providers.ts"),
   route("api/llm-config/providers", "routes/api.llm-config.providers.ts"),
   route("api/llm-config/routing", "routes/api.llm-config.routing.ts"),
+  route("api/llm-config/models", "routes/api.llm-config.models.ts"),
+  route("api/llm-config/test", "routes/api.llm-config.test.ts"),
   route("api/strategy-presets", "routes/api.strategy-presets.ts"),
   route("api/strategy-presets/activate", "routes/api.strategy-presets.activate.ts"),
   route("api/strategy-presets/history", "routes/api.strategy-presets.history.ts"),

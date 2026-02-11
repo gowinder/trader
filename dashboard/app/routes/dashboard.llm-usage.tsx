@@ -4,9 +4,8 @@ import { useLoaderData } from "react-router";
 import { StatCard } from "~/components/common/StatCard";
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
 import { Button } from "~/components/ui/button";
-import { Input } from "~/components/ui/input";
 import { cn } from "~/lib/utils";
-import { Cpu, Coins, Clock, CheckCircle, X, ChevronUp, ChevronDown, Save, GripVertical } from "lucide-react";
+import { Cpu, Coins, Clock, CheckCircle, X, ChevronUp, ChevronDown, Save, Plus, Trash2 } from "lucide-react";
 import {
   AreaChart,
   Area,
@@ -57,8 +56,16 @@ interface UsageRecord {
 }
 
 interface ProviderItem {
-  name: string;
+  providerId: number;
   model: string;
+}
+
+interface ProviderPoolItem {
+  id: number;
+  name: string;
+  displayName: string;
+  models: string[];
+  isEnabled: boolean;
 }
 
 const PROVIDER_COLORS: Record<string, string> = {
@@ -163,24 +170,43 @@ export async function loader({ request }: LoaderFunctionArgs) {
     cost: data.cost_usd,
   }));
 
-  // 获取 provider 优先级配置
-  let providerConfig: ProviderItem[] = [
-    { name: "qwen", model: "qwen-max" },
-    { name: "gemini", model: "gemini-2.0-flash" },
-    { name: "codex", model: "gpt-4o" },
-    { name: "openrouter", model: "google/gemini-2.0-flash-exp:free" },
-  ];
+  // 获取 provider pool 和 main routing 配置
+  let providerPool: ProviderPoolItem[] = [];
+  let providerConfig: ProviderItem[] = [];
+  let mainStrategy = "priority";
 
   try {
-    const provResp = await fetch(`${baseUrl}/api/llm-providers`);
-    if (provResp.ok) {
-      const provData = await provResp.json();
-      if (provData.providers?.length > 0) {
-        providerConfig = provData.providers;
+    const poolResp = await fetch(`${baseUrl}/api/llm-config/providers`);
+    if (poolResp.ok) {
+      const poolData = await poolResp.json();
+      if (poolData.providers) {
+        providerPool = poolData.providers.map((p: ProviderPoolItem) => ({
+          id: p.id,
+          name: p.name,
+          displayName: p.displayName,
+          models: p.models,
+          isEnabled: p.isEnabled,
+        }));
       }
     }
   } catch (e) {
-    console.error("Failed to fetch provider config:", e);
+    console.error("Failed to fetch provider pool:", e);
+  }
+
+  try {
+    const routingResp = await fetch(`${baseUrl}/api/llm-config/routing?scope=main`);
+    if (routingResp.ok) {
+      const routingData = await routingResp.json();
+      if (routingData.routing?.length > 0) {
+        providerConfig = routingData.routing.map((r: { providerId: number; model: string }) => ({
+          providerId: r.providerId,
+          model: r.model,
+        }));
+      }
+      if (routingData.strategy) mainStrategy = routingData.strategy;
+    }
+  } catch (e) {
+    console.error("Failed to fetch routing config:", e);
   }
 
   return {
@@ -192,6 +218,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
     providerCostData,
     records,
     providerConfig,
+    providerPool,
+    mainStrategy,
   };
 }
 
@@ -204,6 +232,8 @@ interface LoaderData {
   providerCostData: { name: string; cost: number }[];
   records: UsageRecord[];
   providerConfig: ProviderItem[];
+  providerPool: ProviderPoolItem[];
+  mainStrategy: string;
 }
 
 export default function LLMUsagePage() {
@@ -216,12 +246,17 @@ export default function LLMUsagePage() {
     providerCostData,
     records,
     providerConfig,
+    providerPool,
+    mainStrategy: initialStrategy,
   } = useLoaderData<LoaderData>();
 
   const [selectedRecord, setSelectedRecord] = useState<UsageRecord | null>(null);
   const [providerList, setProviderList] = useState<ProviderItem[]>(providerConfig);
+  const [strategy, setStrategy] = useState(initialStrategy);
   const [saving, setSaving] = useState(false);
   const [saveMsg, setSaveMsg] = useState("");
+
+  const enabledProviders = providerPool.filter((p) => p.isEnabled);
 
   const moveProvider = useCallback((index: number, direction: -1 | 1) => {
     const newIndex = index + direction;
@@ -231,20 +266,41 @@ export default function LLMUsagePage() {
     setProviderList(newList);
   }, [providerList]);
 
-  const updateProviderModel = useCallback((index: number, model: string) => {
-    const newList = [...providerList];
-    newList[index] = { ...newList[index], model };
-    setProviderList(newList);
-  }, [providerList]);
+  const addProvider = useCallback(() => {
+    if (enabledProviders.length === 0) return;
+    const first = enabledProviders[0];
+    setProviderList((prev) => [
+      ...prev,
+      { providerId: first.id, model: first.models[0] || "" },
+    ]);
+  }, [enabledProviders]);
+
+  const removeProvider = useCallback((index: number) => {
+    setProviderList((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
+  const updateProviderItem = useCallback((index: number, patch: Partial<ProviderItem>) => {
+    setProviderList((prev) =>
+      prev.map((item, i) => (i === index ? { ...item, ...patch } : item))
+    );
+  }, []);
 
   const saveProviderConfig = useCallback(async () => {
     setSaving(true);
     setSaveMsg("");
     try {
-      const resp = await fetch("/api/llm-providers", {
-        method: "POST",
+      const resp = await fetch("/api/llm-config/routing", {
+        method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ providers: providerList }),
+        body: JSON.stringify({
+          scope: "main",
+          strategy,
+          items: providerList.map((r, i) => ({
+            providerId: r.providerId,
+            model: r.model,
+            priority: i + 1,
+          })),
+        }),
       });
       if (resp.ok) {
         setSaveMsg("已保存");
@@ -258,7 +314,7 @@ export default function LLMUsagePage() {
     } finally {
       setSaving(false);
     }
-  }, [providerList]);
+  }, [providerList, strategy]);
 
   return (
     <div className="space-y-6">
@@ -306,55 +362,113 @@ export default function LLMUsagePage() {
             </div>
           </CardTitle>
           <p className="text-xs text-muted-foreground">
-            按优先级排列，排在前面的模型优先调用，成功则不再调用后续模型
+            按优先级排列，排在前面的模型优先调用，失败后自动回退到下一个
           </p>
         </CardHeader>
         <CardContent>
-          <div className="space-y-2">
-            {providerList.map((p, i) => (
-              <div
-                key={`${p.name}-${i}`}
-                className="flex items-center gap-3 rounded-lg border p-3"
-              >
-                <GripVertical className="h-4 w-4 text-muted-foreground" />
-                <span className="w-6 text-center text-sm font-medium text-muted-foreground">
-                  {i + 1}
-                </span>
-                <span
-                  className="rounded px-2 py-0.5 text-xs font-medium text-white"
-                  style={{ backgroundColor: PROVIDER_COLORS[p.name] || "#666" }}
-                >
-                  {p.name}
-                </span>
-                <Input
-                  className="h-8 flex-1 text-sm"
-                  value={p.model}
-                  onChange={(e) => updateProviderModel(i, e.target.value)}
-                  placeholder="模型名称"
-                />
-                <div className="flex gap-1">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-8 w-8 p-0"
-                    disabled={i === 0}
-                    onClick={() => moveProvider(i, -1)}
-                  >
-                    <ChevronUp className="h-4 w-4" />
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-8 w-8 p-0"
-                    disabled={i === providerList.length - 1}
-                    onClick={() => moveProvider(i, 1)}
-                  >
-                    <ChevronDown className="h-4 w-4" />
-                  </Button>
-                </div>
-              </div>
-            ))}
+          {/* 调度策略 */}
+          <div className="mb-4">
+            <label className="block text-sm text-muted-foreground mb-1">调度策略</label>
+            <select
+              value={strategy}
+              onChange={(e) => setStrategy(e.target.value)}
+              className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+            >
+              <option value="priority">优先级 (priority)</option>
+              <option value="cost_first">成本优先 (cost_first)</option>
+              <option value="round_robin">轮询 (round_robin)</option>
+            </select>
           </div>
+
+          <div className="space-y-2 mb-4">
+            {providerList.length === 0 && (
+              <p className="text-sm text-muted-foreground py-4 text-center">暂无调度项，请点击下方添加</p>
+            )}
+            {providerList.map((p, i) => {
+              const prov = providerPool.find((pp) => pp.id === p.providerId);
+              return (
+                <div
+                  key={`prov-${i}`}
+                  className="flex items-center gap-2 rounded-lg border p-3"
+                >
+                  <span className="w-6 text-center text-sm font-medium text-muted-foreground">
+                    {i + 1}
+                  </span>
+
+                  {/* Provider 下拉 */}
+                  <select
+                    value={p.providerId}
+                    onChange={(e) => {
+                      const newId = Number(e.target.value);
+                      const np = providerPool.find((pp) => pp.id === newId);
+                      updateProviderItem(i, {
+                        providerId: newId,
+                        model: np?.models[0] || "",
+                      });
+                    }}
+                    className="rounded-md border border-border bg-background px-2 py-1.5 text-sm flex-1 min-w-0"
+                  >
+                    {enabledProviders.map((ep) => (
+                      <option key={ep.id} value={ep.id}>
+                        {ep.displayName}
+                      </option>
+                    ))}
+                  </select>
+
+                  {/* Model 下拉 */}
+                  <select
+                    value={p.model}
+                    onChange={(e) => updateProviderItem(i, { model: e.target.value })}
+                    className="rounded-md border border-border bg-background px-2 py-1.5 text-sm flex-1 min-w-0"
+                  >
+                    {(prov?.models || []).map((m) => (
+                      <option key={m} value={m}>
+                        {m}
+                      </option>
+                    ))}
+                  </select>
+
+                  <div className="flex gap-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 w-8 p-0"
+                      disabled={i === 0}
+                      onClick={() => moveProvider(i, -1)}
+                    >
+                      <ChevronUp className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 w-8 p-0"
+                      disabled={i === providerList.length - 1}
+                      onClick={() => moveProvider(i, 1)}
+                    >
+                      <ChevronDown className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-8 w-8 p-0 text-red-400 hover:text-red-300"
+                      onClick={() => removeProvider(i)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={addProvider}
+            disabled={enabledProviders.length === 0}
+          >
+            <Plus className="mr-1 h-4 w-4" /> 添加
+          </Button>
         </CardContent>
       </Card>
 
