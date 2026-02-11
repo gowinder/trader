@@ -270,9 +270,13 @@ export default function AdvisoryPage() {
                     )}
                   </button>
 
-                  {/* Expanded suggestions */}
+                  {/* Expanded details */}
                   {expanded && (
                     <div className="border-t">
+                      {/* Full market summary */}
+                      <div className="border-b bg-muted/30 px-4 py-3">
+                        <p className="whitespace-pre-wrap text-sm">{advisory.market_summary}</p>
+                      </div>
                       {advisory.suggestions.length === 0 ? (
                         <div className="px-4 py-4 text-sm text-muted-foreground">
                           无建议
