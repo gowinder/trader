@@ -88,25 +88,72 @@ class LLMManager:
         self._providers: Dict[str, BaseLLMProvider] = {}
         self._round_robin_index = 0
         self._usage_tracker = None  # 稍后注入
+        self._providers_pool: Dict[str, Dict[str, Any]] = {}  # Dashboard 动态配置的 provider 池
 
     def _create_provider(self, name: str, model: Optional[str] = None) -> BaseLLMProvider:
-        """创建 Provider 实例"""
+        """创建 Provider 实例，支持从 providers_pool 获取动态参数"""
+        pool = getattr(self, '_providers_pool', {})
+        pool_info = pool.get(name, {})
+        api_key = pool_info.get("api_key", "")
+        base_url = pool_info.get("base_url", "")
+        timeout = pool_info.get("timeout") or 60
+
         if name == "qwen":
-            # 使用 CLI Provider（更可靠）
+            if api_key:
+                # 有 API Key 时使用 HTTP Provider（OpenAI 兼容）
+                from .providers.base import HTTPBasedProvider
+                return HTTPBasedProvider(
+                    api_key=api_key,
+                    model=model or "qwen-max",
+                    base_url=base_url or "https://dashscope.aliyuncs.com/compatible-mode/v1",
+                    timeout=timeout,
+                )
             return QwenCLIProvider(model=model or "qwen-max")
         elif name == "gemini":
-            # 使用 CLI Provider（OAuth scope 不足）
+            if api_key:
+                from .providers.gemini import GeminiProvider
+                return GeminiProvider(
+                    api_key=api_key,
+                    model=model or "gemini-2.0-flash",
+                    base_url=base_url or "https://generativelanguage.googleapis.com/v1beta",
+                    timeout=timeout,
+                )
             return GeminiCLIProvider(model=model or "gemini-2.0-flash")
         elif name == "codex":
             return CodexOAuthProvider(model=model or "gpt-4o")
         elif name == "openrouter":
             return OpenRouterProvider(
-                api_key=config.openrouter_api_key or config.llm_api_key,
+                api_key=api_key or config.openrouter_api_key or config.llm_api_key,
                 model=model or config.llm_model,
                 fallback_model=config.llm_fallback_model,
             )
+        elif name == "deepseek":
+            from .providers.deepseek import DeepSeekProvider
+            return DeepSeekProvider(
+                api_key=api_key or config.llm_api_key,
+                model=model or "deepseek-chat",
+                base_url=base_url or "https://api.deepseek.com/v1",
+                timeout=timeout,
+            )
+        elif name == "glm":
+            from .providers.glm import GLMProvider
+            return GLMProvider(
+                api_key=api_key or config.llm_api_key,
+                model=model or "glm-4-plus",
+                base_url=base_url or "https://open.bigmodel.cn/api/anthropic",
+                timeout=timeout,
+            )
         else:
-            raise ValueError(f"Unknown provider: {name}")
+            # 自定义 Provider — 默认 OpenAI 兼容协议
+            if not api_key:
+                raise ValueError(f"Provider '{name}' requires api_key (configure in Dashboard settings)")
+            from .providers.base import HTTPBasedProvider
+            return HTTPBasedProvider(
+                api_key=api_key,
+                model=model or "default",
+                base_url=base_url,
+                timeout=timeout,
+            )
 
     def _get_provider(self, name: str, model: Optional[str] = None) -> BaseLLMProvider:
         """获取或创建 Provider 实例"""
@@ -361,15 +408,18 @@ class LLMManager:
         """设置使用量追踪器"""
         self._usage_tracker = tracker
 
-    def update_providers(self, provider_list: List[Dict[str, Any]]):
+    def update_providers(self, provider_list: List[Dict[str, Any]],
+                         providers_pool: Optional[Dict[str, Dict[str, Any]]] = None,
+                         strategy: Optional[str] = None):
         """动态更新 provider 配置（从 Redis 配置）
 
-        provider_list 格式: [{"name": "qwen", "model": "qwen-max", "priority": 1}, ...]
-        按列表顺序设置优先级，第一个优先级最高
+        provider_list 格式: [{"name": "qwen", "model": "qwen-max"}, ...]
+                     或    [{"provider": "qwen", "model": "qwen-max"}, ...]
+        providers_pool 格式: {"qwen": {"api_key": "...", "base_url": "...", "timeout": 60}, ...}
         """
         new_configs = []
         for i, p in enumerate(provider_list):
-            name = p.get("name", "")
+            name = p.get("name", "") or p.get("provider", "")
             model = p.get("model")
             if not name:
                 continue
@@ -383,11 +433,35 @@ class LLMManager:
 
         if new_configs:
             self.providers_config = new_configs
-            self.strategy = ScheduleStrategy.PRIORITY
+            if strategy:
+                try:
+                    self.strategy = ScheduleStrategy(strategy)
+                except ValueError:
+                    self.strategy = ScheduleStrategy.PRIORITY
+            else:
+                self.strategy = ScheduleStrategy.PRIORITY
+
+            # 保存 provider 池信息供 _create_provider 使用
+            if providers_pool:
+                self._providers_pool = providers_pool
+
+            # 关闭旧 provider 实例并清空缓存
+            for provider in self._providers.values():
+                try:
+                    import asyncio
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        loop.create_task(provider.close())
+                    else:
+                        loop.run_until_complete(provider.close())
+                except Exception:
+                    pass
             self._providers.clear()
+
             logger.info(
                 f"Provider config updated: "
                 f"{[f'{p.name}({p.model})' for p in new_configs]}"
+                + (f", pool keys: {list(providers_pool.keys())}" if providers_pool else "")
             )
 
     def get_providers_info(self) -> List[Dict[str, Any]]:
