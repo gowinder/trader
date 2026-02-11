@@ -104,3 +104,32 @@ class AdvisoryService:
                 logger.error(f"Failed to send notification: {e}")
 
         logger.info(f"Advisory check complete: {len(triggered)} trigger(s), advisory_id={advisory_id}")
+
+    async def force_run(
+        self,
+        symbols: List[str],
+        positions: List[Dict],
+        market_data: Dict[str, Dict],
+        sentiment: Optional[Dict],
+        current_config: Dict[str, Any],
+        account_summary: Optional[Dict] = None,
+    ):
+        """手动触发 advisory 分析，绕过所有触发器检查"""
+        logger.info("Force running advisory analysis (manual trigger)")
+        advisory_id = await self.engine.generate_advisory(
+            trigger_type=TriggerType.SCHEDULED,
+            trigger_detail={"manual": True},
+            symbols=symbols, positions=positions,
+            market_data=market_data, sentiment=sentiment,
+            current_config=current_config, account_summary=account_summary,
+        )
+        if advisory_id is None:
+            return
+
+        if self.notifier and self.notifier.enabled and self.engine.last_result:
+            try:
+                await self.notifier.send_advisory(self.engine.last_result, str(advisory_id))
+            except Exception as e:
+                logger.error(f"Failed to send notification: {e}")
+
+        logger.info(f"Force advisory complete: advisory_id={advisory_id}")

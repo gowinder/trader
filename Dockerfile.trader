@@ -28,4 +28,8 @@ COPY src/ ./src/
 ENV PYTHONPATH=/app/src
 ENV PYTHONUNBUFFERED=1
 
-CMD ["python", "-m", "ai_trader.main"]
+# 启动脚本：清理 CLI 工具的 MCP 配置（宿主机挂载的配置含 MCP servers，容器内会卡死）
+COPY docker-entrypoint-trader.sh /app/docker-entrypoint-trader.sh
+RUN chmod +x /app/docker-entrypoint-trader.sh
+
+CMD ["/app/docker-entrypoint-trader.sh"]

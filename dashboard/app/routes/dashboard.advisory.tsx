@@ -20,6 +20,7 @@ import {
   Check,
   X,
   Loader2,
+  Play,
 } from "lucide-react";
 
 interface Suggestion {
@@ -79,11 +80,12 @@ export default function AdvisoryPage() {
   const [advisories, setAdvisories] = useState<Advisory[]>([]);
   const [pendingCount, setPendingCount] = useState(0);
   const [loading, setLoading] = useState(true);
-  const [statusFilter, setStatusFilter] = useState("pending");
+  const [statusFilter, setStatusFilter] = useState("all");
   const [urgencyFilter, setUrgencyFilter] = useState("all");
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState("");
+  const [triggering, setTriggering] = useState(false);
 
   const fetcher = useFetcher();
 
@@ -129,6 +131,21 @@ export default function AdvisoryPage() {
     });
   };
 
+  const handleTrigger = async () => {
+    setTriggering(true);
+    try {
+      const res = await fetch("/api/advisory-trigger", { method: "POST" });
+      if (res.ok) {
+        // 延迟刷新，给后端时间生成结果
+        setTimeout(() => { fetchData(); setTriggering(false); }, 5000);
+      } else {
+        setTriggering(false);
+      }
+    } catch {
+      setTriggering(false);
+    }
+  };
+
   const handleAction = (suggestionId: string, action: string, rejectionReason?: string) => {
     fetcher.submit(
       JSON.stringify({ suggestionId, action, rejectionReason }),
@@ -157,10 +174,20 @@ export default function AdvisoryPage() {
             </span>
           )}
         </div>
-        <Button variant="ghost" size="sm" onClick={() => { setLoading(true); fetchData(); }}>
-          <RefreshCw className={cn("mr-1 h-4 w-4", loading && "animate-spin")} />
-          刷新
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button variant="default" size="sm" disabled={triggering} onClick={handleTrigger}>
+            {triggering ? (
+              <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+            ) : (
+              <Play className="mr-1 h-4 w-4" />
+            )}
+            {triggering ? "分析中..." : "立即运行"}
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => { setLoading(true); fetchData(); }}>
+            <RefreshCw className={cn("mr-1 h-4 w-4", loading && "animate-spin")} />
+            刷新
+          </Button>
+        </div>
       </div>
 
       {/* Filters */}
