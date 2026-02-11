@@ -199,6 +199,9 @@ class Scheduler:
                     redis_client=self._redis,
                     persistence=persistence,
                 )))
+            # 启动手动触发监听
+            if self._redis:
+                self._advisory_tasks.append(asyncio.create_task(self._advisory_manual_trigger_listener()))
             logger.info("Advisory system initialized")
         except Exception as e:
             logger.error(f"Failed to initialize advisory system: {e}")
@@ -312,7 +315,7 @@ class Scheduler:
 
         try:
             pubsub = self._redis.pubsub()
-            await pubsub.subscribe("trading:config:updated", "strategy:preset:updated", "llm:providers:updated", "advisory:config:updated", "advisory:llm_config:updated")
+            await pubsub.subscribe("trading:config:updated", "strategy:preset:updated", "llm:providers:updated", "advisory:config:updated", "advisory:llm_config:updated", "llm:config:updated")
 
             async for message in pubsub.listen():
                 if message["type"] == "message":
@@ -352,6 +355,25 @@ class Scheduler:
                                     except Exception:
                                         pass
                                 logger.info(f"Advisory LLM config updated: provider={llm_cfg.get('provider')}, model={llm_cfg.get('model')}")
+                        elif channel == "llm:config:updated":
+                            cfg = json.loads(message["data"])
+                            update_type = cfg.get("type", "")
+                            if update_type == "routing" and cfg.get("scope") == "main":
+                                from .ai.llm_manager import get_llm_manager
+                                manager = get_llm_manager()
+                                config_data = cfg.get("config", {})
+                                providers_pool = config_data.get("providers", {})
+                                routing = config_data.get("routing", [])
+                                strategy = config_data.get("strategy")
+                                manager.update_providers(routing, providers_pool=providers_pool, strategy=strategy)
+                                logger.info("LLM full config updated via llm:config:updated")
+                            elif update_type == "providers":
+                                from .ai.llm_manager import get_llm_manager
+                                manager = get_llm_manager()
+                                providers_pool = cfg.get("providers", {})
+                                manager._providers_pool = providers_pool
+                                manager._providers.clear()
+                                logger.info("LLM providers pool refreshed")
                         else:
                             cfg = json.loads(message["data"])
                             self._trading_enabled = cfg.get("enabled", True)
@@ -1062,7 +1084,27 @@ class Scheduler:
                 # 异常路径也需要检查 advisory 收敛
                 await self._advisory_service.persistence.try_resolve_advisory_for_suggestion(sid)
 
-    async def _run_advisory_check(self):
+    async def _advisory_manual_trigger_listener(self):
+        """监听手动触发 advisory 分析"""
+        if not self._redis or not self._advisory_service:
+            return
+        try:
+            pubsub = self._redis.pubsub()
+            await pubsub.subscribe("advisory:manual_trigger")
+            logger.info("Advisory manual trigger listener started")
+            async for message in pubsub.listen():
+                if message["type"] == "message":
+                    logger.info("Received manual advisory trigger")
+                    try:
+                        await self._run_advisory_check(force=True)
+                    except Exception as e:
+                        logger.error(f"Manual advisory trigger error: {e}")
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"Advisory manual trigger listener error: {e}")
+
+    async def _run_advisory_check(self, force: bool = False):
         """运行 advisory 检查"""
         if not self._advisory_service:
             return
@@ -1072,16 +1114,10 @@ class Scheduler:
             market_data = {}
             price_context = {}
 
+            is_testnet = config.trading_mode == "testnet"
+
             for symbol in symbols:
                 try:
-                    pos = await self.position_mgr.get_position(symbol)
-                    if pos and pos.size > 0:
-                        positions.append({
-                            "symbol": pos.symbol, "side": pos.side,
-                            "size": pos.size, "entry_price": pos.entry_price,
-                            "unrealized_pnl": pos.unrealized_pnl,
-                            "roi": pos.roi, "leverage": pos.leverage,
-                        })
                     ticker = await self.exchange.get_ticker(symbol)
                     current_price = ticker.last_price if ticker else 0
                     market_data[symbol] = {
@@ -1092,6 +1128,19 @@ class Scheduler:
                     if previous:
                         price_context[symbol] = {"current": current_price, "previous": previous}
                     self._price_history[symbol] = current_price
+
+                    # testnet 用虚拟仓位，live 用交易所仓位
+                    if is_testnet:
+                        pos = await self._load_testnet_virtual_position(symbol, current_price)
+                    else:
+                        pos = await self.position_mgr.get_position(symbol)
+                    if pos and pos.size > 0:
+                        positions.append({
+                            "symbol": pos.symbol, "side": pos.side,
+                            "size": pos.size, "entry_price": pos.entry_price,
+                            "unrealized_pnl": pos.unrealized_pnl,
+                            "roi": pos.roi, "leverage": pos.leverage,
+                        })
                 except Exception as e:
                     logger.debug(f"Advisory data collection error for {symbol}: {e}")
 
@@ -1106,24 +1155,49 @@ class Scheduler:
             # 收集账户信息
             account_summary = None
             try:
-                account = await self.exchange.get_account()
-                if account:
+                if is_testnet:
+                    # testnet 构建虚拟账户（汇总所有 symbol 的仓位信息）
+                    total_margin = 0.0
+                    total_upnl = 0.0
+                    for p in positions:
+                        entry = p.get("entry_price", 0)
+                        size = p.get("size", 0)
+                        lev = p.get("leverage", 1) or 1
+                        total_margin += (entry * size) / lev
+                        total_upnl += p.get("unrealized_pnl", 0) or 0
+                    base_equity = 10000.0
                     account_summary = {
-                        "total_equity": account.total_equity,
-                        "available_balance": account.available_balance,
-                        "margin_used": getattr(account, 'margin_used', None),
+                        "total_equity": base_equity + total_upnl,
+                        "available_balance": max(base_equity + total_upnl - total_margin, 0),
+                        "margin_used": total_margin,
                     }
+                else:
+                    account = await self.exchange.get_account()
+                    if account:
+                        account_summary = {
+                            "total_equity": account.total_equity,
+                            "available_balance": account.available_balance,
+                            "margin_used": getattr(account, 'margin_used', None),
+                        }
             except Exception:
                 pass
 
-            await self._advisory_service.check_and_run(
-                symbols=symbols, positions=positions,
-                market_data=market_data, sentiment=None,
-                current_config=current_config,
-                consecutive_losses=self._consecutive_losses,
-                price_context=price_context,
-                account_summary=account_summary,
-            )
+            if force:
+                await self._advisory_service.force_run(
+                    symbols=symbols, positions=positions,
+                    market_data=market_data, sentiment=None,
+                    current_config=current_config,
+                    account_summary=account_summary,
+                )
+            else:
+                await self._advisory_service.check_and_run(
+                    symbols=symbols, positions=positions,
+                    market_data=market_data, sentiment=None,
+                    current_config=current_config,
+                    consecutive_losses=self._consecutive_losses,
+                    price_context=price_context,
+                    account_summary=account_summary,
+                )
         except Exception as e:
             logger.error(f"Advisory check error: {e}")
 
