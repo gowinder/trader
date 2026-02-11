@@ -4,7 +4,7 @@ import { Eye, EyeOff, Plus, Trash2, X, ChevronUp, ChevronDown, Save } from "luci
 // ── Types ──────────────────────────────────────────────────────────────────
 
 interface Provider {
-  id: string;
+  id: number;
   name: string;
   displayName: string;
   providerType: string;
@@ -18,9 +18,9 @@ interface Provider {
 }
 
 interface RoutingItem {
-  id: string;
+  id: number;
   scope: string;
-  providerId: string;
+  providerId: number;
   model: string;
   priority: number;
   isEnabled: boolean;
@@ -29,7 +29,7 @@ interface RoutingItem {
 }
 
 interface LocalRouting {
-  providerId: string;
+  providerId: number;
   model: string;
 }
 
@@ -49,10 +49,10 @@ export default function SettingsPage() {
   const [toast, setToast] = useState<Toast | null>(null);
 
   // provider card local state
-  const [cardEdits, setCardEdits] = useState<Record<string, Partial<Provider>>>({});
-  const [showKey, setShowKey] = useState<Record<string, boolean>>({});
-  const [newModelInput, setNewModelInput] = useState<Record<string, string>>({});
-  const [savingProvider, setSavingProvider] = useState<Record<string, boolean>>({});
+  const [cardEdits, setCardEdits] = useState<Record<number, Partial<Provider>>>({});
+  const [showKey, setShowKey] = useState<Record<number, boolean>>({});
+  const [newModelInput, setNewModelInput] = useState<Record<number, string>>({});
+  const [savingProvider, setSavingProvider] = useState<Record<number, boolean>>({});
 
   // add provider modal
   const [showAddModal, setShowAddModal] = useState(false);
@@ -118,7 +118,7 @@ export default function SettingsPage() {
 
   const getCardEdit = (p: Provider) => ({ ...p, ...cardEdits[p.id] });
 
-  const updateCardEdit = (id: string, patch: Partial<Provider>) => {
+  const updateCardEdit = (id: number, patch: Partial<Provider>) => {
     setCardEdits((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
   };
 
@@ -203,14 +203,14 @@ export default function SettingsPage() {
     }
   };
 
-  const removeModel = (providerId: string, model: string) => {
+  const removeModel = (providerId: number, model: string) => {
     const p = providers.find((x) => x.id === providerId);
     if (!p) return;
     const edit = getCardEdit(p);
     updateCardEdit(providerId, { models: edit.models.filter((m) => m !== model) });
   };
 
-  const addModel = (providerId: string) => {
+  const addModel = (providerId: number) => {
     const val = (newModelInput[providerId] || "").trim();
     if (!val) return;
     const p = providers.find((x) => x.id === providerId);
@@ -360,10 +360,11 @@ export default function SettingsPage() {
               <select
                 value={item.providerId}
                 onChange={(e) => {
-                  const np = providers.find((p) => p.id === e.target.value);
+                  const newId = Number(e.target.value);
+                  const np = providers.find((p) => p.id === newId);
                   const npEdit = np ? getCardEdit(np) : null;
                   updateRoutingItem(scope, idx, {
-                    providerId: e.target.value,
+                    providerId: newId,
                     model: npEdit?.models[0] || "",
                   });
                 }}
