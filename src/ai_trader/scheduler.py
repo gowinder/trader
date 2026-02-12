@@ -37,7 +37,7 @@ from .advisory.llm_client import AdvisoryLLMClient
 from .advisory.persistence import AdvisoryPersistenceService
 from .advisory.context import AdvisoryContextBuilder
 from .advisory.triggers import TriggerManager, TriggerConfig
-from .advisory.telegram import TelegramNotifier
+from .advisory.telegram import TelegramBot
 from .notification import NotificationManager
 
 
@@ -209,10 +209,18 @@ class Scheduler:
                     pass
 
             trigger_mgr = TriggerManager(trigger_config)
-            notifier = TelegramNotifier(
+
+            # 初始化 Telegram Bot（统一管理 polling + 推送 + 命令）
+            self._telegram_bot = TelegramBot(
                 bot_token=config.telegram_bot_token,
                 chat_id=config.telegram_chat_id,
+                redis=self._redis,
+                db=self.db_manager,
+                persistence=self.persistence_service,
+                strategy_service=self._strategy_preset_service,
+                advisory_persistence=persistence,
             )
+            notifier = self._telegram_bot.notifier
 
             # 初始化通知管理器
             self._notification_manager = NotificationManager(
@@ -228,12 +236,9 @@ class Scheduler:
             if self._redis:
                 self._advisory_tasks.append(asyncio.create_task(self._advisory_execute_listener()))
                 self._advisory_tasks.append(asyncio.create_task(self._telegram_actions_listener()))
-            # 启动 Telegram 回调处理
-            if notifier.enabled and self._redis:
-                self._advisory_tasks.append(asyncio.create_task(notifier.start_callback_handler(
-                    redis_client=self._redis,
-                    persistence=persistence,
-                )))
+            # 启动 Telegram Bot（polling + 命令处理，替代原 callback handler）
+            if self._telegram_bot.enabled:
+                await self._telegram_bot.start()
             # 启动手动触发监听
             if self._redis:
                 self._advisory_tasks.append(asyncio.create_task(self._advisory_manual_trigger_listener()))
@@ -729,10 +734,11 @@ class Scheduler:
             if not task.done():
                 task.cancel()
         self._advisory_tasks.clear()
+        # 停止 Telegram Bot
+        if hasattr(self, '_telegram_bot') and self._telegram_bot:
+            await self._telegram_bot.stop()
         # 停止 advisory 相关资源
         if self._advisory_service:
-            if hasattr(self._advisory_service, 'notifier') and self._advisory_service.notifier:
-                await self._advisory_service.notifier.stop()
             if hasattr(self._advisory_service, 'engine') and self._advisory_service.engine and hasattr(self._advisory_service.engine, 'llm'):
                 try:
                     await self._advisory_service.engine.llm.close()
