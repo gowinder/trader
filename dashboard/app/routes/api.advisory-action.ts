@@ -8,15 +8,94 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   const body = await request.json();
-  const { suggestionId, action: userAction, rejectionReason } = body;
+  const { suggestionId, advisoryId, action: userAction, rejectionReason } = body;
 
-  if (!suggestionId || !userAction) {
-    return Response.json({ error: "Missing suggestionId or action" }, { status: 400 });
+  // 批量操作只需要 advisoryId，单条操作需要 suggestionId
+  if (!userAction) {
+    return Response.json({ error: "Missing action" }, { status: 400 });
+  }
+  if (!advisoryId && !suggestionId) {
+    return Response.json({ error: "Missing suggestionId or advisoryId" }, { status: 400 });
   }
 
   const sql = postgres(process.env.DATABASE_URL!);
 
   try {
+    // ====== 批量操作：全部采纳 ======
+    if (userAction === "accept_all" && advisoryId) {
+      const updated = await sql`
+        UPDATE advisory_suggestions
+        SET status = 'accepted', updated_at = NOW()
+        WHERE advisory_id = ${advisoryId} AND status = 'pending'
+        RETURNING id
+      `;
+      await sql.end();
+      return Response.json({ success: true, count: updated.length });
+    }
+
+    // ====== 批量操作：全部确认执行 ======
+    if (userAction === "confirm_all" && advisoryId) {
+      const updated = await sql`
+        UPDATE advisory_suggestions
+        SET status = 'confirmed', updated_at = NOW()
+        WHERE advisory_id = ${advisoryId} AND status = 'accepted'
+        RETURNING id, type, target, action, detail
+      `;
+
+      if (updated.length > 0) {
+        const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
+        const redis = createClient({ url: redisUrl });
+        try {
+          await redis.connect();
+          for (const suggestion of updated) {
+            await redis.lPush(
+              "advisory:execute_tasks",
+              JSON.stringify({
+                suggestion_id: suggestion.id,
+                type: suggestion.type,
+                target: suggestion.target,
+                action: suggestion.action,
+                detail: suggestion.detail,
+              })
+            );
+          }
+        } catch (redisError) {
+          // Redis 入队失败时回滚 DB 状态
+          const ids = updated.map((s) => s.id);
+          await sql`
+            UPDATE advisory_suggestions
+            SET status = 'accepted', updated_at = NOW()
+            WHERE id = ANY(${ids}) AND status = 'confirmed'
+          `;
+          throw redisError;
+        } finally {
+          try { await redis.disconnect(); } catch { /* ignore */ }
+        }
+      }
+
+      // 检查是否全部终态 → resolve
+      const [{ activeCount }] = await sql`
+        SELECT COUNT(*)::int as "activeCount"
+        FROM advisory_suggestions
+        WHERE advisory_id = ${advisoryId} AND status NOT IN ('rejected', 'executed', 'failed')
+      `;
+      if (activeCount === 0) {
+        await sql`
+          UPDATE advisories SET status = 'resolved', resolved_at = NOW()
+          WHERE id = ${advisoryId}
+        `;
+      }
+
+      await sql.end();
+      return Response.json({ success: true, count: updated.length });
+    }
+
+    // ====== 单条操作 ======
+    if (!suggestionId) {
+      await sql.end();
+      return Response.json({ error: "Missing suggestionId for single action" }, { status: 400 });
+    }
+
     if (userAction === "accept") {
       const acceptResult = await sql`
         UPDATE advisory_suggestions
@@ -101,17 +180,17 @@ export async function action({ request }: ActionFunctionArgs) {
       await sql.end();
       return Response.json({ error: "Suggestion not found" }, { status: 404 });
     }
-    const advisoryId = suggestionRow[0].advisory_id;
+    const resolveAdvisoryId = suggestionRow[0].advisory_id;
 
     const [{ activeCount }] = await sql`
       SELECT COUNT(*)::int as "activeCount"
       FROM advisory_suggestions
-      WHERE advisory_id = ${advisoryId} AND status NOT IN ('rejected', 'executed', 'failed')
+      WHERE advisory_id = ${resolveAdvisoryId} AND status NOT IN ('rejected', 'executed', 'failed')
     `;
     if (activeCount === 0) {
       await sql`
         UPDATE advisories SET status = 'resolved', resolved_at = NOW()
-        WHERE id = ${advisoryId}
+        WHERE id = ${resolveAdvisoryId}
       `;
     }
 
