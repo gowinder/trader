@@ -151,24 +151,49 @@ class Scheduler:
             logger.warning("Advisory requires persistence, but persistence not initialized")
             return
         try:
-            # 从 Redis 读取已保存的 LLM 配置
-            llm_kwargs = {}
+            # 从 Redis 读取 Advisory LLM 配置（配置由 Dashboard 管理）
+            llm_cfg = None
             if self._redis:
                 try:
                     llm_data = await self._redis.get("advisory:llm_config")
+                    if not llm_data:
+                        # 兼容旧 key
+                        llm_data = await self._redis.get("llm:advisory:config")
                     if llm_data:
                         llm_cfg = json.loads(llm_data)
-                        if llm_cfg.get("provider"):
-                            llm_kwargs["provider"] = llm_cfg["provider"]
-                        if llm_cfg.get("model"):
-                            llm_kwargs["model"] = llm_cfg["model"]
-                        if llm_cfg.get("base_url"):
-                            llm_kwargs["base_url"] = llm_cfg["base_url"]
-                        if llm_cfg.get("api_key"):
-                            llm_kwargs["api_key"] = llm_cfg["api_key"]
                 except Exception:
                     pass
-            llm_client = AdvisoryLLMClient(**llm_kwargs)
+
+            if not llm_cfg or not llm_cfg.get("provider") or not llm_cfg.get("model"):
+                logger.warning(
+                    "Advisory LLM 未配置，请在 Dashboard Advisory Settings 中配置 LLM 路由。"
+                    " Advisory 系统将跳过初始化。"
+                )
+                return
+
+            # 从 providers pool 中获取 api_key 和 base_url（如果 llm_cfg 中没有）
+            api_key = llm_cfg.get("api_key", "")
+            base_url = llm_cfg.get("base_url", "")
+            if self._redis and (not api_key or not base_url):
+                try:
+                    pool_data = await self._redis.get("llm:providers:pool")
+                    if pool_data:
+                        pool = json.loads(pool_data)
+                        provider_info = pool.get(llm_cfg["provider"], {})
+                        if not api_key:
+                            api_key = provider_info.get("api_key", "")
+                        if not base_url:
+                            base_url = provider_info.get("base_url", "")
+                except Exception:
+                    pass
+
+            llm_client = AdvisoryLLMClient(
+                provider=llm_cfg["provider"],
+                model=llm_cfg["model"],
+                api_key=api_key,
+                base_url=base_url,
+                timeout=llm_cfg.get("timeout", 120.0),
+            )
             persistence = AdvisoryPersistenceService(self.db_manager) if self.db_manager else None
             context_builder = AdvisoryContextBuilder(db=self.db_manager)
             engine = AdvisoryEngine(llm_client, persistence, context_builder)
@@ -350,13 +375,31 @@ class Scheduler:
                                 logger.info(f"Advisory trigger config updated: {cfg}")
                         elif channel == "advisory:llm_config:updated":
                             llm_cfg = json.loads(message["data"])
-                            if self._advisory_service:
+                            provider = llm_cfg.get("provider", "")
+                            model = llm_cfg.get("model", "")
+                            api_key = llm_cfg.get("api_key", "")
+                            base_url = llm_cfg.get("base_url", "")
+                            # 从 providers pool 补全 api_key/base_url
+                            if self._redis and (not api_key or not base_url):
+                                try:
+                                    pool_data = await self._redis.get("llm:providers:pool")
+                                    if pool_data:
+                                        pool = json.loads(pool_data)
+                                        pinfo = pool.get(provider, {})
+                                        if not api_key:
+                                            api_key = pinfo.get("api_key", "")
+                                        if not base_url:
+                                            base_url = pinfo.get("base_url", "")
+                                except Exception:
+                                    pass
+                            if self._advisory_service and provider and model:
                                 old_client = self._advisory_service.engine.llm
                                 new_client = AdvisoryLLMClient(
-                                    provider=llm_cfg.get("provider", ""),
-                                    model=llm_cfg.get("model", ""),
-                                    base_url=llm_cfg.get("base_url"),
-                                    api_key=llm_cfg.get("api_key", ""),
+                                    provider=provider,
+                                    model=model,
+                                    api_key=api_key,
+                                    base_url=base_url,
+                                    timeout=llm_cfg.get("timeout", 120.0),
                                 )
                                 self._advisory_service.engine.llm = new_client
                                 if old_client:
@@ -364,7 +407,11 @@ class Scheduler:
                                         await old_client.close()
                                     except Exception:
                                         pass
-                                logger.info(f"Advisory LLM config updated: provider={llm_cfg.get('provider')}, model={llm_cfg.get('model')}")
+                                logger.info(f"Advisory LLM config updated: provider={provider}, model={model}")
+                            elif not self._advisory_service and provider and model:
+                                # Advisory 之前因缺少配置未初始化，现在尝试初始化
+                                logger.info("Advisory LLM config received, attempting to initialize advisory system")
+                                await self._init_advisory()
                         elif channel == "llm:config:updated":
                             cfg = json.loads(message["data"])
                             update_type = cfg.get("type", "")

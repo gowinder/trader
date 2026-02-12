@@ -135,7 +135,7 @@ async function syncRoutingToRedis(scope: string, strategy?: string) {
         base_url: first.baseUrl || "",
         timeout: first.timeout,
       };
-      await client.set("llm:advisory:config", JSON.stringify(advisoryConfig));
+      await client.set("advisory:llm_config", JSON.stringify(advisoryConfig));
       await client.publish("advisory:llm_config:updated", JSON.stringify(advisoryConfig));
     }
   }
