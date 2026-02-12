@@ -21,9 +21,8 @@ class ConfigExecutor:
 
     async def execute(self, action: str, target: str, detail: Dict[str, Any]) -> ExecutionResult:
         try:
-            if action == "reduce_leverage":
-                return await self._adjust_leverage(detail)
-            elif action == "increase_leverage":
+            # 先尝试精确匹配 action
+            if action in ("reduce_leverage", "increase_leverage"):
                 return await self._adjust_leverage(detail)
             elif action == "adjust_stop_loss":
                 return await self._adjust_param("stop_loss_percent", detail.get("stop_loss_percent"))
@@ -31,8 +30,34 @@ class ConfigExecutor:
                 return await self._adjust_param("take_profit_percent", detail.get("take_profit_percent"))
             elif action == "adjust_weights":
                 return await self._adjust_weights(detail)
-            else:
-                return ExecutionResult(success=False, message=f"未知的配置操作: {action}")
+
+            # 智能路由：根据 detail 中的参数名或 parameter 字段自动识别
+            param_name = detail.get("parameter", "")
+            # 杠杆相关
+            if param_name == "leverage_max" or "leverage_max" in detail:
+                val = detail.get("proposed") or detail.get("to") or detail.get("leverage_max")
+                if val is not None:
+                    detail["leverage_max"] = val
+                return await self._adjust_leverage(detail)
+            # 止损
+            if param_name == "stop_loss_percent" or "stop_loss_percent" in detail:
+                val = detail.get("proposed") or detail.get("to") or detail.get("stop_loss_percent")
+                return await self._adjust_param("stop_loss_percent", val)
+            # 止盈
+            if param_name == "take_profit_percent" or "take_profit_percent" in detail:
+                val = detail.get("proposed") or detail.get("to") or detail.get("take_profit_percent")
+                return await self._adjust_param("take_profit_percent", val)
+            # 权重相关
+            weight_keys = {"quant_weight", "ai_weight", "sentiment_weight"}
+            if param_name in weight_keys or (weight_keys & set(detail.keys())):
+                # 将 parameter=xxx, proposed=yyy 格式转为 {xxx: yyy}
+                if param_name in weight_keys and "proposed" in detail:
+                    detail[param_name] = detail["proposed"]
+                elif param_name in weight_keys and "to" in detail:
+                    detail[param_name] = detail["to"]
+                return await self._adjust_weights(detail)
+
+            return ExecutionResult(success=False, message=f"未知的配置操作: {action}, detail keys: {list(detail.keys())}")
         except Exception as e:
             logger.error(f"Config execution failed: {e}")
             return ExecutionResult(success=False, message=str(e))
@@ -104,10 +129,15 @@ class TradeExecutor:
 
     async def execute(self, action: str, target: str, detail: Dict[str, Any]) -> ExecutionResult:
         try:
-            if action == "close_position":
+            if action in ("close_position", "close"):
                 return await self._close_position(target)
-            elif action == "reduce_position":
+            elif action in ("reduce_position", "reduce"):
+                # 兼容 LLM 用 size_change_percent 代替 reduce_percent
+                if "size_change_percent" in detail and "reduce_percent" not in detail:
+                    detail["reduce_percent"] = detail["size_change_percent"]
                 return await self._reduce_position(target, detail)
+            elif action in ("hold", "hold_with_protection", "no_change"):
+                return ExecutionResult(success=True, message=f"保持 {target} 当前仓位不变")
             else:
                 return ExecutionResult(success=False, message=f"未知的仓位操作: {action}")
         except Exception as e:
@@ -164,10 +194,12 @@ class SymbolExecutor:
 
     async def execute(self, action: str, target: str, detail: Dict[str, Any]) -> ExecutionResult:
         try:
-            if action == "add_symbol":
+            if action in ("add_symbol", "add"):
                 return await self._add_symbol(target)
-            elif action == "remove_symbol":
+            elif action in ("remove_symbol", "remove"):
                 return await self._remove_symbol(target)
+            elif action in ("no_change", "hold"):
+                return ExecutionResult(success=True, message="交易对列表保持不变")
             else:
                 return ExecutionResult(success=False, message=f"未知的交易对操作: {action}")
         except Exception as e:
