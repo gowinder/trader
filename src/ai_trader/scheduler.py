@@ -38,6 +38,7 @@ from .advisory.persistence import AdvisoryPersistenceService
 from .advisory.context import AdvisoryContextBuilder
 from .advisory.triggers import TriggerManager, TriggerConfig
 from .advisory.telegram import TelegramNotifier
+from .notification import NotificationManager
 
 
 class Scheduler:
@@ -80,6 +81,9 @@ class Scheduler:
         self._advisory_tasks: list = []
         self._price_history: dict = {}
         self._consecutive_losses: int = 0
+
+        # Notification manager
+        self._notification_manager: Optional[NotificationManager] = None
 
         # Redis for dynamic config
         self._redis: Optional[redis.Redis] = None
@@ -184,6 +188,12 @@ class Scheduler:
                 bot_token=config.telegram_bot_token,
                 chat_id=config.telegram_chat_id,
             )
+
+            # 初始化通知管理器
+            self._notification_manager = NotificationManager(
+                notifier=notifier, redis_client=self._redis,
+            )
+            await self._notification_manager.load_config()
 
             self._advisory_service = AdvisoryService(
                 engine=engine, trigger_manager=trigger_mgr,
@@ -315,7 +325,7 @@ class Scheduler:
 
         try:
             pubsub = self._redis.pubsub()
-            await pubsub.subscribe("trading:config:updated", "strategy:preset:updated", "llm:providers:updated", "advisory:config:updated", "advisory:llm_config:updated", "llm:config:updated")
+            await pubsub.subscribe("trading:config:updated", "strategy:preset:updated", "llm:providers:updated", "advisory:config:updated", "advisory:llm_config:updated", "llm:config:updated", "notification:config:updated", "notification:test")
 
             async for message in pubsub.listen():
                 if message["type"] == "message":
@@ -374,6 +384,15 @@ class Scheduler:
                                 manager._providers_pool = providers_pool
                                 manager._providers.clear()
                                 logger.info("LLM providers pool refreshed")
+                        elif channel == "notification:config:updated":
+                            cfg = json.loads(message["data"])
+                            if self._notification_manager:
+                                self._notification_manager.update_config(cfg)
+                                logger.info("Notification config updated")
+                        elif channel == "notification:test":
+                            if self._notification_manager:
+                                await self._notification_manager.send_test_message()
+                                logger.info("Notification test message sent")
                         else:
                             cfg = json.loads(message["data"])
                             self._trading_enabled = cfg.get("enabled", True)
@@ -567,6 +586,19 @@ class Scheduler:
                 await self._redis.expire(f"backtest:status:{task_id}", 86400)
 
             logger.info(f"Backtest {task_id} completed: return={result.return_pct:.2f}%")
+
+            # 发送回测完成通知
+            if self._notification_manager:
+                await self._notification_manager.notify_backtest(
+                    symbol=symbol,
+                    start_date=start_date,
+                    end_date=end_date,
+                    return_pct=result.return_pct,
+                    win_rate=result.win_rate,
+                    max_drawdown_pct=result.max_drawdown_pct,
+                    sharpe_ratio=result.sharpe_ratio,
+                    total_trades=result.total_trades,
+                )
 
             # 保存到数据库
             if self.persistence_service:
@@ -826,6 +858,15 @@ class Scheduler:
                 self._current_position_ids[symbol] = position_id
                 logger.info(f"Position opened and persisted: {position_id}")
 
+                # 发送开仓/加仓通知
+                if self._notification_manager:
+                    await self._notification_manager.notify_trade(
+                        symbol=symbol, action=action, price=price,
+                        size=size, leverage=leverage,
+                        stop_loss=decision.stop_loss_price if decision else None,
+                        take_profit=decision.take_profit_price if decision else None,
+                    )
+
             elif action in ["close_long", "close_short"]:
                 # 平仓
                 if not self._current_position_ids.get(symbol) and self.db_manager:
@@ -869,6 +910,13 @@ class Scheduler:
 
                     logger.info(f"Position closed and persisted: {self._current_position_ids.get(symbol)}, pnl={pnl:.2f}")
                     self._current_position_ids.pop(symbol, None)
+
+                    # 发送平仓通知
+                    if self._notification_manager:
+                        await self._notification_manager.notify_trade(
+                            symbol=symbol, action=action, price=price,
+                            size=size, leverage=leverage,
+                        )
 
                     # 更新连续亏损计数
                     if pnl < 0:
@@ -917,6 +965,13 @@ class Scheduler:
                         is_win=pnl > 0,
                     )
                     logger.info(f"Partial position close persisted, pnl={pnl:.2f}")
+
+                    # 发送减仓通知
+                    if self._notification_manager:
+                        await self._notification_manager.notify_trade(
+                            symbol=symbol, action=action, price=price,
+                            size=size, leverage=leverage,
+                        )
 
         except Exception as e:
             logger.error(f"Failed to persist position change: {e}")
@@ -1360,6 +1415,24 @@ class Scheduler:
             if sl_tp_action:
                 from .models.decision import TradingDecision
 
+                # 发送止损/止盈通知
+                if self._notification_manager:
+                    side = position.side.lower()
+                    entry_price = position.entry_price
+                    pnl_pct = ((market_data.current_price - entry_price) / entry_price) * 100
+                    if side == "short":
+                        pnl_pct = -pnl_pct
+                    is_sl = ("close_long" == sl_tp_action and market_data.current_price < entry_price) or \
+                            ("close_short" == sl_tp_action and market_data.current_price > entry_price)
+                    await self._notification_manager.notify_stop_loss_take_profit(
+                        symbol=symbol,
+                        side=side,
+                        trigger_type="stop_loss" if is_sl else "take_profit",
+                        entry_price=entry_price,
+                        trigger_price=market_data.current_price,
+                        pnl_percent=pnl_pct,
+                    )
+
                 quantity = position.size
                 if config.trading_mode == "testnet":
                     quantity = round(quantity, 6)
@@ -1404,6 +1477,15 @@ class Scheduler:
         except Exception as e:
             logger.error(f"Decision engine failed: {e}")
             return
+
+        # 发送决策通知
+        if self._notification_manager:
+            await self._notification_manager.notify_decision(
+                symbol=symbol,
+                action=decision.action,
+                confidence=decision.confidence,
+                reasoning=decision.reasoning_zh or decision.reasoning,
+            )
 
         # 3. 执行
         order_id = None
