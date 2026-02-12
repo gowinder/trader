@@ -36,14 +36,15 @@ def create_exchange_client() -> BaseExchange:
                 f"Please use live mode or switch to a supported exchange."
             )
 
-        # Use dedicated adapters for better testnet support
+        # Use dedicated adapters for better testnet/demo support
         if exchange == "binance":
-            # Note: Do not pass proxy for testnet - Binance Futures Testnet should be accessed directly
+            # Binance futures uses demo trading mode (testnet deprecated)
+            # Demo trading uses real Binance API keys from demo.binance.com
             return BinanceAdapter(
                 api_key=config.testnet_api_key,
                 api_secret=config.testnet_api_secret,
                 testnet=True,
-                proxy=None,  # Testnet doesn't need proxy, direct connection works
+                proxy=None,
             )
         elif exchange == "bybit":
             # Bybit uses CCXT adapter with custom testnet URL
