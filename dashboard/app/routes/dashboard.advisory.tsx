@@ -159,6 +159,17 @@ export default function AdvisoryPage() {
     setRejectReason("");
   };
 
+  const handleBatchAction = (advisoryId: string, action: string) => {
+    fetcher.submit(
+      JSON.stringify({ advisoryId, action }),
+      {
+        method: "POST",
+        action: "/api/advisory-action",
+        encType: "application/json",
+      }
+    );
+  };
+
   const filtered = urgencyFilter === "all"
     ? advisories
     : advisories.filter((a) => a.urgency === urgencyFilter);
@@ -239,6 +250,9 @@ export default function AdvisoryPage() {
           {filtered.map((advisory) => {
             const expanded = expandedIds.has(advisory.id);
             const uc = urgencyConfig[advisory.urgency] || urgencyConfig.low;
+            const hasPending = advisory.suggestions.some((s) => s.status === "pending");
+            const hasAccepted = advisory.suggestions.some((s) => s.status === "accepted");
+            const isBatchActioning = fetcher.state !== "idle";
 
             return (
               <Card key={advisory.id} className="overflow-hidden">
@@ -277,6 +291,33 @@ export default function AdvisoryPage() {
                       <div className="border-b bg-muted/30 px-4 py-3">
                         <p className="whitespace-pre-wrap text-sm">{advisory.market_summary}</p>
                       </div>
+                      {/* Batch action buttons */}
+                      {(hasPending || hasAccepted) && (
+                        <div className="flex items-center gap-2 border-b px-4 py-2 bg-muted/10">
+                          {hasPending && (
+                            <Button
+                              size="sm"
+                              variant="default"
+                              disabled={isBatchActioning}
+                              onClick={() => handleBatchAction(advisory.id, "accept_all")}
+                            >
+                              <Check className="mr-1 h-3 w-3" />
+                              全部采纳
+                            </Button>
+                          )}
+                          {hasAccepted && (
+                            <Button
+                              size="sm"
+                              variant="default"
+                              disabled={isBatchActioning}
+                              onClick={() => handleBatchAction(advisory.id, "confirm_all")}
+                            >
+                              <Play className="mr-1 h-3 w-3" />
+                              全部执行
+                            </Button>
+                          )}
+                        </div>
+                      )}
                       {advisory.suggestions.length === 0 ? (
                         <div className="px-4 py-4 text-sm text-muted-foreground">
                           无建议
@@ -285,7 +326,7 @@ export default function AdvisoryPage() {
                         advisory.suggestions.map((s) => {
                           const Icon = suggestionTypeIcon[s.type] || AlertTriangle;
                           const st = statusMap[s.status] || statusMap.pending;
-                          const isActioning = fetcher.state !== "idle";
+                          const isItemActioning = fetcher.state !== "idle";
 
                           return (
                             <div key={s.id} className="border-b px-4 py-3 last:border-b-0">
@@ -335,7 +376,7 @@ export default function AdvisoryPage() {
                                       <Button
                                         size="sm"
                                         variant="default"
-                                        disabled={isActioning}
+                                        disabled={isItemActioning}
                                         onClick={() => handleAction(s.id, "accept")}
                                       >
                                         <Check className="mr-1 h-3 w-3" />
@@ -356,7 +397,7 @@ export default function AdvisoryPage() {
                                           <Button
                                             size="sm"
                                             variant="destructive"
-                                            disabled={isActioning}
+                                            disabled={isItemActioning}
                                             onClick={() => handleAction(s.id, "reject", rejectReason)}
                                           >
                                             确认拒绝
@@ -373,7 +414,7 @@ export default function AdvisoryPage() {
                                         <Button
                                           size="sm"
                                           variant="outline"
-                                          disabled={isActioning}
+                                          disabled={isItemActioning}
                                           onClick={() => setRejectingId(s.id)}
                                         >
                                           <X className="mr-1 h-3 w-3" />
@@ -388,7 +429,7 @@ export default function AdvisoryPage() {
                                       <Button
                                         size="sm"
                                         variant="default"
-                                        disabled={isActioning}
+                                        disabled={isItemActioning}
                                         onClick={() => handleAction(s.id, "confirm")}
                                       >
                                         确认执行
@@ -396,7 +437,7 @@ export default function AdvisoryPage() {
                                       <Button
                                         size="sm"
                                         variant="outline"
-                                        disabled={isActioning}
+                                        disabled={isItemActioning}
                                         onClick={() => handleAction(s.id, "cancel")}
                                       >
                                         取消
