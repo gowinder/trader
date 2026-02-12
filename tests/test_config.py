@@ -39,8 +39,7 @@ def test_advisory_config_defaults():
     cfg = TradingConfig(_env_file=None)
     assert cfg.advisory_enabled is False
     assert cfg.advisory_interval_minutes == 60
-    assert cfg.advisory_llm_provider == "openrouter"
-    assert cfg.advisory_llm_model == "deepseek/deepseek-chat"
-    assert cfg.advisory_llm_timeout == 120.0
+    # Advisory LLM 配置已移至 Dashboard/Redis，不再从 .env 读取
+    assert not hasattr(cfg, "advisory_llm_provider")
     assert cfg.telegram_bot_token == ""
     assert cfg.telegram_chat_id == ""

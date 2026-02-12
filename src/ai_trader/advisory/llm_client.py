@@ -1,8 +1,7 @@
-"""Advisory 专用 LLM 客户端"""
+"""Advisory 专用 LLM 客户端 - 配置完全由 Dashboard/Redis 管理"""
 
 from typing import Optional, Dict, List, Any
 from ..ai.providers.base import HTTPBasedProvider, BaseLLMProvider
-from ..config import config
 from ..utils.logger import logger
 
 
@@ -28,21 +27,26 @@ def _create_provider(name: str, api_key: str, model: str, base_url: str, timeout
 
 
 class AdvisoryLLMClient:
-    """Advisory 独立 LLM 客户端 - 不使用 LLMManager 调度"""
+    """Advisory 独立 LLM 客户端 - 配置由 Dashboard/Redis 提供，不从 .env 读取"""
 
     def __init__(
         self,
-        provider: str = "",
-        api_key: str = "",
-        model: str = "",
-        base_url: Optional[str] = None,
-        timeout: Optional[float] = None,
+        provider: str,
+        api_key: str,
+        model: str,
+        base_url: str,
+        timeout: float = 120.0,
     ):
-        self._provider_name = provider or config.advisory_llm_provider
-        self._api_key = api_key or config.advisory_llm_api_key or config.llm_api_key or config.openrouter_api_key
-        self._model = model or config.advisory_llm_model
-        self._base_url = base_url or config.advisory_llm_base_url or "https://openrouter.ai/api/v1"
-        self._timeout = timeout if timeout is not None else config.advisory_llm_timeout
+        if not provider or not model:
+            raise ValueError(
+                "Advisory LLM 未配置 provider/model，请在 Dashboard Advisory Settings 中配置"
+            )
+
+        self._provider_name = provider
+        self._api_key = api_key
+        self._model = model
+        self._base_url = base_url
+        self._timeout = timeout
 
         self._provider = _create_provider(
             name=self._provider_name,

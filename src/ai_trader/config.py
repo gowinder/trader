@@ -197,22 +197,7 @@ class TradingConfig(BaseSettings):
         description="定时检查间隔（分钟）"
     )
 
-    # Advisory LLM (独立配置)
-    advisory_llm_provider: str = Field(
-        default="openrouter", validation_alias="ADVISORY_LLM_PROVIDER"
-    )
-    advisory_llm_api_key: str = Field(
-        default="", validation_alias="ADVISORY_LLM_API_KEY"
-    )
-    advisory_llm_model: str = Field(
-        default="deepseek/deepseek-chat", validation_alias="ADVISORY_LLM_MODEL"
-    )
-    advisory_llm_base_url: Optional[str] = Field(
-        default=None, validation_alias="ADVISORY_LLM_BASE_URL"
-    )
-    advisory_llm_timeout: float = Field(
-        default=120.0, validation_alias="ADVISORY_LLM_TIMEOUT"
-    )
+    # Advisory LLM 配置通过 Dashboard/Redis 管理，不再从 .env 读取
 
     # Telegram 通知
     telegram_bot_token: str = Field(
