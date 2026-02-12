@@ -90,33 +90,70 @@ class AdvisoryEngine:
         "param_adjustment": "param_adjust",
         "position": "position_action",
         "symbol": "symbol_change",
+        "symbol_management": "symbol_change",
     }
 
     def _parse_result(self, raw: Dict[str, Any]) -> AdvisoryResult:
+        import json as _json
+        logger.info(f"Raw advisory LLM output: {_json.dumps(raw, ensure_ascii=False, default=str)[:2000]}")
         suggestions = []
+        # 全局 risk_note（部分 LLM 把 risk_note 放在顶层）
+        global_risk_note = raw.get("risk_note", "")
+        if isinstance(global_risk_note, dict):
+            global_risk_note = _json.dumps(global_risk_note, ensure_ascii=False)
+
         for s in raw.get("suggestions", []):
             try:
                 raw_type = s.get("type", "param_adjust")
                 mapped_type = self._TYPE_ALIASES.get(raw_type, raw_type)
-                # 兼容 LLM 返回的不同字段名
-                detail = s.get("detail") or s.get("details", {})
+                # 兼容不同字段名: detail / details / changes
+                detail = s.get("detail") or s.get("details") or s.get("changes", {})
+                if not isinstance(detail, dict):
+                    detail = {}
+                # target: target / symbol / scope
+                target = s.get("target") or s.get("symbol") or s.get("scope", "global")
+                # action: 优先取顶层 action，否则从 detail key 推断
+                action = s.get("action", "")
+                if not action and detail:
+                    action = next(iter(detail.keys()), "adjust")
+                action = action or "adjust"
+                # reasoning: 多个可能的来源
+                reasoning = s.get("reasoning", "") or s.get("reasoning_cn", "") or s.get("note", "")
+                if not reasoning and isinstance(detail, dict):
+                    reasoning = detail.pop("reasoning", "") or detail.pop("reasoning_cn", "")
+                # risk_note: 每条或全局
+                risk_note = s.get("risk_note", "") or s.get("risk", "") or global_risk_note
+                # 额外字段也收集到 detail 中（如 size_percent, targets, urgency 等）
+                extra_keys = set(s.keys()) - {"type", "target", "symbol", "scope", "action",
+                    "detail", "details", "changes", "reasoning", "reasoning_cn",
+                    "risk_note", "risk", "note"}
+                for k in extra_keys:
+                    if k not in detail:
+                        detail[k] = s[k]
+
                 suggestions.append(Suggestion(
                     type=SuggestionType(mapped_type),
-                    target=s.get("target") or s.get("symbol", "global"),
-                    action=s.get("action", "unknown"),
+                    target=target,
+                    action=action,
                     detail=detail,
-                    reasoning=s.get("reasoning") or detail.get("reasoning", "") if isinstance(detail, dict) else "",
-                    risk_note=s.get("risk_note", ""),
+                    reasoning=reasoning,
+                    risk_note=risk_note,
                 ))
             except (ValueError, KeyError) as e:
                 logger.warning(f"Skipping malformed suggestion: {e}, raw={s}")
-        # market_summary 可能是 dict 或 string
+        # market_summary: 可能是 dict 或 string
         market_summary = raw.get("market_summary", "")
         if isinstance(market_summary, dict):
-            import json
-            market_summary = json.dumps(market_summary, ensure_ascii=False)
+            # 有些 LLM 把 summary/overview 放在 dict 里
+            market_summary = market_summary.get("summary") or market_summary.get("overview") \
+                or _json.dumps(market_summary, ensure_ascii=False)
+        # urgency: 可能在顶层或 market_summary dict 里
+        urgency_str = raw.get("urgency", "")
+        if not urgency_str and isinstance(raw.get("market_summary"), dict):
+            urgency_str = raw["market_summary"].get("urgency", "low")
+        urgency_str = urgency_str or "low"
         return AdvisoryResult(
-            urgency=Urgency(raw.get("urgency", "low")),
+            urgency=Urgency(urgency_str),
             suggestions=suggestions,
             market_summary=market_summary,
         )
