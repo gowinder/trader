@@ -22,6 +22,7 @@ export default [
   route("api/advisory-action", "routes/api.advisory-action.ts"),
   route("api/advisory-trigger", "routes/api.advisory-trigger.ts"),
   route("api/advisory-settings", "routes/api.advisory-settings.ts"),
+  route("api/notification-settings", "routes/api.notification-settings.ts"),
   route("api/account-state", "routes/api.account-state.ts"),
   route("dashboard", "routes/dashboard.tsx", [
     index("routes/dashboard._index.tsx"),
@@ -40,5 +41,6 @@ export default [
     route("strategy", "routes/dashboard.strategy.tsx"),
     route("advisory", "routes/dashboard.advisory.tsx"),
     route("advisory-settings", "routes/dashboard.advisory-settings.tsx"),
+    route("notification-settings", "routes/dashboard.notification-settings.tsx"),
   ]),
 ] satisfies RouteConfig;

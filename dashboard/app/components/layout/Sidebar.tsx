@@ -17,6 +17,7 @@ import {
   Cpu,
   BrainCircuit,
   SlidersVertical,
+  MessageSquare,
 } from "lucide-react";
 
 const navItems = [
@@ -34,6 +35,7 @@ const navItems = [
 const advisoryItems = [
   { to: "/dashboard/advisory", icon: BrainCircuit, label: "AI 建议", hasBadge: true },
   { to: "/dashboard/advisory-settings", icon: SlidersVertical, label: "建议设置", hasBadge: false },
+  { to: "/dashboard/notification-settings", icon: MessageSquare, label: "通知设置", hasBadge: false },
 ];
 
 const bottomItems = [

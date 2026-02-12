@@ -85,6 +85,17 @@ class TelegramNotifier:
             logger.error(f"Failed to send Telegram notification: {e}")
             return None
 
+    async def send_text(self, text: str, parse_mode: Optional[str] = None) -> bool:
+        """发送纯文本消息（供外部模块调用）"""
+        if not self.enabled:
+            return False
+        try:
+            await self._bot.send_message(chat_id=self.chat_id, text=text, parse_mode=parse_mode)
+            return True
+        except Exception as e:
+            logger.error(f"Failed to send text message: {e}")
+            return False
+
     async def send_execution_result(self, suggestion_index: int, action: str, success: bool, message: str):
         if not self.enabled:
             return
