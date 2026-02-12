@@ -88,10 +88,46 @@ class AdvisoryEngine:
     _TYPE_ALIASES: Dict[str, str] = {
         "parameter_adjustment": "param_adjust",
         "param_adjustment": "param_adjust",
+        "parameter_adjustments": "param_adjust",
         "position": "position_action",
+        "position_action": "position_action",
+        "position_actions": "position_action",
         "symbol": "symbol_change",
+        "symbol_change": "symbol_change",
         "symbol_management": "symbol_change",
     }
+
+    # suggestions 为 dict 时，key 到 type 的映射
+    _CATEGORY_TYPE_MAP: Dict[str, str] = {
+        "parameter_adjustments": "param_adjust",
+        "parameter_adjustment": "param_adjust",
+        "param_adjustments": "param_adjust",
+        "position_actions": "position_action",
+        "position_action": "position_action",
+        "symbol_management": "symbol_change",
+        "symbol_changes": "symbol_change",
+    }
+
+    def _flatten_suggestions(self, raw_suggestions) -> List[Dict[str, Any]]:
+        """将 suggestions 统一为 list，兼容 dict 分类结构和 list 结构"""
+        if isinstance(raw_suggestions, list):
+            return raw_suggestions
+        if isinstance(raw_suggestions, dict):
+            flat = []
+            for category_key, items in raw_suggestions.items():
+                inferred_type = self._CATEGORY_TYPE_MAP.get(category_key)
+                if isinstance(items, list):
+                    for item in items:
+                        if isinstance(item, dict):
+                            if inferred_type and "type" not in item:
+                                item["type"] = inferred_type
+                            flat.append(item)
+                elif isinstance(items, dict):
+                    if inferred_type and "type" not in items:
+                        items["type"] = inferred_type
+                    flat.append(items)
+            return flat
+        return []
 
     def _parse_result(self, raw: Dict[str, Any]) -> AdvisoryResult:
         import json as _json
@@ -102,7 +138,8 @@ class AdvisoryEngine:
         if isinstance(global_risk_note, dict):
             global_risk_note = _json.dumps(global_risk_note, ensure_ascii=False)
 
-        for s in raw.get("suggestions", []):
+        raw_suggestions = self._flatten_suggestions(raw.get("suggestions", []))
+        for s in raw_suggestions:
             try:
                 raw_type = s.get("type", "param_adjust")
                 mapped_type = self._TYPE_ALIASES.get(raw_type, raw_type)

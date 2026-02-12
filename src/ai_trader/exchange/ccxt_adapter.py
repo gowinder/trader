@@ -82,17 +82,18 @@ class CCXTAdapter(BaseExchange):
         exchange = exchange_class(config)
 
         # Testnet switching - strict mode: reject if not supported
-        # IMPORTANT: Warning-only mode may lead to accidental live trading
+        # Binance futures testnet is deprecated, use demo trading instead
         if testnet:
-            if hasattr(exchange, "set_sandbox_mode"):
+            if exchange_id == "binance" and hasattr(exchange, "enable_demo_trading"):
+                exchange.enable_demo_trading(True)
+                logger.info(f"{exchange_id} switched to Demo Trading mode")
+            elif hasattr(exchange, "set_sandbox_mode"):
                 exchange.set_sandbox_mode(True)
                 logger.info(f"{exchange_id} switched to Testnet mode")
             else:
-                # Reject exchanges that don't support sandbox mode in testnet mode
                 raise ValueError(
-                    f"{exchange_id} does not support set_sandbox_mode, cannot safely switch to Testnet. "
-                    f"Please use a dedicated adapter (e.g., BinanceAdapter) or check if the exchange supports Testnet. "
-                    f"Exchanges supporting Testnet: binance, bybit"
+                    f"{exchange_id} does not support testnet/demo mode. "
+                    f"Exchanges supporting Testnet: binance (demo), bybit (sandbox)"
                 )
 
         return cls(exchange)

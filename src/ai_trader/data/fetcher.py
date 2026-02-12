@@ -39,8 +39,8 @@ class BinanceDataFetcher:
         self.exchange = ccxt.binanceusdm(config_dict)
 
         if testnet:
-            self.exchange.set_sandbox_mode(True)
-            logger.info("Using Binance testnet for data fetching")
+            self.exchange.enable_demo_trading(True)
+            logger.info("Using Binance demo trading for data fetching")
 
     def fetch_ohlcv(
         self,

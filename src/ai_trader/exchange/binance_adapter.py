@@ -70,21 +70,13 @@ class BinanceAdapter(BaseExchange):
 
         self.exchange = ccxt.binance(config)
 
-        # Enable sandbox mode for testnet
-        # Note: CCXT uses set_sandbox_mode() to configure testnet URLs
+        # Enable demo trading mode (replaces deprecated set_sandbox_mode for futures)
+        # See: https://t.me/ccxt_announcements/92
         if testnet:
-            self.exchange.set_sandbox_mode(True)
-            # Override spot testnet URLs to use futures testnet
-            # This avoids 451 errors from spot testnet geo-restrictions
-            if hasattr(self.exchange, 'urls') and isinstance(self.exchange.urls, dict):
-                api = self.exchange.urls.get('api', {})
-                if isinstance(api, dict):
-                    # Point spot endpoints to futures testnet to avoid geo-restrictions
-                    api['public'] = 'https://testnet.binancefuture.com/fapi/v1'
-                    api['private'] = 'https://testnet.binancefuture.com/fapi/v1'
+            self.exchange.enable_demo_trading(True)
 
         # Safe URL logging
-        url_info = "testnet" if testnet else "production"
+        url_info = "demo" if testnet else "production"
         if hasattr(self.exchange, "urls") and isinstance(self.exchange.urls, dict):
             try:
                 url_info = self.exchange.urls.get("api", {}).get("fapi", url_info)
