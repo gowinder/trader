@@ -24,7 +24,7 @@ export async function action({ request }: Route.ActionArgs) {
     return { error: "请输入密码" };
   }
 
-  if (!verifyPassword(password)) {
+  if (!await verifyPassword(password)) {
     return { error: "密码错误" };
   }
 

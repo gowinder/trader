@@ -574,3 +574,11 @@ export const llmRoutingConfig = pgTable("llm_routing_config", {
   priority: integer("priority").notNull().default(0),
   isEnabled: boolean("is_enabled").notNull().default(true),
 });
+
+// ==================== 系统设置 ====================
+
+export const systemSettings = pgTable("system_settings", {
+  key: varchar("key", { length: 50 }).primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
