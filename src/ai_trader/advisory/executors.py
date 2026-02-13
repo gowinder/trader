@@ -31,6 +31,11 @@ class ConfigExecutor:
             elif action == "adjust_weights":
                 return await self._adjust_weights(detail)
 
+            # 处理组合 action（如 adjust_stop_loss_take_profit）
+            # LLM 可能将多个参数放在 targets 列表或直接放在 detail 中
+            if "stop_loss" in action and "take_profit" in action:
+                return await self._adjust_combined_sl_tp(detail)
+
             # 智能路由：根据 detail 中的参数名或 parameter 字段自动识别
             param_name = detail.get("parameter", "")
             # 杠杆相关
@@ -57,10 +62,77 @@ class ConfigExecutor:
                     detail[param_name] = detail["to"]
                 return await self._adjust_weights(detail)
 
+            # 通用兜底：尝试从 targets 列表逐个解析参数
+            targets = detail.get("targets", [])
+            if isinstance(targets, list) and targets:
+                results = []
+                for t in targets:
+                    if not isinstance(t, dict):
+                        continue
+                    p = t.get("parameter", "")
+                    v = t.get("proposed") or t.get("to") or t.get("value")
+                    if p and v is not None:
+                        if "stop_loss" in p:
+                            r = await self._adjust_param("stop_loss_percent", v)
+                        elif "take_profit" in p:
+                            r = await self._adjust_param("take_profit_percent", v)
+                        elif "leverage" in p:
+                            detail["leverage_max"] = v
+                            r = await self._adjust_leverage(detail)
+                        elif p in weight_keys:
+                            r = await self._adjust_param(p, v)
+                        else:
+                            continue
+                        results.append(r.message)
+                        if not r.success:
+                            return r
+                if results:
+                    return ExecutionResult(success=True, message=" | ".join(results))
+
             return ExecutionResult(success=False, message=f"未知的配置操作: {action}, detail keys: {list(detail.keys())}")
         except Exception as e:
             logger.error(f"Config execution failed: {e}")
             return ExecutionResult(success=False, message=str(e))
+
+    async def _adjust_combined_sl_tp(self, detail: Dict) -> ExecutionResult:
+        """处理同时调整止损止盈的组合 action"""
+        sl_val = None
+        tp_val = None
+
+        # 优先从 targets 列表提取
+        targets = detail.get("targets", [])
+        if isinstance(targets, list):
+            for t in targets:
+                if isinstance(t, dict):
+                    param = t.get("parameter", "")
+                    val = t.get("proposed") or t.get("to") or t.get("value")
+                    if "stop_loss" in param:
+                        sl_val = val
+                    elif "take_profit" in param:
+                        tp_val = val
+
+        # 回退：直接从 detail 提取
+        if sl_val is None:
+            sl_val = detail.get("stop_loss_percent") or detail.get("stop_loss")
+        if tp_val is None:
+            tp_val = detail.get("take_profit_percent") or detail.get("take_profit")
+
+        results = []
+        if sl_val is not None:
+            r = await self._adjust_param("stop_loss_percent", sl_val)
+            results.append(r.message)
+            if not r.success:
+                return r
+        if tp_val is not None:
+            r = await self._adjust_param("take_profit_percent", tp_val)
+            results.append(r.message)
+            if not r.success:
+                return r
+
+        if not results:
+            return ExecutionResult(success=False, message="未能从 detail 中提取止损/止盈参数")
+
+        return ExecutionResult(success=True, message=" | ".join(results))
 
     async def _adjust_leverage(self, detail: Dict) -> ExecutionResult:
         new_max = detail.get("leverage_max")
