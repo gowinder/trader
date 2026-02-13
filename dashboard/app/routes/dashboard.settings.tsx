@@ -76,6 +76,48 @@ export default function SettingsPage() {
   const [savingMain, setSavingMain] = useState(false);
   const [savingAdvisory, setSavingAdvisory] = useState(false);
 
+  // password change
+  const [oldPassword, setOldPassword] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [changingPassword, setChangingPassword] = useState(false);
+
+  const handleChangePassword = async () => {
+    if (!oldPassword || !newPassword || !confirmPassword) {
+      showToast("error", "请填写所有密码字段");
+      return;
+    }
+    if (newPassword.length < 6) {
+      showToast("error", "新密码至少 6 位");
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      showToast("error", "两次输入的新密码不一致");
+      return;
+    }
+    setChangingPassword(true);
+    try {
+      const res = await fetch("/api/change-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ oldPassword, newPassword }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast("success", "密码修改成功");
+        setOldPassword("");
+        setNewPassword("");
+        setConfirmPassword("");
+      } else {
+        showToast("error", data.error || "密码修改失败");
+      }
+    } catch {
+      showToast("error", "网络错误");
+    } finally {
+      setChangingPassword(false);
+    }
+  };
+
   const showToast = useCallback((type: "success" | "error", message: string) => {
     setToast({ type, message });
   }, []);
@@ -742,6 +784,53 @@ export default function SettingsPage() {
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
           {renderRoutingPanel("main", "主 LLM", mainRouting, savingMain)}
           {renderRoutingPanel("advisory", "Advisory LLM", advisoryRouting, savingAdvisory)}
+        </div>
+      </div>
+
+      {/* ── Section 3: Password ──────────────────────────────────── */}
+      <div>
+        <h2 className="text-2xl font-bold mb-4">修改密码</h2>
+        <div className="rounded-lg border border-border bg-card p-6 max-w-md">
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm text-muted-foreground mb-1">旧密码</label>
+              <input
+                type="password"
+                value={oldPassword}
+                onChange={(e) => setOldPassword(e.target.value)}
+                placeholder="请输入当前密码"
+                className={inputCls}
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-muted-foreground mb-1">新密码</label>
+              <input
+                type="password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                placeholder="至少 6 位"
+                className={inputCls}
+              />
+            </div>
+            <div>
+              <label className="block text-sm text-muted-foreground mb-1">确认新密码</label>
+              <input
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                placeholder="再次输入新密码"
+                className={inputCls}
+              />
+            </div>
+            <button
+              type="button"
+              onClick={handleChangePassword}
+              disabled={changingPassword}
+              className="inline-flex items-center gap-1 px-4 py-1.5 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 disabled:opacity-50"
+            >
+              <Save className="h-3.5 w-3.5" /> {changingPassword ? "修改中..." : "修改密码"}
+            </button>
+          </div>
         </div>
       </div>
 

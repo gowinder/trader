@@ -1,4 +1,8 @@
 import { createCookieSessionStorage, redirect } from "react-router";
+import bcrypt from "bcryptjs";
+import { db } from "../../db";
+import { systemSettings } from "../../db/schema";
+import { eq } from "drizzle-orm";
 
 const sessionSecret = process.env.SESSION_SECRET;
 if (!sessionSecret) {
@@ -17,6 +21,9 @@ const storage = createCookieSessionStorage({
     secure: process.env.COOKIE_SECURE === "true",
   },
 });
+
+const SALT_ROUNDS = 12;
+const PASSWORD_KEY = "dashboard_password";
 
 export async function getSession(request: Request) {
   return storage.getSession(request.headers.get("Cookie"));
@@ -58,10 +65,58 @@ export async function isAuthenticated(request: Request) {
   return session.get("authenticated") === true;
 }
 
-export function verifyPassword(password: string) {
-  const dashboardPassword = process.env.DASHBOARD_PASSWORD;
-  if (!dashboardPassword) {
-    throw new Error("DASHBOARD_PASSWORD must be set");
+export async function initializePassword() {
+  const existing = await db
+    .select()
+    .from(systemSettings)
+    .where(eq(systemSettings.key, PASSWORD_KEY));
+
+  if (existing.length > 0) return;
+
+  const envPassword = process.env.DASHBOARD_PASSWORD;
+  if (!envPassword) {
+    throw new Error("DASHBOARD_PASSWORD must be set for initial setup");
   }
-  return password === dashboardPassword;
+
+  const hashed = await bcrypt.hash(envPassword, SALT_ROUNDS);
+  await db.insert(systemSettings).values({
+    key: PASSWORD_KEY,
+    value: hashed,
+  });
 }
+
+export async function verifyPassword(password: string): Promise<boolean> {
+  const result = await db
+    .select()
+    .from(systemSettings)
+    .where(eq(systemSettings.key, PASSWORD_KEY));
+
+  if (result.length === 0) {
+    throw new Error("Password not initialized");
+  }
+
+  return bcrypt.compare(password, result[0].value);
+}
+
+export async function changePassword(
+  oldPassword: string,
+  newPassword: string
+): Promise<{ success: boolean; error?: string }> {
+  const valid = await verifyPassword(oldPassword);
+  if (!valid) {
+    return { success: false, error: "旧密码错误" };
+  }
+
+  const hashed = await bcrypt.hash(newPassword, SALT_ROUNDS);
+  await db
+    .update(systemSettings)
+    .set({ value: hashed, updatedAt: new Date() })
+    .where(eq(systemSettings.key, PASSWORD_KEY));
+
+  return { success: true };
+}
+
+// 自动初始化密码（模块加载时执行一次）
+initializePassword().catch((err) => {
+  console.error("Failed to initialize password:", err.message);
+});
