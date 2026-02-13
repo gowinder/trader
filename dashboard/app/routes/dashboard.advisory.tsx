@@ -69,6 +69,7 @@ const suggestionTypeIcon: Record<string, typeof TrendingUp> = {
 
 const statusMap: Record<string, { label: string; color: string }> = {
   pending: { label: "待处理", color: "text-yellow-600 dark:text-yellow-400" },
+  running: { label: "分析中", color: "text-blue-600 dark:text-blue-400" },
   accepted: { label: "已采纳", color: "text-blue-600 dark:text-blue-400" },
   rejected: { label: "已拒绝", color: "text-muted-foreground" },
   confirmed: { label: "已确认", color: "text-purple-600 dark:text-purple-400" },
@@ -137,8 +138,8 @@ export default function AdvisoryPage() {
     try {
       const res = await fetch("/api/advisory-trigger", { method: "POST" });
       if (res.ok) {
-        // 延迟刷新，给后端时间生成结果
-        setTimeout(() => { fetchData(); setTriggering(false); }, 5000);
+        // 短暂延迟后刷新，让后端创建 running 记录
+        setTimeout(() => { fetchData(); setTriggering(false); }, 1500);
       } else {
         setTriggering(false);
       }
@@ -269,15 +270,32 @@ export default function AdvisoryPage() {
                     <span className="rounded bg-muted px-2 py-0.5 text-xs">
                       {triggerTypeMap[advisory.trigger_type] || advisory.trigger_type}
                     </span>
-                    <span className="min-w-0 flex-1 truncate text-sm">
-                      {advisory.market_summary}
-                    </span>
+                    {advisory.status === "running" ? (
+                      <span className="flex min-w-0 flex-1 items-center gap-2 text-sm text-blue-600 dark:text-blue-400">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        AI 分析中...
+                      </span>
+                    ) : advisory.status === "failed" ? (
+                      <span className="min-w-0 flex-1 truncate text-sm text-red-600 dark:text-red-400">
+                        {advisory.market_summary || "分析失败"}
+                      </span>
+                    ) : (
+                      <span className="min-w-0 flex-1 truncate text-sm">
+                        {advisory.market_summary}
+                      </span>
+                    )}
                     <span className="shrink-0 text-xs text-muted-foreground" title={formatDateTime(advisory.created_at)}>
                       {formatTimeAgo(advisory.created_at)}
                     </span>
-                    <span className="text-xs text-muted-foreground">
-                      {advisory.suggestions.length} 条建议
-                    </span>
+                    {advisory.status === "running" ? (
+                      <span className="text-xs text-blue-600 dark:text-blue-400">分析中</span>
+                    ) : advisory.status === "failed" ? (
+                      <span className="text-xs text-red-600 dark:text-red-400">失败</span>
+                    ) : (
+                      <span className="text-xs text-muted-foreground">
+                        {advisory.suggestions.length} 条建议
+                      </span>
+                    )}
                     {expanded ? (
                       <ChevronUp className="h-4 w-4 shrink-0 text-muted-foreground" />
                     ) : (

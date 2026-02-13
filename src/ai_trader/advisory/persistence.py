@@ -15,6 +15,83 @@ class AdvisoryPersistenceService:
     def __init__(self, db: DatabaseManager):
         self.db = db
 
+    async def create_running_advisory(
+        self,
+        trigger_type: TriggerType,
+        trigger_detail: Dict[str, Any],
+        llm_provider: str,
+        llm_model: str,
+    ) -> UUID:
+        """创建一条 running 状态的 advisory 记录（LLM 调用前）"""
+        advisory_id = await self.db.pool.fetchval(
+            """
+            INSERT INTO advisories (
+                trigger_type, trigger_detail, urgency, market_summary,
+                status, llm_provider, llm_model, tokens_used
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            RETURNING id
+            """,
+            trigger_type.value,
+            json.dumps(trigger_detail),
+            "low",
+            "",
+            "running",
+            llm_provider,
+            llm_model,
+            0,
+        )
+        return advisory_id
+
+    async def fail_advisory(self, advisory_id: UUID, error_message: str):
+        """将 advisory 标记为 failed"""
+        await self.db.pool.execute(
+            """
+            UPDATE advisories
+            SET status = 'failed', market_summary = $1, resolved_at = NOW()
+            WHERE id = $2
+            """,
+            error_message,
+            advisory_id,
+        )
+
+    async def complete_advisory(
+        self,
+        advisory_id: UUID,
+        result: AdvisoryResult,
+    ):
+        """LLM 成功后，更新 advisory 并写入 suggestions"""
+        async with self.db.transaction() as conn:
+            await conn.execute(
+                """
+                UPDATE advisories
+                SET urgency = $1, market_summary = $2,
+                    status = $3
+                WHERE id = $4
+                """,
+                result.urgency.value,
+                result.market_summary,
+                "resolved" if not result.suggestions else "pending",
+                advisory_id,
+            )
+            for idx, s in enumerate(result.suggestions):
+                await conn.execute(
+                    """
+                    INSERT INTO advisory_suggestions (
+                        advisory_id, sort_order, type, target, action, detail,
+                        reasoning, risk_note, status
+                    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                    """,
+                    advisory_id,
+                    idx,
+                    s.type.value,
+                    s.target,
+                    s.action,
+                    json.dumps(s.detail),
+                    s.reasoning,
+                    s.risk_note,
+                    "pending",
+                )
+
     async def save_advisory(
         self,
         result: AdvisoryResult,
@@ -173,7 +250,7 @@ class AdvisoryPersistenceService:
         active = await self.db.pool.fetchval(
             """
             SELECT COUNT(*) FROM advisory_suggestions
-            WHERE advisory_id = $1 AND status NOT IN ('rejected', 'executed', 'failed')
+            WHERE advisory_id = $1 AND status NOT IN ('rejected', 'executed', 'failed', 'expired')
             """,
             advisory_id,
         )
