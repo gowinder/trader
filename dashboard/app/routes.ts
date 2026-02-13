@@ -24,6 +24,7 @@ export default [
   route("api/advisory-settings", "routes/api.advisory-settings.ts"),
   route("api/notification-settings", "routes/api.notification-settings.ts"),
   route("api/account-state", "routes/api.account-state.ts"),
+  route("api/change-password", "routes/api.change-password.ts"),
   route("dashboard", "routes/dashboard.tsx", [
     index("routes/dashboard._index.tsx"),
     route("chart", "routes/dashboard.chart.tsx"),
