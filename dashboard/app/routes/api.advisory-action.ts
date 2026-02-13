@@ -77,7 +77,7 @@ export async function action({ request }: ActionFunctionArgs) {
       const [{ activeCount }] = await sql`
         SELECT COUNT(*)::int as "activeCount"
         FROM advisory_suggestions
-        WHERE advisory_id = ${advisoryId} AND status NOT IN ('rejected', 'executed', 'failed')
+        WHERE advisory_id = ${advisoryId} AND status NOT IN ('rejected', 'executed', 'failed', 'expired')
       `;
       if (activeCount === 0) {
         await sql`
@@ -185,7 +185,7 @@ export async function action({ request }: ActionFunctionArgs) {
     const [{ activeCount }] = await sql`
       SELECT COUNT(*)::int as "activeCount"
       FROM advisory_suggestions
-      WHERE advisory_id = ${resolveAdvisoryId} AND status NOT IN ('rejected', 'executed', 'failed')
+      WHERE advisory_id = ${resolveAdvisoryId} AND status NOT IN ('rejected', 'executed', 'failed', 'expired')
     `;
     if (activeCount === 0) {
       await sql`

@@ -9,6 +9,27 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const sql = postgres(process.env.DATABASE_URL!);
 
   try {
+    // 自动过期：超过 24 小时未处理的 pending/accepted 建议标记为 expired
+    await sql`
+      UPDATE advisory_suggestions
+      SET status = 'expired', updated_at = NOW()
+      WHERE status IN ('pending', 'accepted')
+        AND (updated_at < NOW() - INTERVAL '24 hours'
+             OR (updated_at IS NULL AND EXISTS (
+               SELECT 1 FROM advisories WHERE id = advisory_id AND created_at < NOW() - INTERVAL '24 hours'
+             )))
+    `;
+    // 将所有建议都已终态的 advisory 标记为 resolved
+    await sql`
+      UPDATE advisories SET status = 'resolved', resolved_at = NOW()
+      WHERE status = 'pending'
+        AND NOT EXISTS (
+          SELECT 1 FROM advisory_suggestions
+          WHERE advisory_id = advisories.id
+            AND status NOT IN ('rejected', 'executed', 'failed', 'expired')
+        )
+    `;
+
     const advisories = status === "all"
       ? await sql`
           SELECT a.*,
