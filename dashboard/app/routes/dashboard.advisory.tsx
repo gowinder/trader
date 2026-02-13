@@ -74,6 +74,7 @@ const statusMap: Record<string, { label: string; color: string }> = {
   confirmed: { label: "已确认", color: "text-purple-600 dark:text-purple-400" },
   executed: { label: "已执行", color: "text-green-600 dark:text-green-400" },
   failed: { label: "执行失败", color: "text-red-600 dark:text-red-400" },
+  expired: { label: "已过期", color: "text-muted-foreground" },
 };
 
 export default function AdvisoryPage() {
