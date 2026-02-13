@@ -151,6 +151,34 @@ class Scheduler:
             logger.warning("Advisory requires persistence, but persistence not initialized")
             return
         try:
+            persistence = AdvisoryPersistenceService(self.db_manager) if self.db_manager else None
+
+            # 先初始化 Telegram Bot（不依赖 Advisory LLM 配置）
+            self._telegram_bot = TelegramBot(
+                bot_token=config.telegram_bot_token,
+                chat_id=config.telegram_chat_id,
+                redis=self._redis,
+                db=self.db_manager,
+                persistence=self.persistence_service,
+                strategy_service=self._strategy_preset_service,
+                advisory_persistence=persistence,
+            )
+            notifier = self._telegram_bot.notifier
+
+            # 初始化通知管理器
+            self._notification_manager = NotificationManager(
+                notifier=notifier, redis_client=self._redis,
+            )
+            await self._notification_manager.load_config()
+
+            # 启动 Telegram Bot（polling + 命令处理）
+            if self._telegram_bot.enabled:
+                await self._telegram_bot.start()
+
+            # 启动 Telegram actions 监听
+            if self._redis:
+                self._advisory_tasks.append(asyncio.create_task(self._telegram_actions_listener()))
+
             # 从 Redis 读取 Advisory LLM 配置（配置由 Dashboard 管理）
             llm_cfg = None
             if self._redis:
@@ -167,7 +195,7 @@ class Scheduler:
             if not llm_cfg or not llm_cfg.get("provider") or not llm_cfg.get("model"):
                 logger.warning(
                     "Advisory LLM 未配置，请在 Dashboard Advisory Settings 中配置 LLM 路由。"
-                    " Advisory 系统将跳过初始化。"
+                    " Advisory 分析功能不可用，但 Telegram Bot 命令已启动。"
                 )
                 return
 
@@ -194,7 +222,6 @@ class Scheduler:
                 base_url=base_url,
                 timeout=llm_cfg.get("timeout", 120.0),
             )
-            persistence = AdvisoryPersistenceService(self.db_manager) if self.db_manager else None
             context_builder = AdvisoryContextBuilder(db=self.db_manager)
             engine = AdvisoryEngine(llm_client, persistence, context_builder)
 
@@ -210,24 +237,6 @@ class Scheduler:
 
             trigger_mgr = TriggerManager(trigger_config)
 
-            # 初始化 Telegram Bot（统一管理 polling + 推送 + 命令）
-            self._telegram_bot = TelegramBot(
-                bot_token=config.telegram_bot_token,
-                chat_id=config.telegram_chat_id,
-                redis=self._redis,
-                db=self.db_manager,
-                persistence=self.persistence_service,
-                strategy_service=self._strategy_preset_service,
-                advisory_persistence=persistence,
-            )
-            notifier = self._telegram_bot.notifier
-
-            # 初始化通知管理器
-            self._notification_manager = NotificationManager(
-                notifier=notifier, redis_client=self._redis,
-            )
-            await self._notification_manager.load_config()
-
             self._advisory_service = AdvisoryService(
                 engine=engine, trigger_manager=trigger_mgr,
                 notifier=notifier, persistence=persistence,
@@ -235,10 +244,6 @@ class Scheduler:
             # 在 advisory_service 就绪后启动执行队列监听
             if self._redis:
                 self._advisory_tasks.append(asyncio.create_task(self._advisory_execute_listener()))
-                self._advisory_tasks.append(asyncio.create_task(self._telegram_actions_listener()))
-            # 启动 Telegram Bot（polling + 命令处理，替代原 callback handler）
-            if self._telegram_bot.enabled:
-                await self._telegram_bot.start()
             # 启动手动触发监听
             if self._redis:
                 self._advisory_tasks.append(asyncio.create_task(self._advisory_manual_trigger_listener()))
