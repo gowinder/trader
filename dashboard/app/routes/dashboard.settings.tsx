@@ -76,6 +76,17 @@ export default function SettingsPage() {
   const [savingMain, setSavingMain] = useState(false);
   const [savingAdvisory, setSavingAdvisory] = useState(false);
 
+  const showToast = useCallback((type: "success" | "error", message: string) => {
+    setToast({ type, message });
+  }, []);
+
+  useEffect(() => {
+    if (toast) {
+      const t = setTimeout(() => setToast(null), 3000);
+      return () => clearTimeout(t);
+    }
+  }, [toast]);
+
   // password change
   const [oldPassword, setOldPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -117,17 +128,6 @@ export default function SettingsPage() {
       setChangingPassword(false);
     }
   };
-
-  const showToast = useCallback((type: "success" | "error", message: string) => {
-    setToast({ type, message });
-  }, []);
-
-  useEffect(() => {
-    if (toast) {
-      const t = setTimeout(() => setToast(null), 3000);
-      return () => clearTimeout(t);
-    }
-  }, [toast]);
 
   // ── Fetch data ────────────────────────────────────────────────────────
 
