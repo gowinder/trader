@@ -1,5 +1,9 @@
-import type { ActionFunctionArgs } from "react-router";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { requireAuth, changePassword } from "~/services/auth.server";
+
+export async function loader(_args: LoaderFunctionArgs) {
+  return Response.json({ error: "Method not allowed" }, { status: 405 });
+}
 
 export async function action({ request }: ActionFunctionArgs) {
   await requireAuth(request);
