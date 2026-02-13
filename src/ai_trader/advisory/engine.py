@@ -34,6 +34,22 @@ class AdvisoryEngine:
         current_config: Dict[str, Any],
         account_summary: Optional[Dict] = None,
     ) -> Optional[UUID]:
+        advisory_id = None
+        llm_provider = getattr(self.llm, "provider_name", "unknown")
+        llm_model = getattr(self.llm, "model_name", "unknown")
+
+        # 先创建 running 状态记录
+        if self.persistence:
+            try:
+                advisory_id = await self.persistence.create_running_advisory(
+                    trigger_type=trigger_type,
+                    trigger_detail=trigger_detail,
+                    llm_provider=llm_provider,
+                    llm_model=llm_model,
+                )
+            except Exception as e:
+                logger.error(f"Failed to create running advisory: {e}")
+
         try:
             trigger_reason = f"{trigger_type.value}: {trigger_detail}" if trigger_detail else trigger_type.value
             context = await self.context_builder.build(
@@ -58,14 +74,16 @@ class AdvisoryEngine:
             result = self._parse_result(raw_result)
             self._last_result = result
 
-            advisory_id = None
-            if self.persistence:
+            if self.persistence and advisory_id:
+                await self.persistence.complete_advisory(advisory_id, result)
+            elif self.persistence:
+                # 降级：running 记录创建失败时走旧逻辑
                 advisory_id = await self.persistence.save_advisory(
                     result=result,
                     trigger_type=trigger_type,
                     trigger_detail=trigger_detail,
-                    llm_provider=getattr(self.llm, "provider_name", "unknown"),
-                    llm_model=getattr(self.llm, "model_name", "unknown"),
+                    llm_provider=llm_provider,
+                    llm_model=llm_model,
                     tokens_used=0,
                 )
 
@@ -78,6 +96,12 @@ class AdvisoryEngine:
             logger.error(f"Failed to generate advisory: {type(e).__name__}: {e}")
             import traceback
             logger.debug(traceback.format_exc())
+            # 标记为失败
+            if self.persistence and advisory_id:
+                try:
+                    await self.persistence.fail_advisory(advisory_id, f"{type(e).__name__}: {e}")
+                except Exception:
+                    pass
             return None
 
     @property
