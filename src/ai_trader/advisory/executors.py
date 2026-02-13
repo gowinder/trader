@@ -22,7 +22,7 @@ class ConfigExecutor:
     async def execute(self, action: str, target: str, detail: Dict[str, Any]) -> ExecutionResult:
         try:
             # 先尝试精确匹配 action
-            if action in ("reduce_leverage", "increase_leverage"):
+            if action in ("reduce_leverage", "increase_leverage", "adjust_leverage"):
                 return await self._adjust_leverage(detail)
             elif action == "adjust_stop_loss":
                 return await self._adjust_param("stop_loss_percent", detail.get("stop_loss_percent"))
@@ -136,6 +136,17 @@ class ConfigExecutor:
 
     async def _adjust_leverage(self, detail: Dict) -> ExecutionResult:
         new_max = detail.get("leverage_max")
+        # 从 targets 列表中提取
+        if new_max is None:
+            targets = detail.get("targets", [])
+            if isinstance(targets, list):
+                for t in targets:
+                    if isinstance(t, dict) and "leverage" in t.get("parameter", ""):
+                        new_max = t.get("proposed") or t.get("to") or t.get("value")
+                        break
+        # 从 proposed / to 提取
+        if new_max is None:
+            new_max = detail.get("proposed") or detail.get("to")
         if new_max is None:
             return ExecutionResult(success=False, message="缺少 leverage_max 参数")
         if not isinstance(new_max, (int, float)) or new_max < 1 or new_max > 20:
@@ -208,7 +219,7 @@ class TradeExecutor:
                 if "size_change_percent" in detail and "reduce_percent" not in detail:
                     detail["reduce_percent"] = detail["size_change_percent"]
                 return await self._reduce_position(target, detail)
-            elif action in ("hold", "hold_with_protection", "no_change"):
+            elif action in ("hold", "hold_with_protection", "no_change", "tighten_risk", "monitor"):
                 return ExecutionResult(success=True, message=f"保持 {target} 当前仓位不变")
             else:
                 return ExecutionResult(success=False, message=f"未知的仓位操作: {action}")
