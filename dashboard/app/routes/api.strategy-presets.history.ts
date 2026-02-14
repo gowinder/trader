@@ -46,7 +46,5 @@ export async function loader({ request }: { request: Request }) {
     const message = error instanceof Error ? error.message : "Unknown error";
     console.error("Failed to load strategy history:", message);
     return Response.json([]);
-  } finally {
-    await sql.end();
   }
 }
