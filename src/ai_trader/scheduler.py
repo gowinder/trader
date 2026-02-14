@@ -344,12 +344,24 @@ class Scheduler:
             data = await self._redis.get("llm:providers:config")
             if data:
                 cfg = json.loads(data)
-                providers = cfg.get("providers", [])
-                if providers:
+                # Dashboard 写入的格式:
+                # { "providers": {name: {api_key, base_url, ...}},  -- pool map
+                #   "routing": [{provider, model, priority}, ...],  -- 路由列表
+                #   "strategy": "priority" }
+                routing = cfg.get("routing", [])
+                providers_pool = cfg.get("providers", {})
+                strategy = cfg.get("strategy")
+
+                # 兼容旧格式: providers 是列表而非 dict 时当作 routing
+                if isinstance(providers_pool, list):
+                    routing = providers_pool
+                    providers_pool = {}
+
+                if routing:
                     from .ai.llm_manager import get_llm_manager
                     manager = get_llm_manager()
-                    manager.update_providers(providers)
-                    logger.info(f"Loaded LLM providers config: {[p.get('name') for p in providers]}")
+                    manager.update_providers(routing, providers_pool=providers_pool, strategy=strategy)
+                    logger.info(f"Loaded LLM providers config: {[p.get('provider') or p.get('name') for p in routing]}")
         except Exception as e:
             logger.error(f"Failed to load LLM providers config: {e}")
 
@@ -375,7 +387,16 @@ class Scheduler:
                             if providers:
                                 from .ai.llm_manager import get_llm_manager
                                 manager = get_llm_manager()
-                                manager.update_providers(providers)
+                                # 旧格式事件只有 [{name, model}]，从 Redis 补全 pool 信息
+                                providers_pool = {}
+                                if self._redis:
+                                    try:
+                                        pool_data = await self._redis.get("llm:providers:pool")
+                                        if pool_data:
+                                            providers_pool = json.loads(pool_data)
+                                    except Exception:
+                                        pass
+                                manager.update_providers(providers, providers_pool=providers_pool)
                                 logger.info(f"LLM providers updated: {[p.get('name') for p in providers]}")
                         elif channel == "advisory:config:updated":
                             cfg = json.loads(message["data"])
@@ -1145,15 +1166,33 @@ class Scheduler:
                         if result.success and pre_position and self.persistence_service:
                             try:
                                 persist_action = action
-                                if action == "close_position":
+                                # 判断是平仓还是减仓类操作
+                                close_actions = {"close_position", "close"}
+                                reduce_actions = {"reduce_position", "reduce", "take_profit_partial_and_move_stop", "partial_take_profit"}
+                                # tighten_stop_or_exit_if_breaks_level: 高紧急度平仓，否则减仓
+                                if action in ("tighten_stop_or_exit_if_breaks_level", "tighten_stop", "exit_if_breaks"):
+                                    if detail.get("urgency") == "high":
+                                        close_actions.add(action)
+                                    else:
+                                        reduce_actions.add(action)
+                                if action in close_actions:
                                     persist_action = f"close_{pre_position.side}"
-                                elif action == "reduce_position":
+                                elif action in reduce_actions:
                                     persist_action = f"reduce_{pre_position.side}"
                                 ticker = await self.exchange.get_ticker(target) if hasattr(self, "exchange") and self.exchange else None
                                 current_price = ticker.last_price if ticker else (pre_position.entry_price or 0)
                                 persist_size = pre_position.size
-                                if action == "reduce_position":
+                                if persist_action.startswith("reduce_"):
                                     raw_pct = detail.get("reduce_percent", 50) if isinstance(detail, dict) else 50
+                                    # take_profit_partial_and_move_stop 从 targets.take_profit 提取
+                                    if action in ("take_profit_partial_and_move_stop", "partial_take_profit") and isinstance(detail, dict):
+                                        targets = detail.get("targets", {})
+                                        tp_list = targets.get("take_profit", []) if isinstance(targets, dict) else []
+                                        if isinstance(tp_list, list):
+                                            for tp in tp_list:
+                                                if isinstance(tp, dict) and (tp.get("size_percent") or tp.get("reduce_percent")):
+                                                    raw_pct = tp.get("size_percent") or tp.get("reduce_percent")
+                                                    break
                                     persist_size = pre_position.size * (raw_pct / 100)
                                 await self._persist_position_change(
                                     action=persist_action,

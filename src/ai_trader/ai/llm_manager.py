@@ -170,11 +170,14 @@ class LLMManager:
         if provider_config.cooldown_until > time.time():
             return False
 
-        # CLI Provider - 检查命令是否存在
+        pool = getattr(self, '_providers_pool', {})
+        pool_info = pool.get(provider_config.name, {})
+
+        # CLI Provider - 有 pool api_key 时走 HTTP，否则检查 CLI 命令
         if provider_config.name == "qwen":
-            return shutil.which("qwen") is not None
+            return bool(pool_info.get("api_key")) or shutil.which("qwen") is not None
         elif provider_config.name == "gemini":
-            return shutil.which("gemini") is not None
+            return bool(pool_info.get("api_key")) or shutil.which("gemini") is not None
 
         # Codex OAuth - 检查 token 可用性
         if provider_config.name == "codex":
@@ -182,7 +185,11 @@ class LLMManager:
 
         # OpenRouter 只要有 API key 就可用
         if provider_config.name == "openrouter":
-            return bool(config.openrouter_api_key or config.llm_api_key)
+            return bool(pool_info.get("api_key") or config.openrouter_api_key or config.llm_api_key)
+
+        # 自定义 provider (如 quotio) - 有 pool api_key 就可用
+        if pool_info.get("api_key"):
+            return True
 
         return True
 
