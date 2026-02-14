@@ -254,7 +254,5 @@ export async function loader() {
     const message = error instanceof Error ? error.message : "Unknown error";
     console.error("Failed to load strategy presets:", message);
     return Response.json({ presets: [], activePresetId: null, activatedAt: null });
-  } finally {
-    await sql.end();
   }
 }
