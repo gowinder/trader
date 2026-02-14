@@ -148,7 +148,15 @@ class LLMManager:
             if not api_key:
                 raise ValueError(f"Provider '{name}' requires api_key (configure in Dashboard settings)")
             from .providers.base import HTTPBasedProvider
-            return HTTPBasedProvider(
+
+            provider_name = name
+
+            class CustomHTTPProvider(HTTPBasedProvider):
+                @property
+                def provider_name(self) -> str:
+                    return provider_name
+
+            return CustomHTTPProvider(
                 api_key=api_key,
                 model=model or "default",
                 base_url=base_url,
