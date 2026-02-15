@@ -71,6 +71,8 @@ async def advisory_detail_callback(update, context):
     suggestions = [s for s in suggestions if s and s.get("id")]
 
     buttons = []
+    pending_count = 0
+    advisory_id = str(target["id"])
     for i, s in enumerate(suggestions):
         status_emoji = {"pending": "⏳", "accepted": "✅", "rejected": "❌", "executed": "🎯"}.get(s.get("status", ""), "❓")
         lines.append(f"建议 {i+1}: {status_emoji} {s.get('action', 'N/A')}")
@@ -80,11 +82,16 @@ async def advisory_detail_callback(update, context):
         lines.append("")
 
         if s.get("status") == "pending":
-            advisory_id = str(target["id"])
+            pending_count += 1
             buttons.append([
                 InlineKeyboardButton(f"✅ 采纳 #{i+1}", callback_data=f"adv:accept:{advisory_id}:{i}"),
                 InlineKeyboardButton(f"❌ 拒绝 #{i+1}", callback_data=f"adv:reject:{advisory_id}:{i}"),
             ])
+
+    if pending_count > 1:
+        buttons.insert(0, [
+            InlineKeyboardButton("✅ 全部采纳执行", callback_data=f"adv:acceptall:{advisory_id}:0"),
+        ])
 
     buttons.append([InlineKeyboardButton("◀️ 返回 Advisory 列表", callback_data="menu:advisory")])
     buttons.append([InlineKeyboardButton("◀️ 返回主菜单", callback_data="menu:main")])
@@ -94,7 +101,7 @@ async def advisory_detail_callback(update, context):
 
 @authorized
 async def advisory_action_callback(update, context):
-    """处理 Advisory 建议操作（采纳/拒绝/确认/取消）"""
+    """处理 Advisory 建议操作（采纳/拒绝/确认/取消/全部采纳/全部确认）"""
     query = update.callback_query
     await query.answer()
 
@@ -103,7 +110,7 @@ async def advisory_action_callback(update, context):
     if len(parts) != 4:
         return
 
-    action_type = parts[1]  # accept/reject/confirm/cancel
+    action_type = parts[1]  # accept/reject/confirm/cancel/acceptall/confirmall
     advisory_id = parts[2]
     try:
         idx = int(parts[3])
@@ -114,14 +121,72 @@ async def advisory_action_callback(update, context):
     if not redis:
         return
 
-    # 将操作推入 Redis 队列，由 advisory 执行监听器处理
+    original_markup = query.message.reply_markup
+
+    if action_type == "acceptall":
+        # 全部采纳：获取 pending 建议数量，逐个推入 accept
+        count = _count_pending_suggestions(original_markup, advisory_id)
+        for i in range(count):
+            await redis.lpush(
+                "advisory:telegram_actions",
+                json.dumps({"advisory_id": advisory_id, "index": i, "action": "accept"}),
+            )
+        # 替换"全部采纳执行"按钮为"⚠️ 确认全部执行?"
+        new_markup = _replace_acceptall_with_confirmall(original_markup, advisory_id)
+        await query.edit_message_reply_markup(reply_markup=new_markup)
+        return
+
+    if action_type == "confirmall":
+        # 全部确认执行：逐个推入 confirm
+        count = _count_pending_suggestions(original_markup, advisory_id)
+        for i in range(count):
+            await redis.lpush(
+                "advisory:telegram_actions",
+                json.dumps({"advisory_id": advisory_id, "index": i, "action": "confirm"}),
+            )
+        # 移除所有操作按钮，显示执行中
+        nav_rows = [row for row in (original_markup.inline_keyboard if original_markup else [])
+                     if any(btn.callback_data and btn.callback_data.startswith("menu:") for btn in row)]
+        new_markup = InlineKeyboardMarkup(nav_rows) if nav_rows else None
+        text = query.message.text + "\n\n⏳ 全部建议执行中..."
+        await query.edit_message_text(text=text, reply_markup=new_markup)
+        return
+
+    if action_type == "cancelall":
+        # 取消全部：逐个推入 cancel，恢复按钮
+        count = _count_pending_suggestions(original_markup, advisory_id)
+        for i in range(count):
+            await redis.lpush(
+                "advisory:telegram_actions",
+                json.dumps({"advisory_id": advisory_id, "index": i, "action": "cancel"}),
+            )
+        # 将 confirmall 按钮替换回 acceptall
+        new_rows = []
+        if original_markup and original_markup.inline_keyboard:
+            for row in original_markup.inline_keyboard:
+                is_confirmall = any(
+                    btn.callback_data and btn.callback_data.startswith(f"adv:confirmall:{advisory_id}:")
+                    for btn in row
+                )
+                is_cancelall = any(
+                    btn.callback_data and btn.callback_data.startswith(f"adv:cancelall:{advisory_id}:")
+                    for btn in row
+                )
+                if is_confirmall or is_cancelall:
+                    new_rows.append([
+                        InlineKeyboardButton("✅ 全部采纳执行", callback_data=f"adv:acceptall:{advisory_id}:0"),
+                    ])
+                else:
+                    new_rows.append(row)
+        new_markup = InlineKeyboardMarkup(new_rows) if new_rows else None
+        await query.edit_message_reply_markup(reply_markup=new_markup)
+        return
+
+    # 单条操作：推入 Redis 队列
     await redis.lpush(
         "advisory:telegram_actions",
         json.dumps({"advisory_id": advisory_id, "index": idx, "action": action_type}),
     )
-
-    # 更新消息中的按钮
-    original_markup = query.message.reply_markup
 
     if action_type == "accept":
         new_markup = _rebuild_keyboard(original_markup, advisory_id, idx, [
@@ -177,6 +242,36 @@ def _rebuild_keyboard(original_markup, advisory_id, idx, replacement_row):
             if row_matches:
                 if replacement_row is not None:
                     new_rows.append(replacement_row)
+            else:
+                new_rows.append(row)
+    return InlineKeyboardMarkup(new_rows) if new_rows else None
+
+
+def _count_pending_suggestions(markup, advisory_id: str) -> int:
+    """统计键盘中属于该 advisory 的 pending 建议数量（通过 accept 按钮计数）"""
+    count = 0
+    if markup and markup.inline_keyboard:
+        for row in markup.inline_keyboard:
+            for btn in row:
+                if btn.callback_data and btn.callback_data.startswith(f"adv:accept:{advisory_id}:"):
+                    count += 1
+    return count
+
+
+def _replace_acceptall_with_confirmall(markup, advisory_id: str):
+    """将"全部采纳执行"按钮替换为"确认全部执行?"确认按钮"""
+    new_rows = []
+    if markup and markup.inline_keyboard:
+        for row in markup.inline_keyboard:
+            is_acceptall = any(
+                btn.callback_data and btn.callback_data.startswith(f"adv:acceptall:{advisory_id}:")
+                for btn in row
+            )
+            if is_acceptall:
+                new_rows.append([
+                    InlineKeyboardButton("⚠️ 确认全部执行?", callback_data=f"adv:confirmall:{advisory_id}:0"),
+                    InlineKeyboardButton("↩️ 取消", callback_data=f"adv:cancelall:{advisory_id}:0"),
+                ])
             else:
                 new_rows.append(row)
     return InlineKeyboardMarkup(new_rows) if new_rows else None

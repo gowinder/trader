@@ -47,6 +47,10 @@ def build_suggestion_keyboard(advisory_id: str, suggestions: List[Suggestion]):
     if not HAS_TELEGRAM or not suggestions:
         return None
     buttons = []
+    if len(suggestions) > 1:
+        buttons.append([
+            InlineKeyboardButton("\u2705 \u5168\u90e8\u91c7\u7eb3\u6267\u884c", callback_data=f"adv:acceptall:{advisory_id}:0"),
+        ])
     for i, s in enumerate(suggestions):
         buttons.append([
             InlineKeyboardButton(f"\u2705 \u91c7\u7eb3 #{i+1}", callback_data=f"adv:accept:{advisory_id}:{i}"),
