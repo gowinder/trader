@@ -47,7 +47,7 @@ def register_commands(app):
     app.add_handler(CallbackQueryHandler(strategy_confirm_callback, pattern=r"^str:confirm:"))
     app.add_handler(CallbackQueryHandler(advisory_detail_callback, pattern=r"^adv:detail:"))
     app.add_handler(CallbackQueryHandler(advisory_trigger_callback, pattern=r"^adv:trigger$"))
-    app.add_handler(CallbackQueryHandler(advisory_action_callback, pattern=r"^adv:(accept|reject|confirm|cancel):"))
+    app.add_handler(CallbackQueryHandler(advisory_action_callback, pattern=r"^adv:(accept|reject|confirm|cancel|acceptall|confirmall|cancelall):"))
     app.add_handler(CallbackQueryHandler(trading_toggle_callback, pattern=r"^trd:toggle:"))
     app.add_handler(CallbackQueryHandler(trading_confirm_callback, pattern=r"^trd:confirm:"))
 
