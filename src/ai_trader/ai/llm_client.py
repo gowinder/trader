@@ -1,10 +1,12 @@
 """OpenRouter LLM 客户端 - 支持结构化输出"""
 
 import json
+import time
 import httpx
 from typing import Optional, Dict, List, Any
 from ..config import config
 from ..utils.logger import logger
+from .usage_tracker import get_usage_tracker
 
 
 class LLMClient:
@@ -16,9 +18,8 @@ class LLMClient:
         self.api_key = config.openrouter_api_key
         self.model = config.ai_model
         self.fallback = config.ai_fallback_model
-        # Use HTTP proxy instead of SOCKS proxy if available
         import os
-        http_proxy = os.getenv('HTTP_PROXY') or os.getenv('http_proxy')
+        http_proxy = os.getenv("HTTP_PROXY") or os.getenv("http_proxy")
         self._client = httpx.AsyncClient(timeout=60.0, proxy=http_proxy)
 
     async def chat(
@@ -29,10 +30,12 @@ class LLMClient:
         temperature: float = 0.3,
     ) -> Dict[str, Any]:
         """发送请求，支持 JSON Schema 结构化输出"""
+        start_time = time.time()
+        used_model = self.model
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
-            "HTTP-Referer": "https://github.com/gowinder/trader",  # Optional for OpenRouter
+            "HTTP-Referer": "https://github.com/gowinder/trader",
         }
 
         payload = {
@@ -43,8 +46,6 @@ class LLMClient:
         }
 
         if schema:
-            # OpenRouter supports 'response_format' for some models, or we prompt for JSON.
-            # Plan uses 'json_schema' type which is OpenAI format.
             payload["response_format"] = {
                 "type": "json_schema",
                 "json_schema": {"name": "response", "strict": True, "schema": schema},
@@ -55,6 +56,10 @@ class LLMClient:
             r.raise_for_status()
             data = r.json()
             content = data["choices"][0]["message"]["content"]
+
+            usage = data.get("usage", {})
+            latency_ms = int((time.time() - start_time) * 1000)
+            await self._track_usage(used_model, usage, latency_ms, True)
 
             if schema:
                 try:
@@ -67,7 +72,7 @@ class LLMClient:
         except Exception as e:
             logger.warning(f"主模型 {self.model} 失败，尝试备用 {self.fallback}: {e}")
 
-            # Switch to fallback model
+            used_model = self.fallback
             payload["model"] = self.fallback
             try:
                 r = await self._client.post(self.URL, headers=headers, json=payload)
@@ -75,14 +80,36 @@ class LLMClient:
                 data = r.json()
                 content = data["choices"][0]["message"]["content"]
 
+                usage = data.get("usage", {})
+                latency_ms = int((time.time() - start_time) * 1000)
+                await self._track_usage(used_model, usage, latency_ms, True)
+
                 if schema:
                     return json.loads(content)
                 return {"content": content}
             except Exception as e2:
+                latency_ms = int((time.time() - start_time) * 1000)
+                await self._track_usage(used_model, {}, latency_ms, False, str(e2))
                 logger.error(f"备用模型也失败: {e2}")
                 raise RuntimeError(
                     f"All LLM models failed: Primary({e}), Fallback({e2})"
                 )
+
+    async def _track_usage(self, model, usage, latency_ms, success, error_message=""):
+        """记录 LLM 调用到 UsageTracker"""
+        try:
+            tracker = get_usage_tracker()
+            await tracker.record(
+                provider="openrouter",
+                model=model,
+                input_tokens=usage.get("prompt_tokens", 0),
+                output_tokens=usage.get("completion_tokens", 0),
+                latency_ms=latency_ms,
+                success=success,
+                error_message=error_message,
+            )
+        except Exception as e:
+            logger.debug(f"Usage tracking failed: {e}")
 
     async def close(self):
         await self._client.aclose()

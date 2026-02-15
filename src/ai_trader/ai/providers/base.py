@@ -117,6 +117,15 @@ class HTTPBasedProvider(BaseLLMProvider):
             raise RuntimeError("Failed to parse JSON from LLM response")
         return {"content": content}
 
+    def _extract_usage(self, data: Dict[str, Any]) -> Dict[str, int]:
+        """从 API 响应中提取 usage 信息"""
+        usage = data.get("usage", {})
+        return {
+            "prompt_tokens": usage.get("prompt_tokens", 0),
+            "completion_tokens": usage.get("completion_tokens", 0),
+            "total_tokens": usage.get("total_tokens", 0),
+        }
+
     async def chat(
         self,
         messages: List[Dict[str, str]],
@@ -149,7 +158,11 @@ class HTTPBasedProvider(BaseLLMProvider):
 
             r.raise_for_status()
             data = r.json()
-            return self._parse_response(data, schema)
+            usage = self._extract_usage(data)
+            result = self._parse_response(data, schema)
+            if isinstance(result, dict) and "usage" not in result:
+                result["usage"] = usage
+            return result
 
         except Exception as e:
             if self._fallback_model:
@@ -183,7 +196,11 @@ class HTTPBasedProvider(BaseLLMProvider):
             r = await self._client.post(url, headers=headers, json=payload)
             r.raise_for_status()
             data = r.json()
-            return self._parse_response(data, schema)
+            usage = self._extract_usage(data)
+            result = self._parse_response(data, schema)
+            if isinstance(result, dict) and "usage" not in result:
+                result["usage"] = usage
+            return result
         except Exception as fallback_error:
             import logging
 

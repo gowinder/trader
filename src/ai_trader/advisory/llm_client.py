@@ -1,7 +1,9 @@
 """Advisory 专用 LLM 客户端 - 配置完全由 Dashboard/Redis 管理"""
 
+import time
 from typing import Optional, Dict, List, Any
 from ..ai.providers.base import HTTPBasedProvider, BaseLLMProvider
+from ..ai.usage_tracker import get_usage_tracker
 from ..utils.logger import logger
 
 
@@ -63,10 +65,36 @@ class AdvisoryLLMClient:
         max_tokens: int = 4000,
         temperature: float = 0.3,
     ) -> Dict[str, Any]:
-        return await self._provider.chat(
-            messages=messages, schema=schema,
-            max_tokens=max_tokens, temperature=temperature,
-        )
+        start_time = time.time()
+        tracker = get_usage_tracker()
+        try:
+            result = await self._provider.chat(
+                messages=messages, schema=schema,
+                max_tokens=max_tokens, temperature=temperature,
+            )
+            latency_ms = int((time.time() - start_time) * 1000)
+            usage = result.get("usage", {}) if isinstance(result, dict) else {}
+            await tracker.record(
+                provider=self._provider_name,
+                model=self._model,
+                input_tokens=usage.get("prompt_tokens", 0),
+                output_tokens=usage.get("completion_tokens", 0),
+                latency_ms=latency_ms,
+                success=True,
+            )
+            return result
+        except Exception as e:
+            latency_ms = int((time.time() - start_time) * 1000)
+            await tracker.record(
+                provider=self._provider_name,
+                model=self._model,
+                input_tokens=0,
+                output_tokens=0,
+                latency_ms=latency_ms,
+                success=False,
+                error_message=str(e),
+            )
+            raise
 
     async def close(self):
         await self._provider.close()
