@@ -1158,11 +1158,29 @@ class Scheduler:
                 else:
                     # 使用 symbol 锁防止与主交易循环并发操作同一 symbol
                     async with self._get_symbol_lock(target):
-                        executor = TradeExecutor(self.order_mgr, self.position_mgr)
+                        executor = TradeExecutor(self.order_mgr, self.position_mgr, exchange=self.exchange)
                         # 执行前获取仓位信息用于持久化
                         pre_position = await self.position_mgr.get_position(target)
                         result = await executor.execute(action, target, detail)
-                        # 执行成功后同步持仓持久化（在锁内避免与主循环竞态）
+                        # 开仓操作的持久化
+                        if result.success and not pre_position and self.persistence_service and result.detail and result.detail.get("side"):
+                            try:
+                                open_side = result.detail["side"]
+                                open_price = result.detail.get("price", 0)
+                                open_size = result.detail.get("quantity", 0)
+                                open_leverage = result.detail.get("leverage", 1)
+                                await self._persist_position_change(
+                                    action=f"open_{open_side}",
+                                    symbol=target,
+                                    price=open_price,
+                                    size=open_size,
+                                    leverage=open_leverage,
+                                    position=None,
+                                    market_state="advisory",
+                                )
+                            except Exception as persist_err:
+                                logger.error(f"Advisory open position persist failed: {persist_err}")
+                        # 平仓/减仓操作的持久化
                         if result.success and pre_position and self.persistence_service:
                             try:
                                 persist_action = action

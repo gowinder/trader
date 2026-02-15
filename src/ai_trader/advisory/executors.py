@@ -40,7 +40,7 @@ class ConfigExecutor:
     @staticmethod
     def _extract_value(detail: Dict) -> Any:
         """从 detail 中按优先级提取数值"""
-        for k in ("to", "proposed", "suggested", "value", "new_value", "target_value"):
+        for k in ("to", "proposed", "suggested", "value", "new_value", "target_value", "suggested_value"):
             v = detail.get(k)
             if v is not None and isinstance(v, (int, float)):
                 return v
@@ -311,9 +311,10 @@ class ConfigExecutor:
 # ──────────────────────────── TradeExecutor ────────────────────────────
 
 class TradeExecutor:
-    def __init__(self, order_manager, position_manager):
+    def __init__(self, order_manager, position_manager, exchange=None):
         self._order_mgr = order_manager
         self._position_mgr = position_manager
+        self._exchange = exchange
 
     async def execute(self, action: str, target: str, detail: Dict[str, Any]) -> ExecutionResult:
         try:
@@ -321,7 +322,10 @@ class TradeExecutor:
             self._normalize_reduce_percent(detail)
 
             # 1. 精确匹配 action
-            if action in ("close_position", "close"):
+            if action in ("open_long", "open_short"):
+                side = "long" if action == "open_long" else "short"
+                return await self._open_position(target, side, detail)
+            elif action in ("close_position", "close"):
                 return await self._close_position(target)
             elif action in ("reduce_position", "reduce"):
                 return await self._reduce_position(target, detail)
@@ -335,6 +339,15 @@ class TradeExecutor:
 
             # 2. 智能兜底：根据 action 关键词推断意图
             action_lower = action.lower()
+
+            # 开仓类关键词
+            _OPEN_LONG_KW = ("open_long", "buy", "go_long", "long_entry")
+            _OPEN_SHORT_KW = ("open_short", "sell", "go_short", "short_entry")
+
+            if any(kw in action_lower for kw in _OPEN_LONG_KW):
+                return await self._open_position(target, "long", detail)
+            if any(kw in action_lower for kw in _OPEN_SHORT_KW):
+                return await self._open_position(target, "short", detail)
 
             # 平仓类关键词
             _CLOSE_KW = ("close", "exit", "liquidate", "flatten", "unwind", "cut")
@@ -404,6 +417,60 @@ class TradeExecutor:
             if total_pct > 0:
                 detail.setdefault("reduce_percent", total_pct)
                 return
+
+    async def _open_position(self, symbol: str, side: str, detail: Dict) -> ExecutionResult:
+        """开仓：根据 detail 中的参数计算仓位大小并下单"""
+        if not self._exchange:
+            return ExecutionResult(success=False, message="Exchange 未初始化，无法开仓")
+
+        # 检查是否已有仓位
+        existing = await self._position_mgr.get_position(symbol)
+        if existing:
+            return ExecutionResult(success=False, message=f"{symbol} 已有 {existing.side} 仓位，无法开新仓")
+
+        # 获取当前价格和余额
+        ticker = await self._exchange.get_ticker(symbol)
+        if not ticker or not ticker.last_price:
+            return ExecutionResult(success=False, message=f"无法获取 {symbol} 当前价格")
+
+        account = await self._exchange.get_account()
+        if not account or not account.available_balance or account.available_balance <= 0:
+            return ExecutionResult(success=False, message="可用余额不足")
+
+        current_price = ticker.last_price
+        leverage = detail.get("suggested_leverage") or detail.get("leverage") or 1
+        position_size_pct = detail.get("position_size_percent", 10)
+        stop_loss = detail.get("stop_loss")
+        take_profit = detail.get("take_profit")
+
+        # 计算下单数量
+        amount_usdt = account.available_balance * (position_size_pct / 100) * leverage
+        quantity = amount_usdt / current_price
+        if quantity <= 0:
+            return ExecutionResult(success=False, message="计算的开仓数量为 0")
+
+        from ..models.decision import TradingDecision
+        action_str = f"open_{side}"
+        decision = TradingDecision(
+            action=action_str,
+            confidence=80,
+            leverage=int(leverage),
+            position_size_percent=position_size_pct,
+            stop_loss_price=stop_loss,
+            take_profit_price=take_profit,
+            reasoning="Advisory system recommended open position",
+            reasoning_zh=f"AI顾问系统建议开{'多' if side == 'long' else '空'}",
+        )
+        result = await self._order_mgr.execute_order(decision, symbol, quantity)
+        if result is None:
+            return ExecutionResult(success=False, message=f"开仓下单失败: {symbol}")
+
+        side_zh = "多" if side == "long" else "空"
+        return ExecutionResult(
+            success=True,
+            message=f"已开{side_zh} {symbol} (杠杆 {leverage}x, 仓位 {position_size_pct}%)",
+            detail={"side": side, "leverage": leverage, "quantity": quantity, "price": current_price},
+        )
 
     async def _close_position(self, symbol: str) -> ExecutionResult:
         position = await self._position_mgr.get_position(symbol)
