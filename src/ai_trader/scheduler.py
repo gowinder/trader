@@ -698,6 +698,8 @@ class Scheduler:
                         sharpe_ratio=result.sharpe_ratio,
                     )
                     logger.info(f"Backtest saved to database: {backtest_id}")
+                    # 保存交易记录和权益曲线到数据库
+                    await self._save_backtest_details(backtest_id, symbol, engine, df)
                 except Exception as e:
                     logger.error(f"Failed to save backtest to database: {e}")
 
@@ -710,6 +712,42 @@ class Scheduler:
                     "failed_at": datetime.now().isoformat(),
                 })
                 await self._redis.expire(f"backtest:status:{task_id}", 86400)
+
+    async def _save_backtest_details(self, backtest_id, symbol, engine, df):
+        """保存回测交易记录和权益曲线到数据库"""
+        import pandas as pd
+        if not self.persistence_service:
+            return
+        # 保存交易记录
+        for bt_t in engine.trades:
+            try:
+                _pp = None
+                if bt_t.pnl and bt_t.entry_price and bt_t.size:
+                    _pp = bt_t.pnl / (bt_t.entry_price * bt_t.size) * 100
+                await self.persistence_service.save_backtest_trade(
+                    backtest_id=backtest_id, symbol=symbol,
+                    side=bt_t.side, entry_time=bt_t.timestamp,
+                    entry_price=bt_t.entry_price,
+                    exit_time=bt_t.timestamp if bt_t.exit_price else None,
+                    exit_price=bt_t.exit_price,
+                    pnl=bt_t.pnl, pnl_percent=_pp,
+                )
+            except Exception as e:
+                logger.error(f"Save backtest trade error: {e}")
+        # 保存权益曲线（采样最多500点）
+        eq = engine.equity_curve
+        step = max(1, len(eq) // 500)
+        for i in range(0, len(eq), step):
+            try:
+                ts = df.index[min(i, len(df) - 1)] if i < len(df) else df.index[-1]
+                if isinstance(ts, pd.Timestamp):
+                    ts = ts.to_pydatetime()
+                await self.persistence_service.save_backtest_equity(
+                    backtest_id=backtest_id, timestamp=ts, total_equity=eq[i],
+                )
+            except Exception as e:
+                logger.error(f"Save equity point error: {e}")
+        logger.info(f"Backtest details saved: {len(engine.trades)} trades, {len(eq)} equity points")
 
     async def start(self):
         """启动调度器"""
