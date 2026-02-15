@@ -4,6 +4,7 @@
 """
 
 import asyncio
+import json
 import os
 from datetime import datetime, timedelta
 from typing import Optional
@@ -85,6 +86,12 @@ class BacktestRunner:
     async def run_backtest(self, cfg: dict) -> None:
         """执行单次回测"""
         symbols = cfg.get("symbols", ["BTCUSDT"])
+        # asyncpg 返回 JSONB 为字符串，需要解析为 list
+        if isinstance(symbols, str):
+            try:
+                symbols = json.loads(symbols)
+            except (ValueError, TypeError):
+                symbols = [symbols]
         timeframe = cfg.get("timeframe", "1h")
         lookback_days = cfg.get("lookback_days", 30)
         initial_capital = float(cfg.get("initial_capital", 10000))
