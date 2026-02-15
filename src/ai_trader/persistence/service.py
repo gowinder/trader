@@ -553,34 +553,19 @@ class DecisionPersistenceService:
         entry_price: float,
         exit_time: Optional[datetime],
         exit_price: Optional[float],
-        pnl: Optional[float],
-        pnl_percent: Optional[float],
+        size: float = 0.0,
+        pnl: Optional[float] = None,
+        pnl_percent: Optional[float] = None,
         decision_snapshot: Optional[dict] = None,
     ) -> UUID:
-        """保存回测交易记录
-
-        Args:
-            backtest_id: 回测 ID
-            symbol: 交易对
-            side: 方向 (long/short)
-            entry_time: 入场时间
-            entry_price: 入场价格
-            exit_time: 出场时间
-            exit_price: 出场价格
-            pnl: 盈亏
-            pnl_percent: 盈亏百分比
-            decision_snapshot: 决策快照
-
-        Returns:
-            交易记录 ID
-        """
+        """保存回测交易记录"""
         trade_id = await self.db.fetchval(
             """
             INSERT INTO backtest_trades (
                 backtest_id, symbol, side, entry_time, entry_price,
-                exit_time, exit_price, pnl, pnl_percent, decision_snapshot
+                exit_time, exit_price, size, pnl, pnl_percent, decision_snapshot
             ) VALUES (
-                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+                $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11
             ) RETURNING id
             """,
             backtest_id,
@@ -590,6 +575,7 @@ class DecisionPersistenceService:
             entry_price,
             exit_time,
             exit_price,
+            size,
             pnl,
             pnl_percent,
             json.dumps(decision_snapshot) if decision_snapshot else None,
