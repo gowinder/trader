@@ -9,7 +9,7 @@ const BUILTIN_PROVIDERS = [
   { name: "openrouter", displayName: "OpenRouter", providerType: "openai_compatible", baseUrl: "https://openrouter.ai/api/v1", models: ["deepseek/deepseek-chat", "google/gemini-2.0-flash-exp:free", "anthropic/claude-3.5-sonnet"] },
   { name: "deepseek", displayName: "DeepSeek", providerType: "openai_compatible", baseUrl: "https://api.deepseek.com/v1", models: ["deepseek-chat", "deepseek-reasoner"] },
   { name: "gemini", displayName: "Gemini", providerType: "gemini_native", baseUrl: "https://generativelanguage.googleapis.com/v1beta", models: ["gemini-2.0-flash", "gemini-2.5-pro"] },
-  { name: "glm", displayName: "智谱 GLM", providerType: "anthropic_compatible", baseUrl: "https://open.bigmodel.cn/api/anthropic", models: ["glm-4-plus", "glm-4-flash"] },
+  { name: "glm", displayName: "智谱 GLM", providerType: "anthropic_compatible", baseUrl: "https://open.bigmodel.cn/api/anthropic", models: ["glm-4.7", "glm-4.7-flash", "glm-4-plus", "glm-4-flash"] },
   { name: "qwen", displayName: "通义千问", providerType: "openai_compatible", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", models: ["qwen-max", "qwen-plus", "qwen-turbo"] },
 ];
 
@@ -27,6 +27,13 @@ async function ensureBuiltinProviders() {
         models: bp.models,
         isBuiltin: true,
       });
+    } else {
+      // 同步内置 provider 的 providerType、baseUrl 和 models
+      await db.update(llmProviders).set({
+        providerType: bp.providerType,
+        baseUrl: bp.baseUrl,
+        models: bp.models,
+      }).where(eq(llmProviders.name, bp.name));
     }
   }
 }

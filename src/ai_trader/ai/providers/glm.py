@@ -13,7 +13,7 @@ class GLMProvider:
     def __init__(
         self,
         api_key: str,
-        model: str = "glm-4",
+        model: str = "glm-4.7",
         fallback_model: Optional[str] = None,
         base_url: str = DEFAULT_BASE_URL,
         timeout: float = 60.0,
@@ -126,12 +126,6 @@ class GLMProvider:
 
         if system_prompt:
             body["system"] = system_prompt
-
-        # 如果有 schema，添加到请求中
-        if schema:
-            # Anthropic 不直接支持 JSON schema，但可以通过提示引导
-            # 这里不做特殊处理，让模型自行解析
-            pass
 
         try:
             url = f"{self.base_url}/v1/messages"
