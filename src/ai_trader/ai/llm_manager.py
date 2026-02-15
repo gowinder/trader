@@ -139,7 +139,7 @@ class LLMManager:
             from .providers.glm import GLMProvider
             return GLMProvider(
                 api_key=api_key or config.llm_api_key,
-                model=model or "glm-4-plus",
+                model=model or "glm-4.7",
                 base_url=base_url or "https://open.bigmodel.cn/api/anthropic",
                 timeout=timeout,
             )
