@@ -29,6 +29,15 @@ class GLMProvider:
     def provider_name(self) -> str:
         return "glm"
 
+    def _extract_usage(self, data: Dict[str, Any]) -> Dict[str, int]:
+        """从 Anthropic 协议响应中提取 usage 信息"""
+        usage = data.get("usage", {})
+        return {
+            "prompt_tokens": usage.get("input_tokens", 0),
+            "completion_tokens": usage.get("output_tokens", 0),
+            "total_tokens": usage.get("input_tokens", 0) + usage.get("output_tokens", 0),
+        }
+
     def _format_messages(
         self, messages: List[Dict[str, str]]
     ) -> tuple[str, List[Dict[str, Any]]]:
@@ -136,7 +145,11 @@ class GLMProvider:
                 logging.error(f"GLM 响应内容: {r.text[:500]}")
             r.raise_for_status()
             data = r.json()
-            return self._parse_response(data, schema)
+            usage = self._extract_usage(data)
+            result = self._parse_response(data, schema)
+            if isinstance(result, dict) and "usage" not in result:
+                result["usage"] = usage
+            return result
 
         except Exception as e:
             if self._fallback_model:
@@ -189,7 +202,11 @@ class GLMProvider:
                 logging.error(f"GLM Fallback 响应内容: {r.text[:500]}")
             r.raise_for_status()
             data = r.json()
-            return self._parse_response(data, schema)
+            usage = self._extract_usage(data)
+            result = self._parse_response(data, schema)
+            if isinstance(result, dict) and "usage" not in result:
+                result["usage"] = usage
+            return result
         except Exception as fallback_error:
             import logging
 

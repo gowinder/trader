@@ -27,6 +27,15 @@ class GeminiProvider(BaseLLMProvider):
         self._fallback_model = fallback_model
         self._client = httpx.AsyncClient(timeout=timeout)
 
+    def _extract_usage(self, data: Dict[str, Any]) -> Dict[str, int]:
+        """从 Gemini 响应中提取 usage 信息"""
+        usage_metadata = data.get("usageMetadata", {})
+        return {
+            "prompt_tokens": usage_metadata.get("promptTokenCount", 0),
+            "completion_tokens": usage_metadata.get("candidatesTokenCount", 0),
+            "total_tokens": usage_metadata.get("totalTokenCount", 0),
+        }
+
     def _format_messages(self, messages: List[Dict[str, str]]) -> str:
         """将消息格式化为 Gemini 格式"""
         parts = []
@@ -106,7 +115,11 @@ class GeminiProvider(BaseLLMProvider):
             r = await self._client.post(url, headers=headers, params=params, json=body)
             r.raise_for_status()
             data = r.json()
-            return self._parse_response(data, schema)
+            usage = self._extract_usage(data)
+            result = self._parse_response(data, schema)
+            if isinstance(result, dict) and "usage" not in result:
+                result["usage"] = usage
+            return result
 
         except Exception as e:
             if self._fallback_model:
@@ -150,7 +163,11 @@ class GeminiProvider(BaseLLMProvider):
             )
             r.raise_for_status()
             data = r.json()
-            return self._parse_response(data, schema)
+            usage = self._extract_usage(data)
+            result = self._parse_response(data, schema)
+            if isinstance(result, dict) and "usage" not in result:
+                result["usage"] = usage
+            return result
         except Exception as e2:
             logging.error(f"备用模型也失败: {e2}")
             raise RuntimeError(f"All LLM models failed: Fallback({e2})")
