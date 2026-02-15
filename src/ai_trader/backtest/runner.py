@@ -6,8 +6,10 @@
 import asyncio
 import json
 import os
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional
+
+import pandas as pd
 
 from ..backtest.engine import BacktestEngine, BacktestConfig
 from ..strategies.market_classifier import MarketClassifier
@@ -18,6 +20,24 @@ from ..persistence.service import DecisionPersistenceService
 from ..data.fetcher import CachedDataFetcher
 from ..config import config
 from ..utils.logger import logger
+
+
+def _to_utc_datetime(ts) -> datetime:
+    """将 Pandas Timestamp / 字符串 / datetime 统一转为 UTC aware datetime"""
+    if isinstance(ts, pd.Timestamp):
+        if ts.tzinfo is None:
+            ts = ts.tz_localize("UTC")
+        return ts.to_pydatetime()
+    if isinstance(ts, str):
+        dt = datetime.fromisoformat(ts)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt
+    if isinstance(ts, datetime):
+        if ts.tzinfo is None:
+            return ts.replace(tzinfo=timezone.utc)
+        return ts
+    return ts
 
 
 class BacktestRunner:
@@ -128,7 +148,6 @@ class BacktestRunner:
         enable_filters: bool,
     ) -> None:
         """执行单个交易对的回测"""
-        import pandas as pd
 
         # 获取历史数据
         fetcher = CachedDataFetcher(cache_dir="data/cache")
@@ -177,10 +196,11 @@ class BacktestRunner:
                 backtest_id=backtest_id,
                 symbol=symbol,
                 side=trade.side,
-                entry_time=trade.timestamp,
+                entry_time=_to_utc_datetime(trade.timestamp),
                 entry_price=trade.entry_price,
-                exit_time=trade.timestamp,
+                exit_time=_to_utc_datetime(trade.timestamp),
                 exit_price=trade.exit_price,
+                size=trade.size,
                 pnl=trade.pnl,
                 pnl_percent=(trade.pnl / (trade.entry_price * trade.size) * 100)
                 if trade.pnl and trade.entry_price and trade.size
@@ -191,9 +211,7 @@ class BacktestRunner:
         step = max(1, len(engine.equity_curve) // 100)
         for i in range(0, len(engine.equity_curve), step):
             if i < len(df):
-                ts = df.iloc[i]["timestamp"]
-                if isinstance(ts, str):
-                    ts = datetime.fromisoformat(ts)
+                ts = _to_utc_datetime(df.iloc[i]["timestamp"])
                 await self.persistence.save_backtest_equity(
                     backtest_id=backtest_id,
                     timestamp=ts,
@@ -215,7 +233,6 @@ class BacktestRunner:
 
     def _generate_signals(self, df, enable_filters: bool):
         """生成交易信号"""
-        import pandas as pd
 
         market_classifier = MarketClassifier()
         strategy_selector = StrategySelector(config.enabled_strategies)
