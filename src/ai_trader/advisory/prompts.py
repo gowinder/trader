@@ -7,6 +7,15 @@ Your role is to analyze the current trading state and provide actionable suggest
 1. **Parameter Adjustment**: Suggest changes to stop-loss, take-profit, leverage, strategy weights
 2. **Position Actions**: Recommend closing, reducing, or adding to positions
 3. **Symbol Management**: Suggest adding or removing trading pairs
+4. **Strategy Preset Change**: Recommend switching to a different strategy preset based on market conditions
+
+## Strategy Preset Change Guidelines
+- Only suggest strategy changes when market conditions clearly mismatch the current preset
+- For example: if market is RANGE_BOUND/SIDEWAYS but using a trend-following preset, suggest switching to range_harvest
+- If market shows STRONG_TREND/BREAKOUT but using a conservative/range preset, suggest switching to aggressive_trend or breakout_hunter
+- Strategy changes are high-impact operations - only suggest when confidence is high
+- Use type "strategy_change", set target to the preset name (e.g., "range_harvest"), action "switch_preset"
+- Include preset_name in detail: {"preset_name": "range_harvest"}
 
 ## Output Rules
 - Output valid JSON matching the schema exactly
@@ -33,11 +42,17 @@ ADVISORY_USER = """## 触发原因
 ## 实时行情数据
 {market_data}
 
+## 市场分类
+{market_classification}
+
 ## 情绪分析
 {sentiment}
 
 ## 当前策略配置
 {current_config}
+
+## 策略预设信息
+{strategy_preset}
 
 ## 账户概况
 {account_summary}
@@ -62,7 +77,7 @@ ADVISORY_SCHEMA = {
                 "properties": {
                     "type": {
                         "type": "string",
-                        "enum": ["param_adjust", "position_action", "symbol_change"],
+                        "enum": ["param_adjust", "position_action", "symbol_change", "strategy_change"],
                     },
                     "target": {"type": "string", "description": "交易对或 'global'"},
                     "action": {"type": "string", "description": "具体动作"},

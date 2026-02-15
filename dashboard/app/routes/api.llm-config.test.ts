@@ -38,44 +38,34 @@ export async function action({ request }: ActionFunctionArgs) {
 
     try {
       let res: Response;
+      let reqUrl: string;
+      let reqBody: Record<string, unknown>;
 
       if (provider.providerType === "openai_compatible") {
-        res = await fetch(`${baseUrl}/chat/completions`, {
+        reqUrl = `${baseUrl}/chat/completions`;
+        reqBody = { model, messages: [{ role: "user", content: "Hi" }], max_tokens: 10 };
+        res = await fetch(reqUrl, {
           method: "POST",
-          headers: {
-            Authorization: `Bearer ${apiKey}`,
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model,
-            messages: [{ role: "user", content: "Hi" }],
-            max_tokens: 10,
-          }),
+          headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+          body: JSON.stringify(reqBody),
           signal: controller.signal,
         });
       } else if (provider.providerType === "gemini_native") {
+        reqUrl = `${baseUrl}/models/${model}:generateContent?key=${apiKey.slice(0, 6)}...`;
+        reqBody = { contents: [{ role: "user", parts: [{ text: "Hi" }] }], generationConfig: { maxOutputTokens: 10 } };
         res = await fetch(`${baseUrl}/models/${model}:generateContent?key=${apiKey}`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [{ role: "user", parts: [{ text: "Hi" }] }],
-            generationConfig: { maxOutputTokens: 10 },
-          }),
+          body: JSON.stringify(reqBody),
           signal: controller.signal,
         });
       } else if (provider.providerType === "anthropic_compatible") {
-        res = await fetch(`${baseUrl}/v1/messages`, {
+        reqUrl = `${baseUrl}/v1/messages`;
+        reqBody = { model, messages: [{ role: "user", content: "Hi" }], max_tokens: 10 };
+        res = await fetch(reqUrl, {
           method: "POST",
-          headers: {
-            "x-api-key": apiKey,
-            "anthropic-version": "2023-06-01",
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            model,
-            messages: [{ role: "user", content: "Hi" }],
-            max_tokens: 10,
-          }),
+          headers: { "x-api-key": apiKey, "anthropic-version": "2023-06-01", "Content-Type": "application/json" },
+          body: JSON.stringify(reqBody),
           signal: controller.signal,
         });
       } else {
@@ -83,16 +73,20 @@ export async function action({ request }: ActionFunctionArgs) {
       }
 
       const latency = Date.now() - startTime;
+      const resText = await res.text().catch(() => "");
+
+      console.log(`[LLM Test] URL: ${reqUrl}`);
+      console.log(`[LLM Test] Body: ${JSON.stringify(reqBody)}`);
+      console.log(`[LLM Test] Status: ${res.status}, Response: ${resText}`);
 
       if (res.ok) {
         return Response.json({ success: true, latency, message: `连接成功，延迟 ${latency}ms` });
       }
 
-      const errText = await res.text().catch(() => "");
       return Response.json({
         success: false,
         latency,
-        message: `请求失败 (${res.status}): ${errText.slice(0, 200)}`,
+        message: `请求失败 (${res.status}): ${resText.slice(0, 500)}`,
       });
     } finally {
       clearTimeout(timer);
