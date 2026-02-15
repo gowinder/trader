@@ -60,6 +60,8 @@ class AdvisoryEngine:
                 trigger_reason=trigger_reason,
                 current_config=current_config,
                 account_summary=account_summary,
+                strategy_preset_info=current_config.get("_strategy_preset_info"),
+                market_classifications=current_config.get("_market_classifications"),
             )
             messages = [
                 {"role": "system", "content": ADVISORY_SYSTEM},
@@ -110,26 +112,60 @@ class AdvisoryEngine:
 
     # LLM 返回的 type 名称到 SuggestionType 的映射
     _TYPE_ALIASES: Dict[str, str] = {
+        # param_adjust
+        "param_adjust": "param_adjust",
         "parameter_adjustment": "param_adjust",
         "param_adjustment": "param_adjust",
         "parameter_adjustments": "param_adjust",
+        "parameter": "param_adjust",
+        "adjustment": "param_adjust",
+        "config_change": "param_adjust",
+        "config": "param_adjust",
+        # position_action
         "position": "position_action",
         "position_action": "position_action",
         "position_actions": "position_action",
+        "position_management": "position_action",
+        "trade_action": "position_action",
+        "trade": "position_action",
+        # symbol_change
         "symbol": "symbol_change",
         "symbol_change": "symbol_change",
         "symbol_management": "symbol_change",
+        "symbol_changes": "symbol_change",
+        "symbol_adjustment": "symbol_change",
+        "trading_pair": "symbol_change",
+        # strategy_change
+        "strategy_change": "strategy_change",
+        "strategy": "strategy_change",
+        "preset_change": "strategy_change",
+        "strategy_switch": "strategy_change",
+        "preset": "strategy_change",
+        "preset_switch": "strategy_change",
+        "strategy_adjustment": "strategy_change",
     }
 
     # suggestions 为 dict 时，key 到 type 的映射
     _CATEGORY_TYPE_MAP: Dict[str, str] = {
+        # param_adjust
         "parameter_adjustments": "param_adjust",
         "parameter_adjustment": "param_adjust",
         "param_adjustments": "param_adjust",
+        "param_adjust": "param_adjust",
+        "config_changes": "param_adjust",
+        # position_action
         "position_actions": "position_action",
         "position_action": "position_action",
+        "trade_actions": "position_action",
+        # symbol_change
         "symbol_management": "symbol_change",
         "symbol_changes": "symbol_change",
+        "symbol_change": "symbol_change",
+        "trading_pairs": "symbol_change",
+        # strategy_change
+        "strategy_changes": "strategy_change",
+        "strategy_change": "strategy_change",
+        "preset_changes": "strategy_change",
     }
 
     def _flatten_suggestions(self, raw_suggestions) -> List[Dict[str, Any]]:

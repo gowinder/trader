@@ -35,7 +35,7 @@ class AdvisoryLLMClient:
         api_key: str,
         model: str,
         base_url: str,
-        timeout: float = 120.0,
+        timeout: float = 180.0,
     ):
         if not provider or not model:
             raise ValueError(
@@ -46,7 +46,7 @@ class AdvisoryLLMClient:
         self._api_key = api_key
         self._model = model
         self._base_url = base_url
-        self._timeout = timeout
+        self._timeout = max(timeout, 120.0)  # Advisory 分析需要较长时间，最少 120 秒
 
         self._provider = _create_provider(
             name=self._provider_name,

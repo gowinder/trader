@@ -19,6 +19,8 @@ class AdvisoryContextBuilder:
         trigger_reason: str,
         current_config: Dict[str, Any],
         account_summary: Optional[Dict] = None,
+        strategy_preset_info: Optional[Dict] = None,
+        market_classifications: Optional[Dict] = None,
     ) -> str:
         recent_trades = await self._get_recent_trades(limit=20)
         trades_text = self._format_trades(recent_trades)
@@ -27,6 +29,8 @@ class AdvisoryContextBuilder:
         sentiment_text = self._format_sentiment(sentiment)
         config_text = self._format_config(current_config)
         account_text = self._format_account(account_summary)
+        strategy_text = self._format_strategy_preset(strategy_preset_info)
+        market_class_text = self._format_market_classifications(market_classifications)
 
         from .prompts import ADVISORY_USER
         return ADVISORY_USER.format(
@@ -35,8 +39,10 @@ class AdvisoryContextBuilder:
             recent_trades=trades_text,
             positions=positions_text,
             market_data=market_text,
+            market_classification=market_class_text,
             sentiment=sentiment_text,
             current_config=config_text,
+            strategy_preset=strategy_text,
             account_summary=account_text,
         )
 
@@ -119,8 +125,47 @@ class AdvisoryContextBuilder:
         )
 
     def _format_config(self, config: Dict[str, Any]) -> str:
-        lines = [f"- {k}: {v}" for k, v in config.items()]
+        lines = [f"- {k}: {v}" for k, v in config.items() if not k.startswith("_")]
         return "\n".join(lines) if lines else "无配置信息"
+
+    def _format_strategy_preset(self, info: Optional[Dict]) -> str:
+        if not info:
+            return "策略预设信息不可用"
+        lines = []
+        active = info.get("active_preset")
+        if active:
+            lines.append(f"当前激活预设: {active.get('display_name', '?')} ({active.get('name', '?')})")
+            lines.append(f"  风险等级: {active.get('risk_level', '?')}")
+            lines.append(f"  说明: {active.get('description', '?')}")
+        else:
+            lines.append("当前激活预设: 无")
+        lines.append("")
+        lines.append("所有可选预设:")
+        for p in info.get("all_presets", []):
+            marker = " [当前]" if active and p.get("name") == active.get("name") else ""
+            lines.append(
+                f"  - {p['name']} ({p.get('display_name', '?')}): "
+                f"{p.get('description', '?')} | 风险: {p.get('risk_level', '?')}{marker}"
+            )
+        return "\n".join(lines)
+
+    def _format_market_classifications(self, classifications: Optional[Dict]) -> str:
+        if not classifications:
+            return "市场分类信息不可用"
+        lines = []
+        trend_map = {1: "上涨", -1: "下跌", 0: "中性"}
+        for symbol, cls_data in classifications.items():
+            state = cls_data.get("state", "unknown")
+            confidence = cls_data.get("confidence", 0)
+            adx = cls_data.get("adx_value", 0)
+            volatility = cls_data.get("volatility", 0)
+            trend = cls_data.get("trend_direction", 0)
+            trend_str = trend_map.get(trend, "未知")
+            lines.append(
+                f"- {symbol}: {state} (置信度: {confidence:.0%}), "
+                f"ADX: {adx:.1f}, 波动率: {volatility:.2f}%, 趋势: {trend_str}"
+            )
+        return "\n".join(lines) if lines else "无数据"
 
     def _format_account(self, account: Optional[Dict]) -> str:
         if not account:

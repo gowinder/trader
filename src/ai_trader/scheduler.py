@@ -220,7 +220,7 @@ class Scheduler:
                 model=llm_cfg["model"],
                 api_key=api_key,
                 base_url=base_url,
-                timeout=llm_cfg.get("timeout", 120.0),
+                timeout=llm_cfg.get("timeout", 180.0),
             )
             context_builder = AdvisoryContextBuilder(db=self.db_manager)
             engine = AdvisoryEngine(llm_client, persistence, context_builder)
@@ -430,7 +430,7 @@ class Scheduler:
                                     model=model,
                                     api_key=api_key,
                                     base_url=base_url,
-                                    timeout=llm_cfg.get("timeout", 120.0),
+                                    timeout=llm_cfg.get("timeout", 180.0),
                                 )
                                 self._advisory_service.engine.llm = new_client
                                 if old_client:
@@ -1140,7 +1140,7 @@ class Scheduler:
 
     async def _execute_advisory_suggestion(self, task: dict):
         """执行单条 advisory suggestion"""
-        from .advisory.executors import ConfigExecutor, TradeExecutor, SymbolExecutor, ExecutionResult
+        from .advisory.executors import ConfigExecutor, TradeExecutor, SymbolExecutor, StrategyExecutor, ExecutionResult
 
         suggestion_id = task.get("suggestion_id")
         suggestion_type = task.get("type")
@@ -1208,6 +1208,12 @@ class Scheduler:
             elif suggestion_type == "symbol_change":
                 executor = SymbolExecutor(self._redis)
                 result = await executor.execute(action, target, detail)
+            elif suggestion_type == "strategy_change":
+                if not self._strategy_preset_service:
+                    result = ExecutionResult(success=False, message="Strategy service not initialized")
+                else:
+                    executor = StrategyExecutor(self._strategy_preset_service, self._redis)
+                    result = await executor.execute(action, target, detail)
             else:
                 result = ExecutionResult(success=False, message=f"未知类型: {suggestion_type}")
 
@@ -1303,6 +1309,58 @@ class Scheduler:
                 "quant_weight": config.quant_weight,
                 "ai_weight": config.ai_weight,
             }
+
+            # 注入策略预设信息
+            if self._strategy_preset_service:
+                try:
+                    active_preset = await self._strategy_preset_service.get_active_preset()
+                    all_presets = await self._strategy_preset_service.get_all_presets()
+                    current_config["_strategy_preset_info"] = {
+                        "active_preset": {
+                            "name": active_preset["name"],
+                            "display_name": active_preset["display_name"],
+                            "description": active_preset.get("description", ""),
+                            "risk_level": active_preset.get("risk_level", ""),
+                        } if active_preset else None,
+                        "all_presets": [
+                            {
+                                "name": p["name"],
+                                "display_name": p["display_name"],
+                                "description": p.get("description", ""),
+                                "risk_level": p.get("risk_level", ""),
+                                "category": p.get("category", ""),
+                            }
+                            for p in all_presets
+                        ],
+                    }
+                except Exception as e:
+                    logger.debug(f"Failed to collect strategy preset info for advisory: {e}")
+
+            # 注入市场分类信息
+            try:
+                from .strategies.market_classifier import MarketClassifier
+                classifier = MarketClassifier()
+                market_classifications = {}
+                for symbol in symbols:
+                    try:
+                        klines = await self.exchange.get_klines(symbol, interval="1h", limit=100)
+                        if klines:
+                            import pandas as pd
+                            df = pd.DataFrame([k.model_dump() for k in klines])
+                            cls_result = classifier.classify(df)
+                            market_classifications[symbol] = {
+                                "state": cls_result.state.value,
+                                "confidence": cls_result.confidence,
+                                "adx_value": cls_result.adx_value,
+                                "volatility": cls_result.volatility,
+                                "trend_direction": cls_result.trend_direction,
+                            }
+                    except Exception as e:
+                        logger.debug(f"Failed to classify market for {symbol}: {e}")
+                if market_classifications:
+                    current_config["_market_classifications"] = market_classifications
+            except Exception as e:
+                logger.debug(f"Failed to collect market classifications for advisory: {e}")
 
             # 收集账户信息
             account_summary = None

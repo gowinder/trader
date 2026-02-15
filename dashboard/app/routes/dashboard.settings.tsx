@@ -300,17 +300,19 @@ export default function SettingsPage() {
     }
   };
 
-  const handleTestProvider = async (p: Provider) => {
+  const handleTestProvider = async (p: Provider, testModel?: string) => {
     const edit = getCardEdit(p);
     if (edit.models.length === 0) {
       showToast("error", "请先添加至少一个模型");
       return;
     }
-    const model = edit.models[0];
+    const model = testModel || edit.models[0];
+    console.log(`[Frontend Test] Provider: ${p.name}, testModel param: ${testModel}, final model: ${model}, edit.models: ${JSON.stringify(edit.models)}`);
     setTestingProvider((s) => ({ ...s, [p.id]: true }));
     setTestResult((s) => ({ ...s, [p.id]: null }));
     try {
       const body: Record<string, unknown> = { providerId: p.id, model };
+      console.log(`[Frontend Test] Request body: ${JSON.stringify(body)}`);
       const editedKey = cardEdits[p.id]?.apiKey;
       if (editedKey) body.apiKey = editedKey;
       const res = await fetch("/api/llm-config/test", {
@@ -319,11 +321,12 @@ export default function SettingsPage() {
         body: JSON.stringify(body),
       });
       const data = await res.json();
+      const msg = `[${model}] ${data.message}`;
       setTestResult((s) => ({
         ...s,
-        [p.id]: { success: data.success, message: data.message },
+        [p.id]: { success: data.success, message: msg },
       }));
-      showToast(data.success ? "success" : "error", data.message);
+      showToast(data.success ? "success" : "error", msg);
     } catch {
       setTestResult((s) => ({
         ...s,
@@ -679,6 +682,15 @@ export default function SettingsPage() {
                           {m}
                           <button
                             type="button"
+                            onClick={() => handleTestProvider(p, m)}
+                            disabled={testingProvider[p.id]}
+                            className="text-muted-foreground hover:text-yellow-500 disabled:opacity-50"
+                            title={`测试 ${m}`}
+                          >
+                            <Zap className="h-3 w-3" />
+                          </button>
+                          <button
+                            type="button"
                             onClick={() => removeModel(p.id, m)}
                             className="text-muted-foreground hover:text-foreground"
                           >
@@ -739,7 +751,10 @@ export default function SettingsPage() {
                 {/* Card Footer */}
                 <div className="flex items-center gap-2 px-6 py-3 border-t border-border">
                   {testResult[p.id] && (
-                    <span className={`text-xs mr-auto ${testResult[p.id]!.success ? "text-green-400" : "text-red-400"}`}>
+                    <span className={`text-xs mr-auto max-w-[70%] break-all whitespace-pre-wrap line-clamp-3 cursor-pointer ${testResult[p.id]!.success ? "text-green-400" : "text-red-400"}`}
+                      title={testResult[p.id]!.message}
+                      onClick={() => navigator.clipboard.writeText(testResult[p.id]!.message)}
+                    >
                       {testResult[p.id]!.message}
                     </span>
                   )}

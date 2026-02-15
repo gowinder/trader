@@ -14,6 +14,7 @@ class SuggestionType(str, Enum):
     PARAM_ADJUST = "param_adjust"
     POSITION_ACTION = "position_action"
     SYMBOL_CHANGE = "symbol_change"
+    STRATEGY_CHANGE = "strategy_change"
 
 
 class SuggestionStatus(str, Enum):
