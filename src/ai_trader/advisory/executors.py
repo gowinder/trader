@@ -475,7 +475,7 @@ class TradeExecutor:
     async def _close_position(self, symbol: str) -> ExecutionResult:
         position = await self._position_mgr.get_position(symbol)
         if not position:
-            return ExecutionResult(success=False, message=f"仓位不存在: {symbol}")
+            return ExecutionResult(success=False, message=f"仓位不存在(可能已被主循环平仓): {symbol}")
         from ..models.decision import TradingDecision
         close_action = "close_long" if position.side == "long" else "close_short"
         decision = TradingDecision(
@@ -494,7 +494,7 @@ class TradeExecutor:
     async def _reduce_position(self, symbol: str, detail: Dict) -> ExecutionResult:
         position = await self._position_mgr.get_position(symbol)
         if not position:
-            return ExecutionResult(success=False, message=f"仓位不存在: {symbol}")
+            return ExecutionResult(success=False, message=f"仓位不存在(可能已被主循环平仓): {symbol}")
         raw_pct = detail.get("reduce_percent", 50)
         if not isinstance(raw_pct, (int, float)) or raw_pct <= 0 or raw_pct > 100:
             return ExecutionResult(success=False, message=f"非法减仓比例: {raw_pct}，须在 (0, 100] 之间")
