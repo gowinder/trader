@@ -32,6 +32,8 @@ from .memory import TradeMemoryCollector
 from .ai.usage_tracker import get_usage_tracker
 from .reflection.service import ReflectionClient
 from .optimization import ParameterRegistry, ShadowRunner
+from .optimization.orchestrator import OptimizationOrchestrator
+from .prompts.enricher import PromptContextEnricher
 from .strategies.signal_filter import SignalFilter
 from .strategies.strategy_base import SignalAction
 from .advisory.service import AdvisoryService
@@ -73,6 +75,7 @@ class Scheduler:
         self.reflection_client: Optional[ReflectionClient] = None
         self.shadow_runner: Optional[ShadowRunner] = None
         self.parameter_registry = ParameterRegistry()
+        self._optimization_orchestrator: Optional[OptimizationOrchestrator] = None
 
         self.running = False
 
@@ -96,6 +99,9 @@ class Scheduler:
         # Strategy preset
         self._active_preset_name: Optional[str] = None
         self._strategy_preset_service: Optional[StrategyPresetService] = None
+
+        # Config lock for atomic config updates
+        self._config_lock = asyncio.Lock()
 
         # Signal filters per symbol (anti-overtrade)
         self._signal_filters: dict[str, SignalFilter] = {}
@@ -144,7 +150,16 @@ class Scheduler:
                 self.reflection_client = ReflectionClient(redis_url)
                 await self.reflection_client.connect()
                 self.shadow_runner = ShadowRunner(self.db_manager)
+                self._optimization_orchestrator = OptimizationOrchestrator(
+                    db=self.db_manager,
+                    shadow_runner=self.shadow_runner,
+                    parameter_registry=self.parameter_registry,
+                    redis_client=self._redis,
+                )
                 logger.info("Memory and optimization system initialized (async mode)")
+
+            # 注入 Prompt 上下文增强器到决策引擎
+            self.decision_engine.prompt_enricher = PromptContextEnricher(self.db_manager)
 
             # Initialize strategy preset service
             self._strategy_preset_service = StrategyPresetService(self.db_manager)
@@ -271,6 +286,10 @@ class Scheduler:
             await self._redis.ping()
             logger.info("Redis connected for dynamic config")
 
+            # 补设 orchestrator 的 redis 引用（_init_persistence 先于 _init_redis）
+            if self._optimization_orchestrator:
+                self._optimization_orchestrator._redis = self._redis
+
             # Load initial config from Redis
             await self._load_trading_config()
             await self._load_llm_providers_config()
@@ -320,9 +339,11 @@ class Scheduler:
             self._active_preset_name = preset_data.get("name", self._active_preset_name)
             config.apply_preset(preset_config)
 
-            # 重建决策引擎
+            # 重建决策引擎（保留 prompt_enricher 引用）
+            old_enricher = getattr(self.decision_engine, "prompt_enricher", None)
             self.decision_engine = HybridDecisionEngine(self.llm)
             self.decision_engine.active_preset_name = self._active_preset_name
+            self.decision_engine.prompt_enricher = old_enricher
 
             # 更新信号过滤器间隔
             interval_sec = preset_config.get("min_trade_interval_seconds", 21600)
@@ -486,17 +507,21 @@ class Scheduler:
                                 logger.info("Notification test message sent")
                         else:
                             cfg = json.loads(message["data"])
+                            # optimization 模块发布的参数变更事件，不含交易配置字段，跳过
+                            if cfg.get("source") == "optimization":
+                                logger.info(f"Optimization config update received: {list(cfg.get('changes', {}).keys())}")
+                                continue
                             self._trading_enabled = cfg.get("enabled", True)
                             interval_minutes = cfg.get("decisionInterval", 1)
                             self._decision_interval = interval_minutes * 60
-                            # 同步交易对配置变更
-                            if "trading_symbols" in cfg:
-                                config.trading_symbols = cfg["trading_symbols"]
-                                logger.info(f"Trading symbols updated: {config.symbols_list}")
-                            # 同步其他运行时参数
-                            for param in ["stop_loss_percent", "take_profit_percent", "leverage_max", "quant_weight", "ai_weight"]:
-                                if param in cfg:
-                                    setattr(config, param, cfg[param])
+                            # 同步交易对配置变更和运行时参数（加锁保证原子性）
+                            async with self._config_lock:
+                                if "trading_symbols" in cfg:
+                                    config.trading_symbols = cfg["trading_symbols"]
+                                    logger.info(f"Trading symbols updated: {config.symbols_list}")
+                                for param in ["stop_loss_percent", "take_profit_percent", "leverage_max", "quant_weight", "ai_weight"]:
+                                    if param in cfg:
+                                        setattr(config, param, cfg[param])
                             logger.info(f"Config updated: enabled={self._trading_enabled}, interval={interval_minutes}m")
                     except Exception as e:
                         logger.error(f"Failed to parse config update: {e}")
@@ -552,6 +577,34 @@ class Scheduler:
             pass
         except Exception as e:
             logger.error(f"Backtest task listener error: {e}")
+
+    async def _reflection_results_listener(self):
+        """监听复盘结果队列，驱动 优化编排器"""
+        if not self._redis or not self._optimization_orchestrator:
+            return
+
+        logger.info("Reflection results listener started")
+        try:
+            while self.running:
+                result = await self._redis.brpop("reflection:results", timeout=5)
+                if result is None:
+                    continue
+                _, data = result
+                try:
+                    reflection_result = json.loads(data)
+                    started = await self._optimization_orchestrator.handle_reflection_result(
+                        reflection_result
+                    )
+                    if started:
+                        logger.info("从复盘结果启动了影子运行")
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse reflection result: {e}")
+                except Exception as e:
+                    logger.error(f"Reflection result handling error: {e}")
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"Reflection results listener error: {e}")
 
     async def _run_backtest_task(self, task: dict):
         """执行回测任务"""
@@ -775,6 +828,10 @@ class Scheduler:
 
         # Initialize Advisory system
         await self._init_advisory()
+
+        # Start reflection results listener for optimization loop
+        if self._optimization_orchestrator and self._redis:
+            asyncio.create_task(self._reflection_results_listener())
 
         while self.running:
             # ── Daily PnL reset ──
@@ -1090,6 +1147,18 @@ class Scheduler:
                                 task_id = str(uuid4())
                                 await self.reflection_client.submit_task(task_id, count)
                                 logger.info(f"已提交复盘任务到队列: {task_id}, 交易数: {count}")
+
+                    # 影子运行记录（如有进行中的影子验证）
+                    # NOTE: 当前候选参数使用相同实盘结果作为近似（无独立模拟引擎）
+                    # 完整的候选参数模拟需要 Phase 3 策略权重优化器支持
+                    if self.shadow_runner and self.shadow_runner.is_running:
+                        is_win = pnl > 0
+                        self.shadow_runner.record_current_result(is_win, pnl)
+                        self.shadow_runner.record_candidate_result(is_win, pnl)
+                        # 评估是否达到切换条件
+                        if self._optimization_orchestrator:
+                            await self._optimization_orchestrator.evaluate_and_apply()
+
                 else:
                     logger.warning("No position ID tracked for close action")
 
@@ -1597,6 +1666,20 @@ class Scheduler:
         """执行指定 symbol 的交易循环（内部实现，已持有 symbol 锁）"""
         logger.info(f"Starting cycle for {symbol}")
 
+        # ── 配置快照（防止决策过程中配置被并发修改）──
+        async with self._config_lock:
+            _cfg = {
+                "analysis_interval": config.analysis_interval,
+                "stop_loss_percent": config.stop_loss_percent,
+                "take_profit_percent": config.take_profit_percent,
+                "leverage_max": config.leverage_max,
+                "ai_weight": config.ai_weight,
+                "quant_weight": config.quant_weight,
+                "daily_loss_limit_percent": config.daily_loss_limit_percent,
+                "signal_min_interval_hours": config.signal_min_interval_hours,
+                "signal_reverse_cooldown_hours": config.signal_reverse_cooldown_hours,
+            }
+
         # 1. 获取数据
         market_data = await self.market_mgr.get_market_data(
             symbol, interval=f"{config.analysis_interval}m"
@@ -1729,12 +1812,12 @@ class Scheduler:
                 return
 
         daily_pnl_total = sum(self._daily_pnl.values())
-        max_daily_loss = equity * (config.daily_loss_limit_percent / 100)
+        max_daily_loss = equity * (_cfg["daily_loss_limit_percent"] / 100)
         if daily_pnl_total < 0 and abs(daily_pnl_total) >= max_daily_loss:
             self._trading_halted = True
             halt_reason = (
                 f"当日亏损 {daily_pnl_total:.2f} USDT 超出限额 "
-                f"{max_daily_loss:.2f} USDT ({config.daily_loss_limit_percent}%)"
+                f"{max_daily_loss:.2f} USDT ({_cfg['daily_loss_limit_percent']}%)"
             )
             logger.warning(f"每日亏损限制触发: {halt_reason}")
 
@@ -1784,8 +1867,8 @@ class Scheduler:
         if decision.action in ("open_long", "open_short"):
             if symbol not in self._signal_filters:
                 self._signal_filters[symbol] = SignalFilter(
-                    min_interval_hours=config.signal_min_interval_hours,
-                    reverse_cooldown_hours=config.signal_reverse_cooldown_hours,
+                    min_interval_hours=_cfg["signal_min_interval_hours"],
+                    reverse_cooldown_hours=_cfg["signal_reverse_cooldown_hours"],
                 )
             sf = self._signal_filters[symbol]
             action_map = {"open_long": SignalAction.LONG, "open_short": SignalAction.SHORT}

@@ -347,10 +347,8 @@ class HybridDecisionEngine(DecisionEngine):
                 quant_score = quant_confidence
             elif quant_signal.action in (SignalAction.SHORT,):
                 quant_score = -quant_confidence
-            elif quant_signal.action == SignalAction.CLOSE_LONG:
-                quant_score = -quant_confidence * 0.6  # 平仓信号强度衰减
-            elif quant_signal.action == SignalAction.CLOSE_SHORT:
-                quant_score = quant_confidence * 0.6  # 平仓信号强度衰减
+            elif quant_signal.action in (SignalAction.CLOSE_LONG, SignalAction.CLOSE_SHORT):
+                quant_score = 0  # 平仓信号不参与方向分数，走独立平仓路径
 
         # Sentiment adjustment
         sentiment_adjustment = 0.0
@@ -400,6 +398,21 @@ class HybridDecisionEngine(DecisionEngine):
             action = "open_long"
         elif final_score < -SCORE_THRESHOLD and final_confidence > CONFIDENCE_THRESHOLD:
             action = "open_short"
+
+        # ── 独立平仓路径：量化明确平仓信号 + AI 不持反向观点 ──
+        if current_position and current_position.size > 0 and quant_signal:
+            if (current_position.side == "long"
+                    and quant_signal.action == SignalAction.CLOSE_LONG
+                    and quant_confidence >= 0.6
+                    and ai_score <= 0):
+                action = "close_long"
+                logger.info("独立平仓路径: quant CLOSE_LONG + AI 不看多")
+            elif (current_position.side == "short"
+                    and quant_signal.action == SignalAction.CLOSE_SHORT
+                    and quant_confidence >= 0.6
+                    and ai_score >= 0):
+                action = "close_short"
+                logger.info("独立平仓路径: quant CLOSE_SHORT + AI 不看空")
 
         # 持仓时反向信号 → 先平仓；同方向重复信号 → hold
         if current_position and current_position.size > 0:

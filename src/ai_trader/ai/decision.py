@@ -23,9 +23,10 @@ from ..strategies.strategy_base import SignalAction
 class DecisionEngine:
     """Trading decision engine with multi-timeframe analysis support"""
 
-    def __init__(self, llm_client: LLMClient):
+    def __init__(self, llm_client: LLMClient, prompt_enricher=None):
         self.llm = llm_client
         self.analyzer = MarketAnalyzer(llm_client)
+        self.prompt_enricher = prompt_enricher
 
     async def analyze_and_decide(
         self,
@@ -224,6 +225,21 @@ class DecisionEngine:
         # Calculate recent win rate (placeholder - should come from journal)
         recent_win_rate = 0.0  # TODO: Calculate from recent trades
 
+        # 动态注入历史表现和已验证规则
+        if self.prompt_enricher:
+            try:
+                performance_summary = await self.prompt_enricher.get_performance_summary(
+                    market.symbol
+                )
+                active_rules = await self.prompt_enricher.get_active_rules()
+            except Exception as e:
+                logger.warning(f"Prompt enricher failed: {e}")
+                performance_summary = "Performance data unavailable"
+                active_rules = "No validated rules yet"
+        else:
+            performance_summary = "Performance data unavailable"
+            active_rules = "No validated rules yet"
+
         user_prompt = TRADING_USER.format(
             mtf_summary=mtf_summary,
             trend=tech.trend,
@@ -259,6 +275,8 @@ class DecisionEngine:
             take_profit_percent=config.take_profit_percent,
             available_balance=f"{balance:.2f}",
             position_management_context=position_management_context,
+            performance_summary=performance_summary,
+            active_rules=active_rules,
         )
 
         response = await self.llm.chat(
