@@ -125,6 +125,38 @@ class OptimizationOrchestrator:
 
         return None
 
+    async def handle_advisory_suggestion(
+        self, param_name: str, new_value: float, reason: str = ""
+    ) -> bool:
+        """处理 Advisory 的参数调整建议，走影子验证流程
+
+        Returns:
+            True if shadow run was started, False if directly skipped
+        """
+        param = self.registry.get(param_name)
+        if not param or not param.is_within_bounds(new_value):
+            logger.warning(
+                f"Advisory param {param_name}={new_value} out of registry bounds, skip"
+            )
+            return False
+
+        if self.shadow_runner.is_running:
+            logger.info(
+                f"Shadow run in progress, cannot accept advisory param: {param_name}"
+            )
+            return False
+
+        current_params = self.registry.to_dict()
+        candidate_params = current_params.copy()
+        candidate_params[param_name] = new_value
+
+        run_id = await self.shadow_runner.start(current_params, candidate_params)
+        logger.info(
+            f"Advisory param suggestion → shadow run: {run_id}, "
+            f"{param_name}={new_value} ({reason})"
+        )
+        return True
+
     async def _save_parameter_changes(self, changes: dict, eval_result: dict) -> None:
         """记录参数变更到数据库"""
         if not self.db or not changes:

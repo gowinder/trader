@@ -1325,8 +1325,31 @@ class Scheduler:
                     return
 
             if suggestion_type == "param_adjust":
-                executor = ConfigExecutor(self._redis)
-                result = await executor.execute(action, target, detail)
+                # 中低紧急度 + Orchestrator 可用 → 转发到影子验证
+                urgency = detail.get("urgency", "medium")
+                routed_to_shadow = False
+
+                if urgency != "high" and self._optimization_orchestrator:
+                    tmp_executor = ConfigExecutor(self._redis)
+                    tmp_executor._unwrap_nested_values(detail)
+                    param_name = tmp_executor._detect_param_from_detail(detail)
+                    if not param_name:
+                        param_name = tmp_executor._detect_param_from_target(target)
+                    if param_name:
+                        value = detail.get(param_name) or tmp_executor._extract_value(detail)
+                        if value is not None and isinstance(value, (int, float)):
+                            routed_to_shadow = await self._optimization_orchestrator.handle_advisory_suggestion(
+                                param_name, float(value), reason=f"advisory:{action}"
+                            )
+                            if routed_to_shadow:
+                                result = ExecutionResult(
+                                    success=True,
+                                    message=f"{param_name}={value} 已提交影子验证，验证通过后自动应用",
+                                )
+
+                if not routed_to_shadow:
+                    executor = ConfigExecutor(self._redis)
+                    result = await executor.execute(action, target, detail)
             elif suggestion_type == "position_action":
                 if not self.position_mgr:
                     result = ExecutionResult(success=False, message="Position manager not initialized")
