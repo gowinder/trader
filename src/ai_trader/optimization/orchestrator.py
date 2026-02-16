@@ -86,6 +86,16 @@ class OptimizationOrchestrator:
 
         if result.get("should_switch"):
             candidate = self.shadow_runner._candidate_params
+
+            # 回测验证：参数应用前自动回测
+            backtest_ok = await self._backtest_before_apply(candidate)
+            if not backtest_ok:
+                await self.shadow_runner.complete(
+                    switched=False, conclusion="影子运行通过但回测验证不达标"
+                )
+                logger.info("影子运行通过但回测验证不达标，拒绝参数切换")
+                return None
+
             changes = {}
             for name, value in candidate.items():
                 param = self.registry.get(name)
@@ -148,3 +158,72 @@ class OptimizationOrchestrator:
             )
         except Exception as e:
             logger.error(f"Failed to publish config update: {e}")
+
+    async def _backtest_before_apply(self, candidate_params: dict) -> bool:
+        """参数应用前基于历史交易数据验证
+
+        查询最近 30 天已平仓交易，用候选参数的 stop_loss / take_profit
+        模拟过滤，检查胜率和盈亏是否达标。
+
+        Returns:
+            True 表示回测验证通过，允许应用
+        """
+        if not self.db:
+            return True
+
+        try:
+            rows = await self.db.fetch(
+                """
+                SELECT realized_pnl, pnl_percent, entry_price, exit_price, side
+                FROM position_history
+                WHERE status = 'closed'
+                  AND realized_pnl IS NOT NULL
+                  AND exit_time > NOW() - INTERVAL '30 days'
+                ORDER BY exit_time DESC
+                LIMIT 100
+                """
+            )
+        except Exception as e:
+            logger.warning(f"回测验证查询失败，跳过验证: {e}")
+            return True
+
+        if len(rows) < 10:
+            logger.info(f"回测验证样本不足 ({len(rows)} < 10)，跳过验证")
+            return True
+
+        sl_pct = candidate_params.get("stop_loss_percent", 5.0)
+        tp_pct = candidate_params.get("take_profit_percent", 10.0)
+
+        wins = 0
+        total_pnl = 0.0
+        peak_equity = 0.0
+        equity = 0.0
+        max_drawdown = 0.0
+
+        for row in rows:
+            pnl_pct = float(row.get("pnl_percent") or 0)
+            if pnl_pct < -sl_pct:
+                pnl_pct = -sl_pct
+            elif pnl_pct > tp_pct:
+                pnl_pct = tp_pct
+
+            total_pnl += pnl_pct
+            if pnl_pct > 0:
+                wins += 1
+
+            equity += pnl_pct
+            peak_equity = max(peak_equity, equity)
+            drawdown = peak_equity - equity
+            max_drawdown = max(max_drawdown, drawdown)
+
+        win_rate = wins / len(rows)
+        avg_pnl = total_pnl / len(rows)
+        max_dd_pct = max_drawdown / 100.0
+
+        passed = win_rate > 0.4 and avg_pnl > 0 and max_dd_pct < 0.15
+
+        logger.info(
+            f"回测验证: win_rate={win_rate:.0%}, avg_pnl={avg_pnl:+.2f}%, "
+            f"max_dd={max_dd_pct:.1%}, passed={passed}"
+        )
+        return passed

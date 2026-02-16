@@ -172,8 +172,76 @@ class DecisionPersistenceService:
                     "mixed",  # data_source
                 )
 
-            logger.info(f"决策已保存: {decision_id}, action={decision.action}")
+            # 5. 计算决策质量评分并写入 decisions 表
+            quality = self._compute_decision_quality(decision, market_data)
+            quality_score = quality.get("quality_score")
+            if quality_score is not None:
+                try:
+                    await conn.execute(
+                        "UPDATE decisions SET quality_score = $1 WHERE id = $2",
+                        quality_score,
+                        decision_id,
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to update quality_score: {e}")
+
+            logger.info(
+                f"决策已保存: {decision_id}, action={decision.action}, "
+                f"quality={quality_score}"
+            )
             return decision_id
+
+    def _compute_decision_quality(
+        self, decision: TradingDecision, market_data: MarketData
+    ) -> dict:
+        """评估 LLM 输出质量
+
+        检查价格偏差、止损距离、风险回报比等指标。
+
+        Returns:
+            quality_score (0-100) 和 issues 列表
+        """
+        # hold 动作不需要质量评分
+        if decision.action == "hold":
+            return {"quality_score": 100, "issues": []}
+
+        issues = []
+
+        # 检查价格合理性
+        if decision.entry_price and decision.entry_price > 0 and market_data.current_price > 0:
+            price_deviation = (
+                abs(decision.entry_price - market_data.current_price)
+                / market_data.current_price
+            )
+            if price_deviation > 0.05:
+                issues.append(f"entry_price偏差过大: {price_deviation:.1%}")
+
+        # 检查止损合理性
+        if decision.stop_loss_price and decision.entry_price and decision.entry_price > 0:
+            sl_distance = (
+                abs(decision.stop_loss_price - decision.entry_price)
+                / decision.entry_price
+            )
+            if sl_distance > 0.15 or sl_distance < 0.005:
+                issues.append(f"止损距离异常: {sl_distance:.1%}")
+
+        # 检查风险回报比
+        if (
+            decision.stop_loss_price
+            and decision.take_profit_price
+            and decision.entry_price
+        ):
+            risk = abs(decision.entry_price - decision.stop_loss_price)
+            reward = abs(decision.take_profit_price - decision.entry_price)
+            if risk > 0:
+                rr_ratio = reward / risk
+                if rr_ratio < 1.0:
+                    issues.append(f"风险回报比不足: {rr_ratio:.1f}")
+
+        return {
+            "quality_score": max(0, 100 - len(issues) * 20),
+            "issues": issues,
+        }
 
     async def update_decision_order(
         self, decision_id: UUID, order_id: UUID

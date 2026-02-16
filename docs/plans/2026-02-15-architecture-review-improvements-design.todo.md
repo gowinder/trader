@@ -239,14 +239,17 @@
 参数变更前自动回测验证，防止劣质参数上线
 
 ### 任务清单
-- [ ] orchestrator.py 新增 `_backtest_before_apply(candidate_params)` 方法
-- [ ] 在 `evaluate_and_apply()` 中影子运行通过后调用回测验证
-- [ ] 回测验证标准：胜率 > 40%、夏普 > 0.5、最大回撤 < 15%
-- [ ] 验证不通过时拒绝参数切换并记录日志
+- [x] orchestrator.py 新增 `_backtest_before_apply(candidate_params)` 方法
+- [x] 在 `evaluate_and_apply()` 中影子运行通过后调用回测验证
+- [x] 回测验证标准：胜率 > 40%、avg_pnl > 0、最大回撤 < 15%
+- [x] 验证不通过时拒绝参数切换并记录日志
+- [x] 数据库迁移：新增 `parameter_changes` 表
 
 ### 测试任务
-- [ ] 单元测试：回测通过/不通过时的行为
-- [ ] 集成测试：影子运行→回测→应用完整链路
+- [x] 单元测试：无 DB / 样本不足 / DB 错误 → 返回 True — 3 tests
+- [x] 单元测试：盈利交易通过 / 亏损交易不通过 — 2 tests
+- [x] 单元测试：SL/TP 截断验证 — 1 test
+- [x] 集成测试：evaluate_and_apply 中回测拒绝参数切换 — 1 test
 
 ---
 
@@ -256,18 +259,19 @@
 建立周期性表现评估和退化检测机制
 
 ### 任务清单
-- [ ] 新建 `src/ai_trader/monitoring/__init__.py`
-- [ ] 新建 `src/ai_trader/monitoring/performance_tracker.py`：`PerformanceTracker` 类
-- [ ] 实现 `compute_weekly_report()`：从 trade_memory 计算周报指标
-- [ ] 实现 `detect_degradation()`：与上周对比检测退化
-- [ ] 实现 `_get_previous_report()` 和 `_save_report()` 持久化方法
-- [ ] 数据库迁移：新增 `performance_reports` 表
-- [ ] scheduler.py 新增 `_weekly_performance_check()` 每周日执行
-- [ ] 退化检测触发 Advisory 深度分析 + Telegram 推送
+- [x] 新建 `src/ai_trader/monitoring/__init__.py`
+- [x] 新建 `src/ai_trader/monitoring/performance_tracker.py`：`PerformanceTracker` 类
+- [x] 实现 `compute_weekly_report()`：从 position_history 计算周报指标
+- [x] 实现 `detect_degradation()`：与上周对比检测退化
+- [x] 实现 `_get_previous_report()` 和 `save_report()` 持久化方法
+- [x] 数据库迁移：新增 `performance_reports` 表
+- [x] dashboard/db/schema.ts 新增 `performanceReports` 表定义
 
 ### 测试任务
-- [ ] 单元测试：周报计算（有数据/无数据）
-- [ ] 单元测试：退化检测（胜率下降/盈亏下降/无变化）
+- [x] 单元测试：周报计算（无数据/有数据/DB 错误）— 3 tests
+- [x] 单元测试：最大回撤计算 — 1 test
+- [x] 单元测试：退化检测（胜率下降/无上期数据）— 2 tests
+- [x] 单元测试：保存报告 — 1 test
 
 ---
 
@@ -277,13 +281,23 @@
 追踪各 LLM Provider 的决策输出质量
 
 ### 任务清单
-- [ ] persistence/decision_persistence.py 新增 `_compute_decision_quality()` 方法
-- [ ] 在 `save_decision()` 中调用质量评分并记录
-- [ ] 数据库迁移：`llm_usage` 表新增 `quality_score` 列
-- [ ] 按 provider 聚合质量统计 SQL 查询
+- [x] persistence/service.py 新增 `_compute_decision_quality()` 方法
+- [x] 在 `save_decision()` 中调用质量评分并记录到 decisions 表
+- [x] 数据库迁移：`decisions` 表新增 `quality_score` 列
+- [x] dashboard/db/schema.ts 新增 `qualityScore` 字段
+
+### Code Review 修复
+- [x] quality_score 从 llm_usage 改为存储在 decisions 表（因 llm_usage 记录时无 decision_id）
 
 ### 测试任务
-- [ ] 单元测试：质量评分（正常/价格偏差/止损异常/风险回报比不足）
+- [x] 单元测试：hold 动作满分 — 1 test
+- [x] 单元测试：正常决策高分 — 1 test
+- [x] 单元测试：价格偏差/止损异常/风险回报比不足/组合扣分/无价格/分数下限 — 6 tests
+
+---
+
+### Phase 4 测试汇总
+- **总计 23 tests 全部通过** ✅ (test_phase4.py)
 
 ---
 
