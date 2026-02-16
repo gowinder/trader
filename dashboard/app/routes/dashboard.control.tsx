@@ -9,11 +9,13 @@ import {
   SelectValue,
 } from "~/components/ui/select";
 import { Label } from "~/components/ui/label";
-import { Play, Pause, RefreshCw, Settings, Zap } from "lucide-react";
+import { Switch } from "~/components/ui/switch";
+import { Play, Pause, RefreshCw, Settings, Zap, Brain } from "lucide-react";
 
 interface TradingConfig {
   enabled: boolean;
   decisionInterval: number;
+  enableAutoOptimization?: boolean;
   lastTrigger?: string;
 }
 
@@ -211,6 +213,42 @@ export default function ControlPage() {
           <Button onClick={saveConfig} disabled={saving}>
             {saving ? "保存中..." : "保存配置"}
           </Button>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center justify-between">
+            <span className="flex items-center gap-2">
+              <Brain className="h-4 w-4" />
+              自动优化
+            </span>
+            <Switch
+              checked={config.enableAutoOptimization ?? false}
+              onCheckedChange={async (checked) => {
+                setConfig((prev) => ({ ...prev, enableAutoOptimization: checked }));
+                try {
+                  await fetch("/api/trading-config", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ enableAutoOptimization: checked }),
+                  });
+                  setMessage({
+                    type: "success",
+                    text: checked ? "自动优化已启用" : "自动优化已关闭",
+                  });
+                } catch {
+                  setMessage({ type: "error", text: "操作失败" });
+                }
+              }}
+            />
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground">
+            启用后，系统将自动进行复盘分析、影子验证和参数优化。Advisory
+            的中低紧急度参数建议将通过影子验证后再生效。
+          </p>
         </CardContent>
       </Card>
 

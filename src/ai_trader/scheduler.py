@@ -380,9 +380,43 @@ class Scheduler:
                 # Convert minutes to seconds
                 interval_minutes = cfg.get("decisionInterval", 1)
                 self._decision_interval = interval_minutes * 60
+                # 自动优化开关（Dashboard 优先，其次 env）
+                if "enableAutoOptimization" in cfg:
+                    await self._sync_auto_optimization(cfg["enableAutoOptimization"])
                 logger.info(f"Loaded trading config: enabled={self._trading_enabled}, interval={interval_minutes}m")
         except Exception as e:
             logger.error(f"Failed to load trading config: {e}")
+
+    async def _sync_auto_optimization(self, enabled: bool) -> None:
+        """动态启用/停用自动优化系统"""
+        was_enabled = self._optimization_orchestrator is not None
+
+        if enabled and not was_enabled and self._persistence_initialized:
+            # 启用：初始化 Orchestrator
+            try:
+                redis_url = config.redis_url if hasattr(config, "redis_url") else "redis://redis:6379"
+                if not self.reflection_client:
+                    self.reflection_client = ReflectionClient(redis_url)
+                    await self.reflection_client.connect()
+                if not self.shadow_runner:
+                    self.shadow_runner = ShadowRunner(self.db_manager)
+                if not self.memory_collector:
+                    self.memory_collector = TradeMemoryCollector(self.db_manager)
+                self._optimization_orchestrator = OptimizationOrchestrator(
+                    db=self.db_manager,
+                    shadow_runner=self.shadow_runner,
+                    parameter_registry=self.parameter_registry,
+                    redis_client=self._redis,
+                )
+                config.enable_auto_optimization = True
+                logger.info("Auto optimization enabled via Dashboard")
+            except Exception as e:
+                logger.error(f"Failed to enable auto optimization: {e}")
+        elif not enabled and was_enabled:
+            # 停用：清除 Orchestrator（保留子组件以便再次启用）
+            self._optimization_orchestrator = None
+            config.enable_auto_optimization = False
+            logger.info("Auto optimization disabled via Dashboard")
 
     async def _load_llm_providers_config(self):
         """从 Redis 加载 LLM provider 优先级配置"""
@@ -529,6 +563,9 @@ class Scheduler:
                             self._trading_enabled = cfg.get("enabled", True)
                             interval_minutes = cfg.get("decisionInterval", 1)
                             self._decision_interval = interval_minutes * 60
+                            # 自动优化开关动态切换
+                            if "enableAutoOptimization" in cfg:
+                                await self._sync_auto_optimization(cfg["enableAutoOptimization"])
                             # 同步交易对配置变更和运行时参数（加锁保证原子性）
                             async with self._config_lock:
                                 if "trading_symbols" in cfg:

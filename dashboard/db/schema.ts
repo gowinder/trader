@@ -1,5 +1,6 @@
 import {
   pgTable,
+  serial,
   uuid,
   varchar,
   text,
@@ -10,6 +11,7 @@ import {
   boolean,
   jsonb,
   date,
+  interval,
   primaryKey,
   index,
   uniqueIndex,
@@ -613,4 +615,128 @@ export const systemSettings = pgTable("system_settings", {
   key: varchar("key", { length: 50 }).primaryKey(),
   value: text("value").notNull(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// ==================== 自优化系统（Memory & Optimization） ====================
+
+export const tradeMemory = pgTable(
+  "trade_memory",
+  {
+    id: serial("id").primaryKey(),
+    tradeId: varchar("trade_id", { length: 64 }).unique().notNull(),
+    timestamp: timestamp("timestamp", { withTimezone: true }).notNull(),
+    symbol: varchar("symbol", { length: 20 }).notNull(),
+
+    action: varchar("action", { length: 20 }).notNull(),
+    confidence: decimal("confidence"),
+    leverage: decimal("leverage"),
+    reasoning: text("reasoning"),
+
+    marketState: varchar("market_state", { length: 20 }),
+    timeframeAlignment: jsonb("timeframe_alignment"),
+    technicalSnapshot: jsonb("technical_snapshot"),
+    patternsDetected: jsonb("patterns_detected"),
+
+    entryPrice: decimal("entry_price"),
+    exitPrice: decimal("exit_price"),
+    pnlPercent: decimal("pnl_percent"),
+    maxAdverseExcursion: decimal("max_adverse_excursion"),
+    maxFavorableExcursion: decimal("max_favorable_excursion"),
+    holdingDuration: interval("holding_duration"),
+
+    hourOfDay: integer("hour_of_day"),
+    dayOfWeek: integer("day_of_week"),
+    consecutiveLosses: integer("consecutive_losses"),
+    isWinner: boolean("is_winner"),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+  },
+  (table) => ({
+    timestampIdx: index("idx_trade_memory_timestamp").on(table.timestamp),
+    symbolIdx: index("idx_trade_memory_symbol").on(table.symbol),
+    marketStateIdx: index("idx_trade_memory_market_state").on(table.marketState),
+  })
+);
+
+export const distilledRules = pgTable(
+  "distilled_rules",
+  {
+    id: serial("id").primaryKey(),
+    ruleId: varchar("rule_id", { length: 64 }).unique().notNull(),
+
+    condition: jsonb("condition").notNull(),
+    recommendation: jsonb("recommendation").notNull(),
+    reasoning: text("reasoning"),
+
+    sampleSize: integer("sample_size").notNull(),
+    winRate: decimal("win_rate").notNull(),
+    avgPnl: decimal("avg_pnl").notNull(),
+    pValue: decimal("p_value").notNull(),
+
+    status: varchar("status", { length: 20 }).default("candidate"),
+    validationCount: integer("validation_count").default(0),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+    lastValidated: timestamp("last_validated", { withTimezone: true }),
+  },
+  (table) => ({
+    statusIdx: index("idx_distilled_rules_status").on(table.status),
+  })
+);
+
+export const parameterHistory = pgTable(
+  "parameter_history",
+  {
+    id: serial("id").primaryKey(),
+    paramName: varchar("param_name", { length: 64 }).notNull(),
+    oldValue: decimal("old_value").notNull(),
+    newValue: decimal("new_value").notNull(),
+    triggerType: varchar("trigger_type", { length: 20 }),
+    reasoning: text("reasoning"),
+    changedAt: timestamp("changed_at", { withTimezone: true }).defaultNow(),
+  },
+  (table) => ({
+    paramIdx: index("idx_parameter_history_param").on(table.paramName),
+  })
+);
+
+export const shadowRuns = pgTable(
+  "shadow_runs",
+  {
+    id: serial("id").primaryKey(),
+    runId: varchar("run_id", { length: 64 }).unique().notNull(),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull(),
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+
+    currentParams: jsonb("current_params").notNull(),
+    candidateParams: jsonb("candidate_params").notNull(),
+
+    currentTrades: integer("current_trades").default(0),
+    candidateTrades: integer("candidate_trades").default(0),
+    currentWinRate: decimal("current_win_rate"),
+    candidateWinRate: decimal("candidate_win_rate"),
+    currentAvgPnl: decimal("current_avg_pnl"),
+    candidateAvgPnl: decimal("candidate_avg_pnl"),
+
+    status: varchar("status", { length: 20 }).default("running"),
+    conclusion: text("conclusion"),
+  },
+  (table) => ({
+    statusIdx: index("idx_shadow_runs_status").on(table.status),
+  })
+);
+
+export const reflectionLogs = pgTable("reflection_logs", {
+  id: serial("id").primaryKey(),
+  reflectionId: varchar("reflection_id", { length: 64 }).unique().notNull(),
+  triggeredAt: timestamp("triggered_at", { withTimezone: true }).notNull(),
+  tradesAnalyzed: integer("trades_analyzed").notNull(),
+
+  summary: text("summary"),
+  insights: jsonb("insights"),
+  candidateRules: jsonb("candidate_rules"),
+  parameterSuggestions: jsonb("parameter_suggestions"),
+
+  rulesCreated: integer("rules_created").default(0),
+  shadowRunStarted: boolean("shadow_run_started").default(false),
 });
