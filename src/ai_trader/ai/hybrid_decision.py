@@ -329,28 +329,28 @@ class HybridDecisionEngine(DecisionEngine):
         logger.info(f"Decision weights: {weights}")
 
         # Convert signals to numeric scores (-1 to +1)
-        # AI signal
-        ai_score = 0.0
-        if "long" in base_decision.action.lower():
-            ai_score = 0.5
-        elif "short" in base_decision.action.lower():
-            ai_score = -0.5
-
+        # AI signal: use confidence as magnitude instead of fixed 0.5
         ai_confidence = base_decision.confidence / 100.0  # Normalize to 0-1
 
-        # Quant signal
+        ai_score = 0.0
+        if "long" in base_decision.action.lower():
+            ai_score = ai_confidence
+        elif "short" in base_decision.action.lower():
+            ai_score = -ai_confidence
+
+        # Quant signal: use confidence as magnitude
         quant_score = 0.0
         quant_confidence = 0.0
         if quant_signal:
-            if quant_signal.action in (SignalAction.LONG,):
-                quant_score = 0.5
-            elif quant_signal.action in (SignalAction.SHORT,):
-                quant_score = -0.5
-            elif quant_signal.action == SignalAction.CLOSE_LONG:
-                quant_score = -0.3  # 平多头 = 偏空信号
-            elif quant_signal.action == SignalAction.CLOSE_SHORT:
-                quant_score = 0.3  # 平空头 = 偏多信号
             quant_confidence = quant_signal.confidence
+            if quant_signal.action in (SignalAction.LONG,):
+                quant_score = quant_confidence
+            elif quant_signal.action in (SignalAction.SHORT,):
+                quant_score = -quant_confidence
+            elif quant_signal.action == SignalAction.CLOSE_LONG:
+                quant_score = -quant_confidence * 0.6  # 平仓信号强度衰减
+            elif quant_signal.action == SignalAction.CLOSE_SHORT:
+                quant_score = quant_confidence * 0.6  # 平仓信号强度衰减
 
         # Sentiment adjustment
         sentiment_adjustment = 0.0
@@ -368,13 +368,29 @@ class HybridDecisionEngine(DecisionEngine):
         final_score = weighted_direction + sentiment_adjustment * weights.get("sentiment", 0.0)
 
         # Calculate weighted confidence (all in 0-1 scale)
-        final_confidence = (
-            ai_confidence * weights["ai"] +
-            quant_confidence * weights["quant"]
-        )
+        # When quant signal is HOLD, exclude it from confidence fusion
+        # to avoid diluting AI's directional confidence
+        quant_is_hold = quant_signal and quant_signal.action == SignalAction.HOLD
 
-        if sentiment_result:
-            final_confidence += sentiment_result.confidence * weights["sentiment"]
+        if quant_is_hold:
+            # Only use directional signal sources for confidence
+            active_conf = {"ai": (ai_confidence, weights["ai"])}
+            if sentiment_result:
+                active_conf["sentiment"] = (sentiment_result.confidence, weights["sentiment"])
+            total_active_w = sum(w for _, w in active_conf.values())
+            if total_active_w > 0:
+                final_confidence = sum(
+                    c * (w / total_active_w) for c, w in active_conf.values()
+                )
+            else:
+                final_confidence = ai_confidence
+        else:
+            final_confidence = (
+                ai_confidence * weights["ai"] +
+                quant_confidence * weights["quant"]
+            )
+            if sentiment_result:
+                final_confidence += sentiment_result.confidence * weights["sentiment"]
 
         # Determine final action
         SCORE_THRESHOLD = 0.15

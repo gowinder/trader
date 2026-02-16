@@ -320,10 +320,17 @@ class MultiTimeframeManager:
         if macd_signal != MACDSignal.NEUTRAL:
             confidence += 0.3
 
-        # RSI not in extreme zones (not oversold or overbought)
+        # RSI evaluation: consider trend direction
         rsi = indicators.rsi
-        if 30 < rsi < 70:
-            confidence += 0.2
+        if trend == TrendDirection.UPTREND:
+            if rsi > 50:
+                confidence += 0.2
+        elif trend == TrendDirection.DOWNTREND:
+            if rsi < 50:
+                confidence += 0.2
+        else:
+            if 30 < rsi < 70:
+                confidence += 0.2
 
         # Clear trend
         if trend != TrendDirection.SIDEWAYS:
