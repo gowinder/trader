@@ -170,6 +170,28 @@ class TradingConfig(BaseSettings):
         default=False, description="启用决策数据持久化到 Dashboard 数据库"
     )
 
+    # ============= 资金安全 / 风控 =============
+    daily_loss_limit_percent: float = Field(
+        default=3.0, validation_alias="DAILY_LOSS_LIMIT_PERCENT",
+        description="Daily max loss as % of account equity, triggers trading halt",
+    )
+    consecutive_halt_days_for_break: int = Field(
+        default=2, validation_alias="CONSECUTIVE_HALT_DAYS_FOR_BREAK",
+        description="How many consecutive halt-days trigger a forced break",
+    )
+    forced_break_days: int = Field(
+        default=7, validation_alias="FORCED_BREAK_DAYS",
+        description="Days to pause trading after consecutive halt-days exceeded",
+    )
+    signal_min_interval_hours: float = Field(
+        default=4.0, validation_alias="SIGNAL_MIN_INTERVAL_HOURS",
+        description="Min hours between same-direction open signals per symbol",
+    )
+    signal_reverse_cooldown_hours: float = Field(
+        default=12.0, validation_alias="SIGNAL_REVERSE_COOLDOWN_HOURS",
+        description="Cooldown hours before allowing direction flip (LONG->SHORT)",
+    )
+
     # ============= 记忆与自优化配置 =============
     enable_auto_optimization: bool = Field(
         default=False, description="启用自动参数优化"
