@@ -171,6 +171,7 @@ class HybridDecisionEngine(DecisionEngine):
 
         # Step 2: Quantitative strategy signals
         quant_signal = None
+        market_state = None
         if self.strategy_selector and config.enable_quant_strategies:
             try:
                 # Classify market state
@@ -247,6 +248,20 @@ class HybridDecisionEngine(DecisionEngine):
         # Step 6: Persist decision to database
         if self.persistence_service:
             try:
+                # 构建策略信号数据（供权重优化器查询）
+                _market_state_str = None
+                _strategy_signals_dict = None
+                if market_state is not None:
+                    _market_state_str = market_state.state.value
+                if quant_signal is not None:
+                    _strategy_signals_dict = {
+                        name: {
+                            "action": quant_signal.action.value,
+                            "confidence": quant_signal.confidence,
+                        }
+                        for name in quant_signal.contributing_strategies
+                    }
+
                 await self.persistence_service.save_decision(
                     decision=decision,
                     technical=tech_result,
@@ -256,6 +271,8 @@ class HybridDecisionEngine(DecisionEngine):
                     llm_provider=config.llm_provider,
                     llm_model=config.llm_model,
                     strategy_preset=self.active_preset_name,
+                    market_state=_market_state_str,
+                    strategy_signals=_strategy_signals_dict,
                 )
             except Exception as e:
                 logger.error(f"Failed to persist decision: {e}")
