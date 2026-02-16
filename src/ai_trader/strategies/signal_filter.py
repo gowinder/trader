@@ -8,13 +8,15 @@ from .strategy_base import SignalAction
 class SignalFilter:
     """Filter signals to reduce overtrading"""
 
-    def __init__(self, min_interval_hours: int = 6):
+    def __init__(self, min_interval_hours: float = 6, reverse_cooldown_hours: float = 24):
         """Initialize signal filter
 
         Args:
             min_interval_hours: Minimum hours between trades
+            reverse_cooldown_hours: Cooldown hours before allowing direction flip
         """
         self.min_interval_hours = min_interval_hours
+        self.reverse_cooldown_hours = reverse_cooldown_hours
         self.last_trade_time: Optional[datetime] = None
         self.last_action: Optional[SignalAction] = None
 
@@ -50,7 +52,7 @@ class SignalFilter:
         if self.last_action is not None:
             if self._is_opposite_action(self.last_action, action):
                 time_since_last = current_time - self.last_trade_time
-                if time_since_last < timedelta(hours=24):
+                if time_since_last < timedelta(hours=self.reverse_cooldown_hours):
                     return (
                         False,
                         f"Action flip too quick ({self.last_action.value} -> {action.value})",

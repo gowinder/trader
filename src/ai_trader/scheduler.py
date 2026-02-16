@@ -3,6 +3,7 @@
 import asyncio
 import json
 from dataclasses import dataclass
+from datetime import datetime as _dt, timedelta as _td
 from typing import Optional
 from uuid import UUID
 
@@ -31,6 +32,8 @@ from .memory import TradeMemoryCollector
 from .ai.usage_tracker import get_usage_tracker
 from .reflection.service import ReflectionClient
 from .optimization import ParameterRegistry, ShadowRunner
+from .strategies.signal_filter import SignalFilter
+from .strategies.strategy_base import SignalAction
 from .advisory.service import AdvisoryService
 from .advisory.engine import AdvisoryEngine
 from .advisory.llm_client import AdvisoryLLMClient
@@ -93,6 +96,16 @@ class Scheduler:
         # Strategy preset
         self._active_preset_name: Optional[str] = None
         self._strategy_preset_service: Optional[StrategyPresetService] = None
+
+        # Signal filters per symbol (anti-overtrade)
+        self._signal_filters: dict[str, SignalFilter] = {}
+
+        # Daily PnL tracking for loss-limit circuit breaker
+        self._daily_pnl: dict[str, float] = {}  # symbol -> cumulative PnL today
+        self._daily_pnl_date: str = ""  # current trading day YYYY-MM-DD
+        self._trading_halted: bool = False  # set True when daily loss limit hit
+        self._halt_until: Optional[str] = None  # ISO date string for forced-break end
+        self._halt_consecutive_days: int = 0  # consecutive days that hit loss limit
 
     def _get_symbol_lock(self, symbol: str) -> asyncio.Lock:
         """获取 symbol 级别的锁，防止 advisory 执行与主循环并发操作同一 symbol"""
@@ -764,6 +777,17 @@ class Scheduler:
         await self._init_advisory()
 
         while self.running:
+            # ── Daily PnL reset ──
+            today_str = _dt.utcnow().strftime("%Y-%m-%d")
+            if today_str != self._daily_pnl_date:
+                # 如果昨天没有触发 halt，重置连续天数
+                if not self._trading_halted:
+                    self._halt_consecutive_days = 0
+                self._daily_pnl = {}
+                self._daily_pnl_date = today_str
+                self._trading_halted = False
+                logger.info(f"新交易日: {today_str}, 每日盈亏统计已重置")
+
             # Check if trading is enabled
             if not self._trading_enabled:
                 logger.debug("Trading paused, waiting...")
@@ -1025,6 +1049,9 @@ class Scheduler:
                         is_win=pnl > 0,
                     )
 
+                    # 累加每日盈亏（用于 daily loss limit 断路器）
+                    self._daily_pnl[symbol] = self._daily_pnl.get(symbol, 0) + pnl
+
                     logger.info(f"Position closed and persisted: {self._current_position_ids.get(symbol)}, pnl={pnl:.2f}")
                     self._current_position_ids.pop(symbol, None)
 
@@ -1081,6 +1108,10 @@ class Scheduler:
                         pnl=pnl,
                         is_win=pnl > 0,
                     )
+
+                    # 累加每日盈亏（用于 daily loss limit 断路器）
+                    self._daily_pnl[symbol] = self._daily_pnl.get(symbol, 0) + pnl
+
                     logger.info(f"Partial position close persisted, pnl={pnl:.2f}")
 
                     # 发送减仓通知
@@ -1680,6 +1711,51 @@ class Scheduler:
                     await self._publish_account_state(symbol, account, position, market_data.current_price)
                     return
 
+        # ── 每日亏损限制检查（在 LLM 决策之前）──
+        if self._halt_until:
+            if _dt.utcnow().strftime("%Y-%m-%d") < self._halt_until:
+                logger.warning(f"强制休息中，截止: {self._halt_until}")
+                return
+            else:
+                self._trading_halted = False
+                self._halt_until = None
+                self._halt_consecutive_days = 0
+                logger.info("强制休息期结束，连续触发天数已重置")
+
+        if self._trading_halted:
+            # 有持仓时仍允许进入决策（后续只执行平仓）
+            if not (position and position.size > 0):
+                logger.warning("每日亏损限制已触发，跳过本轮决策")
+                return
+
+        daily_pnl_total = sum(self._daily_pnl.values())
+        max_daily_loss = equity * (config.daily_loss_limit_percent / 100)
+        if daily_pnl_total < 0 and abs(daily_pnl_total) >= max_daily_loss:
+            self._trading_halted = True
+            halt_reason = (
+                f"当日亏损 {daily_pnl_total:.2f} USDT 超出限额 "
+                f"{max_daily_loss:.2f} USDT ({config.daily_loss_limit_percent}%)"
+            )
+            logger.warning(f"每日亏损限制触发: {halt_reason}")
+
+            # 检查连续触发天数 — 如果 _daily_pnl_date 的前 N-1 天也触发了，则强制休息
+            # 简单实现：利用已有的 _halt_consecutive_days 计数
+            self._halt_consecutive_days += 1
+            if self._halt_consecutive_days >= config.consecutive_halt_days_for_break:
+                break_end = _dt.utcnow() + _td(days=config.forced_break_days)
+                self._halt_until = break_end.strftime("%Y-%m-%d")
+                logger.warning(
+                    f"连续 {self._halt_consecutive_days} 天触发亏损限制，"
+                    f"强制休息至 {self._halt_until}"
+                )
+                halt_reason += f"\n连续触发 {self._halt_consecutive_days} 天，强制休息至 {self._halt_until}"
+
+            if self._notification_manager:
+                await self._notification_manager.notify_alert(
+                    f"⚠️ 每日亏损限制触发\n{halt_reason}"
+                )
+            return  # 跳过本轮决策
+
         # 2. 决策
         try:
             decision, tech, risk = await self.decision_engine.analyze_and_decide(
@@ -1697,6 +1773,29 @@ class Scheduler:
                 confidence=decision.confidence,
                 reasoning=decision.reasoning_zh or decision.reasoning,
             )
+
+        # ── halt 状态下只允许平仓操作 ──
+        if self._trading_halted and decision.action in ("open_long", "open_short"):
+            logger.info(f"每日亏损限制已触发，拦截开仓信号: {decision.action} -> hold")
+            decision.action = "hold"
+            decision.reasoning += "\n[DailyLossLimit] 当日亏损限制已触发，禁止开新仓"
+
+        # ── 信号过滤（防过度交易）──
+        if decision.action in ("open_long", "open_short"):
+            if symbol not in self._signal_filters:
+                self._signal_filters[symbol] = SignalFilter(
+                    min_interval_hours=config.signal_min_interval_hours,
+                    reverse_cooldown_hours=config.signal_reverse_cooldown_hours,
+                )
+            sf = self._signal_filters[symbol]
+            action_map = {"open_long": SignalAction.LONG, "open_short": SignalAction.SHORT}
+            allowed, filter_reason = sf.should_allow_signal(
+                action_map[decision.action], _dt.utcnow()
+            )
+            if not allowed:
+                logger.info(f"[SignalFilter] {symbol} {decision.action} -> hold: {filter_reason}")
+                decision.action = "hold"
+                decision.reasoning += f"\n[SignalFilter] {filter_reason}"
 
         # 3. 执行
         order_id = None
@@ -1750,6 +1849,13 @@ class Scheduler:
                     else:
                         order_id = await self.order_mgr.execute_order(
                             decision, symbol, quantity
+                        )
+
+                    # 更新 SignalFilter 状态（开仓成功后记录）
+                    if order_id and decision.action in ("open_long", "open_short") and symbol in self._signal_filters:
+                        action_map = {"open_long": SignalAction.LONG, "open_short": SignalAction.SHORT}
+                        self._signal_filters[symbol].record_trade(
+                            action_map[decision.action], _dt.utcnow()
                         )
 
                     # Persist position changes
