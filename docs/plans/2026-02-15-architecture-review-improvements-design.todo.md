@@ -21,25 +21,29 @@
 ### 任务清单
 
 #### 1.1 每日亏损限制集成
-- [ ] config.py 新增配置项：`daily_loss_limit_percent`、`consecutive_halt_days_for_break`、`forced_break_days`
-- [ ] scheduler.py 新增每日盈亏追踪属性：`_daily_pnl`、`_daily_pnl_date`、`_trading_halted`、`_halt_until`
-- [ ] scheduler.py `_run_trading_loop` 中实现每日重置逻辑（UTC 00:00）
-- [ ] scheduler.py `_run_cycle_for_symbol_impl` 中在 SL/TP 检查后、LLM 决策前插入每日亏损限制检查
-- [ ] scheduler.py `_persist_position_change` 平仓逻辑中累加 `_daily_pnl`
-- [ ] 触发时发送 Telegram 告警通知
-- [ ] 实现连续触发 N 天 → 强制休息逻辑
+- [x] config.py 新增配置项：`daily_loss_limit_percent`、`consecutive_halt_days_for_break`、`forced_break_days`
+- [x] scheduler.py 新增每日盈亏追踪属性：`_daily_pnl`、`_daily_pnl_date`、`_trading_halted`、`_halt_until`、`_halt_consecutive_days`
+- [x] scheduler.py `start()` 主循环中实现每日重置逻辑（UTC 00:00）
+- [x] scheduler.py `_run_cycle_for_symbol_impl` 中在 SL/TP 检查后、LLM 决策前插入每日亏损限制检查
+- [x] scheduler.py `_persist_position_change` 平仓/减仓逻辑中累加 `_daily_pnl`
+- [x] 触发时发送 Telegram 告警通知
+- [x] 实现连续触发 N 天 → 强制休息逻辑
+- [x] 强制休息结束后重置 `_halt_consecutive_days`（Code Review 修复）
+- [x] halt 状态下有持仓时允许 LLM 平仓操作（Code Review 修复）
 
 #### 1.2 SignalFilter 集成主循环
-- [ ] scheduler.py `__init__` 初始化 `_signal_filters: Dict[str, SignalFilter]`
-- [ ] config.py 新增 `signal_min_interval_hours`、`signal_reverse_cooldown_hours` 配置项
-- [ ] scheduler.py `_run_cycle_for_symbol_impl` 中 LLM 决策后、订单执行前插入信号过滤
-- [ ] 订单执行成功后调用 `signal_filter.record_trade()` 更新状态
-- [ ] 确认 SignalFilter 的 `should_allow_signal` 和 `record_trade` 方法接口满足需求，不满足则补充
+- [x] scheduler.py `__init__` 初始化 `_signal_filters: Dict[str, SignalFilter]`
+- [x] config.py 新增 `signal_min_interval_hours`、`signal_reverse_cooldown_hours` 配置项
+- [x] scheduler.py `_run_cycle_for_symbol_impl` 中 LLM 决策后、订单执行前插入信号过滤
+- [x] 订单执行成功后调用 `signal_filter.record_trade()` 更新状态（仅 order_id 有效时）
+- [x] SignalFilter 增强：`min_interval_hours` 改为 float，新增 `reverse_cooldown_hours` 参数
 
 ### 测试任务
-- [ ] 单元测试：每日亏损限制检查逻辑（正常/触发/连续触发/日期重置）
-- [ ] 单元测试：信号过滤器在主循环中的集成（时间间隔过滤/反向冷却/正常放行）
-- [ ] 集成测试：模拟多轮决策循环，验证亏损限制和信号过滤协同工作
+- [x] 单元测试：每日亏损限制检查逻辑（正常/触发/连续触发/日期重置/强制休息）— 9 tests
+- [x] 单元测试：信号过滤器基础功能 + 反向冷却 + float interval + reset — 10 tests
+- [x] 单元测试：信号过滤器集成（快速开仓拦截/平仓不过滤/失败不记录/symbol 隔离）— 4 tests
+- [x] 单元测试：Phase 1 新增配置项默认值及环境变量覆盖 — 6 tests
+- [x] **总计 29 tests 全部通过** ✅
 
 ---
 
