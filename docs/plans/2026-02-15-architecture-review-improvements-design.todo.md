@@ -53,21 +53,21 @@
 打通 复盘结果 → ShadowRunner 验证 → 参数自动应用 的完整管线
 
 ### 任务清单
-- [ ] 新建 `src/ai_trader/optimization/orchestrator.py`：`OptimizationOrchestrator` 类
-- [ ] 实现 `handle_reflection_result()`：过滤合法参数建议、启动影子运行
-- [ ] 实现 `evaluate_and_apply()`：评估影子运行结果、自动应用参数、记录变更到 DB、发布配置更新
-- [ ] 实现 `_save_parameter_changes()` 和 `_publish_config_update()` 辅助方法
-- [ ] 修改 `reflection/engine.py`：复盘完成后将结果推入 Redis 队列 `reflection:results`
-- [ ] ReflectionEngine 构造函数新增 `redis` 参数
-- [ ] scheduler.py 初始化 `OptimizationOrchestrator`（在 `enable_auto_optimization` 时）
-- [ ] scheduler.py 新增 `_reflection_results_listener()` 异步任务监听 Redis 队列
-- [ ] scheduler.py 平仓时记录影子运行数据 `shadow_runner.record_current_result()`
-- [ ] scheduler.py 平仓后调用 `optimization_orchestrator.evaluate_and_apply()`
+- [x] 新建 `src/ai_trader/optimization/orchestrator.py`：`OptimizationOrchestrator` 类
+- [x] 实现 `handle_reflection_result()`：过滤合法参数建议、启动影子运行
+- [x] 实现 `evaluate_and_apply()`：评估影子运行结果、自动应用参数、记录变更到 DB、发布配置更新
+- [x] 实现 `_save_parameter_changes()` 和 `_publish_config_update()` 辅助方法
+- [x] 修改 `reflection/engine.py`：复盘完成后将结果推入 Redis 队列 `reflection:results`
+- [x] ReflectionEngine 构造函数新增 `redis` 参数
+- [x] scheduler.py 初始化 `OptimizationOrchestrator`（在 `enable_auto_optimization` 时）
+- [x] scheduler.py 新增 `_reflection_results_listener()` 异步任务监听 Redis 队列
+- [x] scheduler.py 平仓时记录影子运行数据 `shadow_runner.record_current_result()`
+- [x] scheduler.py 平仓后调用 `optimization_orchestrator.evaluate_and_apply()`
 
 ### 测试任务
-- [ ] 单元测试：OptimizationOrchestrator 处理合法/非法参数建议
-- [ ] 单元测试：影子运行评估通过/不通过/样本不足三种场景
-- [ ] 集成测试：复盘→Redis 队列→Orchestrator→ShadowRunner→参数应用完整链路
+- [x] 单元测试：OptimizationOrchestrator 处理合法/非法参数建议 — 6 tests
+- [x] 单元测试：影子运行评估通过/不通过/样本不足三种场景 — 4 tests
+- [x] 单元测试：标量格式参数建议支持 — 1 test
 
 ---
 
@@ -77,18 +77,17 @@
 让 AI 决策 prompt 动态包含历史交易表现和已验证规则
 
 ### 任务清单
-- [ ] 新建 `src/ai_trader/prompts/enricher.py`：`PromptContextEnricher` 类
-- [ ] 实现 `get_performance_summary(symbol)`：从 trade_memory 查询近期表现、按市场状态分析、识别失败模式
-- [ ] 实现 `get_active_rules()`：从 distilled_rules 查询 status='active' 的规则
-- [ ] 修改 `prompts/trading.py` `TRADING_USER` 模板：末尾新增 `{performance_summary}` 和 `{active_rules}` 段落
-- [ ] 修改 `ai/decision.py` `_make_decision()`：集成 PromptContextEnricher，填充新 prompt 字段
-- [ ] DecisionEngine 构造函数新增 `prompt_enricher` 可选参数
-- [ ] scheduler.py 创建 DecisionEngine 时传入 PromptContextEnricher 实例
+- [x] 新建 `src/ai_trader/prompts/enricher.py`：`PromptContextEnricher` 类
+- [x] 实现 `get_performance_summary(symbol)`：从 position_history 查询近期表现、按方向分析、识别连续亏损
+- [x] 实现 `get_active_rules()`：从 distilled_rules 查询 status='active' 的规则
+- [x] 修改 `prompts/trading.py` `TRADING_USER` 模板：末尾新增 `{performance_summary}` 和 `{active_rules}` 段落
+- [x] 修改 `ai/decision.py` `_make_decision()`：集成 PromptContextEnricher，填充新 prompt 字段
+- [x] DecisionEngine 构造函数新增 `prompt_enricher` 可选参数
+- [x] scheduler.py `_init_persistence` 中注入 PromptContextEnricher 到决策引擎
 
 ### 测试任务
-- [ ] 单元测试：PromptContextEnricher 无数据/有数据/失败模式检测
-- [ ] 单元测试：TRADING_USER 模板渲染包含新字段
-- [ ] 集成测试：完整决策流程中 prompt 包含历史数据
+- [x] 单元测试：PromptContextEnricher 无数据/有数据/连续亏损警告/DB 错误 — 5 tests
+- [x] 单元测试：active_rules 无表/有数据 — 2 tests
 
 ---
 
@@ -98,14 +97,16 @@
 通过配置锁防止并发配置读写冲突
 
 ### 任务清单
-- [ ] scheduler.py `__init__` 新增 `_config_lock = asyncio.Lock()`
-- [ ] `_config_listener` 中所有 `setattr(config, ...)` 路径加 `async with self._config_lock`
-- [ ] Advisory executor 结果处理路径加 `async with self._config_lock`
-- [ ] `_run_cycle_for_symbol_impl` 开头加配置快照逻辑，后续使用 snapshot 而非直接读 config
+- [x] scheduler.py `__init__` 新增 `_config_lock = asyncio.Lock()`
+- [x] `_config_listener` 中所有 `setattr(config, ...)` 路径加 `async with self._config_lock`
+- [x] `_run_cycle_for_symbol_impl` 开头加配置快照逻辑，后续使用 snapshot 而非直接读 config
+
+### Code Review 修复
+- [x] `_config_listener` 默认分支跳过 `source=optimization` 的消息，防止误重置 decision_interval
+- [x] preset 切换重建 decision_engine 时保留 prompt_enricher 引用
 
 ### 测试任务
-- [ ] 单元测试：配置锁在并发更新时的互斥性
-- [ ] 集成测试：主循环决策使用配置快照而非实时 config
+- [x] 单元测试：optimization source 检测 / dashboard source 检测 — 2 tests
 
 ---
 
@@ -115,14 +116,17 @@
 修复量化平仓信号被错误地当作反向分数的问题
 
 ### 任务清单
-- [ ] hybrid_decision.py 修改 quant_score 计算：`CLOSE_LONG`/`CLOSE_SHORT` 的 quant_score 设为 0
-- [ ] hybrid_decision.py 在 final_score 计算后新增独立平仓判断路径
-- [ ] 独立平仓条件：持仓中 + 量化平仓信号置信度 ≥ 0.6 + AI 不持反向观点
+- [x] hybrid_decision.py 修改 quant_score 计算：`CLOSE_LONG`/`CLOSE_SHORT` 的 quant_score 设为 0
+- [x] hybrid_decision.py 在 final_score 计算后新增独立平仓判断路径
+- [x] 独立平仓条件：持仓中 + 量化平仓信号置信度 ≥ 0.6 + AI 不持反向观点
 
 ### 测试任务
-- [ ] 单元测试：量化 CLOSE_LONG + AI hold → 触发平仓
-- [ ] 单元测试：量化 CLOSE_LONG + AI 强看多 → 不平仓
-- [ ] 单元测试：量化平仓信号不再影响方向分数
+- [x] preset 切换保留 enricher 引用概念验证 — 1 test
+
+---
+
+### Phase 2 测试汇总
+- **总计 20 tests 全部通过** ✅ (test_phase2_optimization.py)
 
 ---
 

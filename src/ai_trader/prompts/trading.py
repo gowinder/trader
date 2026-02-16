@@ -105,6 +105,12 @@ TRADING_USER = """## Multi-Timeframe Analysis Summary
 ## Position Management Context
 {position_management_context}
 
+## Historical Performance (Your Recent Track Record)
+{performance_summary}
+
+## Validated Trading Rules (Learned from Past Trades)
+{active_rules}
+
 Please make a trading decision following professional multi-timeframe methodology and trading discipline constraints."""
 
 TRADING_SCHEMA = {

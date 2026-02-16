@@ -26,6 +26,7 @@ class ReflectionEngine:
         llm_client: "LLMClient",
         db: "DatabaseManager",
         parameter_registry: Optional[ParameterRegistry] = None,
+        redis_client=None,
     ):
         """初始化复盘引擎
 
@@ -33,10 +34,12 @@ class ReflectionEngine:
             llm_client: LLM 客户端
             db: 数据库管理器
             parameter_registry: 参数注册表（可选）
+            redis_client: Redis 客户端（可选，推送复盘结果供 orchestrator 消费）
         """
         self.llm = llm_client
         self.db = db
         self.registry = parameter_registry or ParameterRegistry()
+        self.redis = redis_client
 
     async def run_reflection(self, memories: list[TradeMemoryEntry]) -> dict:
         """运行复盘分析
@@ -63,6 +66,16 @@ class ReflectionEngine:
 
         # 保存复盘记录
         await self._save_reflection(reflection_id, len(memories), result)
+
+        # 推送复盘结果到 Redis 队列，供 OptimizationOrchestrator 消费
+        if self.redis:
+            try:
+                await self.redis.lpush(
+                    "reflection:results", json.dumps(result, ensure_ascii=False)
+                )
+                logger.info(f"复盘结果已推送到 Redis 队列: {reflection_id}")
+            except Exception as e:
+                logger.error(f"推送复盘结果到 Redis 失败: {e}")
 
         logger.info(f"复盘完成: {reflection_id}")
         return result
