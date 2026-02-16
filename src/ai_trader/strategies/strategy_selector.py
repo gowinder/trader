@@ -162,7 +162,7 @@ class StrategySelector:
         if opposite_score > best_score * 0.7:
             return AggregatedSignal(
                 action=SignalAction.HOLD,
-                confidence=0.5,
+                confidence=0.0,
                 contributing_strategies=list(signals.keys()),
                 reason=f"Conflicting signals: {best_action.value} ({best_score:.2f}) vs {opposite_action.value} ({opposite_score:.2f})",
             )

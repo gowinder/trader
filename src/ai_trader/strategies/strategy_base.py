@@ -253,7 +253,7 @@ class TrendFollowingStrategy(TradingStrategy):
         else:
             return Signal(
                 action=SignalAction.HOLD,
-                confidence=0.5,
+                confidence=0.0,
                 reason="No clear trend signal",
             )
 
@@ -324,7 +324,7 @@ class MeanReversionStrategy(TradingStrategy):
         else:
             return Signal(
                 action=SignalAction.HOLD,
-                confidence=0.5,
+                confidence=0.0,
                 reason="No mean reversion signal",
             )
 
@@ -405,6 +405,6 @@ class BreakoutStrategy(TradingStrategy):
         else:
             return Signal(
                 action=SignalAction.HOLD,
-                confidence=0.5,
+                confidence=0.0,
                 reason="No breakout detected",
             )
