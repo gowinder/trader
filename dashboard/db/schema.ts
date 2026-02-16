@@ -48,6 +48,9 @@ export const decisions = pgTable(
     // 策略预设
     strategyPreset: varchar("strategy_preset", { length: 50 }),
 
+    // 决策质量评分 (0-100)
+    qualityScore: smallint("quality_score"),
+
     // 关联
     orderId: uuid("order_id").references(() => orders.id),
   },
@@ -573,6 +576,31 @@ export const llmRoutingConfig = pgTable("llm_routing_config", {
   model: varchar("model", { length: 100 }).notNull(),
   priority: integer("priority").notNull().default(0),
   isEnabled: boolean("is_enabled").notNull().default(true),
+});
+
+// ==================== 性能追踪 ====================
+
+export const performanceReports = pgTable("performance_reports", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  computedAt: timestamp("computed_at", { withTimezone: true }).notNull().defaultNow(),
+
+  period: varchar("period", { length: 20 }).notNull(),
+  totalTrades: integer("total_trades").default(0),
+  winRate: decimal("win_rate", { precision: 6, scale: 4 }),
+  avgPnl: decimal("avg_pnl", { precision: 10, scale: 4 }),
+  totalPnl: decimal("total_pnl", { precision: 20, scale: 4 }),
+  sharpeRatio: decimal("sharpe_ratio", { precision: 8, scale: 4 }),
+  maxDrawdownPct: decimal("max_drawdown_pct", { precision: 8, scale: 4 }),
+  rawData: jsonb("raw_data"),
+});
+
+export const parameterChanges = pgTable("parameter_changes", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  changedAt: timestamp("changed_at", { withTimezone: true }).notNull().defaultNow(),
+
+  changes: jsonb("changes").notNull(),
+  evalResult: jsonb("eval_result"),
+  source: varchar("source", { length: 30 }).notNull(),
 });
 
 // ==================== 系统设置 ====================
