@@ -67,6 +67,9 @@ class ReflectionEngine:
         # 保存复盘记录
         await self._save_reflection(reflection_id, len(memories), result)
 
+        # 验证候选规则（升级/废弃）
+        await self._validate_candidate_rules(memories)
+
         # 推送复盘结果到 Redis 队列，供 OptimizationOrchestrator 消费
         if self.redis:
             try:
@@ -128,3 +131,76 @@ class ReflectionEngine:
             json.dumps(result.get("candidate_rules", [])),
             json.dumps(result.get("parameter_suggestions", {})),
         )
+
+    async def _validate_candidate_rules(
+        self, memories: list[TradeMemoryEntry]
+    ) -> None:
+        """用最新交易数据验证候选规则，实现 candidate→active→deprecated 流转"""
+        try:
+            candidates = await self.db.fetch(
+                "SELECT id, condition, recommendation, validation_count "
+                "FROM distilled_rules WHERE status = 'candidate'"
+            )
+        except Exception:
+            # distilled_rules 表可能不存在
+            return
+
+        if not candidates:
+            return
+
+        for rule in candidates:
+            try:
+                condition = rule["condition"]
+                if isinstance(condition, str):
+                    condition = json.loads(condition)
+            except (json.JSONDecodeError, TypeError):
+                continue
+
+            matching = [m for m in memories if self._matches_condition(m, condition)]
+            if len(matching) < 5:
+                continue
+
+            win_count = sum(1 for m in matching if getattr(m, "is_winner", False))
+            win_rate = win_count / len(matching)
+            validation_count = (rule.get("validation_count") or 0) + 1
+
+            if win_rate >= 0.6:
+                await self.db.execute(
+                    "UPDATE distilled_rules SET status='active', "
+                    "validation_count=$1, win_rate=$2, sample_size=$3, "
+                    "last_validated=NOW() WHERE id=$4",
+                    validation_count, win_rate, len(matching), rule["id"],
+                )
+                logger.info(f"规则升级为 active: id={rule['id']}, win_rate={win_rate:.0%}")
+            elif validation_count >= 3 and win_rate < 0.45:
+                await self.db.execute(
+                    "UPDATE distilled_rules SET status='deprecated', "
+                    "validation_count=$1, win_rate=$2, sample_size=$3, "
+                    "last_validated=NOW() WHERE id=$4",
+                    validation_count, win_rate, len(matching), rule["id"],
+                )
+                logger.info(f"规则废弃: id={rule['id']}, win_rate={win_rate:.0%}")
+            else:
+                await self.db.execute(
+                    "UPDATE distilled_rules SET validation_count=$1, "
+                    "win_rate=$2, sample_size=$3, last_validated=NOW() WHERE id=$4",
+                    validation_count, win_rate, len(matching), rule["id"],
+                )
+
+    @staticmethod
+    def _matches_condition(memory: TradeMemoryEntry, condition: dict) -> bool:
+        """检查交易记忆是否匹配规则条件"""
+        mem_dict = memory.to_dict() if hasattr(memory, "to_dict") else {}
+        for key, expected in condition.items():
+            actual = mem_dict.get(key)
+            if actual is None:
+                return False
+            if isinstance(expected, dict):
+                # 支持范围条件: {"min": 0, "max": 30}
+                if "min" in expected and actual < expected["min"]:
+                    return False
+                if "max" in expected and actual > expected["max"]:
+                    return False
+            elif actual != expected:
+                return False
+        return True

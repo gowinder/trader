@@ -31,6 +31,7 @@ class AdvisoryContextBuilder:
         account_text = self._format_account(account_summary)
         strategy_text = self._format_strategy_preset(strategy_preset_info)
         market_class_text = self._format_market_classifications(market_classifications)
+        last_decisions_text = await self._get_last_decisions(symbols)
 
         from .prompts import ADVISORY_USER
         return ADVISORY_USER.format(
@@ -44,6 +45,7 @@ class AdvisoryContextBuilder:
             current_config=config_text,
             strategy_preset=strategy_text,
             account_summary=account_text,
+            last_decisions=last_decisions_text,
         )
 
     async def _get_recent_trades(self, limit: int = 20) -> List[Dict]:
@@ -175,3 +177,31 @@ class AdvisoryContextBuilder:
             f"可用余额: {account.get('available_balance', '?')} USDT, "
             f"已用保证金: {account.get('margin_used', '?')} USDT"
         )
+
+    async def _get_last_decisions(self, symbols: List[str]) -> str:
+        """获取各交易对主循环最近决策，供 advisory 感知"""
+        if not self.db or not symbols:
+            return "无主循环决策数据"
+        lines = []
+        for symbol in symbols:
+            try:
+                row = await self.db.fetchrow(
+                    """
+                    SELECT action, confidence, reasoning, created_at
+                    FROM decisions
+                    WHERE symbol = $1
+                    ORDER BY created_at DESC LIMIT 1
+                    """,
+                    symbol,
+                )
+                if row:
+                    r = dict(row)
+                    lines.append(
+                        f"- {symbol}: {r.get('action', '?')} "
+                        f"(置信度: {r.get('confidence', '?')}), "
+                        f"理由: {r.get('reasoning', '?')}, "
+                        f"时间: {r.get('created_at', '?')}"
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to get last decision for {symbol}: {e}")
+        return "\n".join(lines) if lines else "无主循环决策数据"

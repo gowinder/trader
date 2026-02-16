@@ -38,6 +38,7 @@ class StrategySelector:
                 ("trend_following", "mean_reversion", "breakout")
         """
         self.strategies: dict[str, TradingStrategy] = {}
+        self._weight_overrides: dict[str, dict[str, float]] = {}
 
         # Initialize enabled strategies
         if "trend_following" in enabled_strategies:
@@ -47,15 +48,14 @@ class StrategySelector:
         if "breakout" in enabled_strategies:
             self.strategies["breakout"] = BreakoutStrategy()
 
+    def update_weights(self, market_state: str, weights: dict[str, float]) -> None:
+        """动态更新特定市场状态的策略权重"""
+        self._weight_overrides[market_state] = weights
+
     def select_strategies(self, market_state: MarketState) -> dict[str, float]:
         """Select strategies based on market state
 
-        Strategy weights by market state:
-        - STRONG_TREND: trend_following (0.7), breakout (0.3)
-        - WEAK_TREND: trend_following (0.6), mean_reversion (0.4)
-        - RANGE_BOUND: mean_reversion (0.8), trend_following (0.2)
-        - SIDEWAYS: mean_reversion (0.9), trend_following (0.1)
-        - BREAKOUT: breakout (0.8), trend_following (0.2)
+        优先使用动态覆盖的权重，fallback 到硬编码默认值。
 
         Args:
             market_state: Current market state
@@ -63,6 +63,13 @@ class StrategySelector:
         Returns:
             Dict of strategy name to weight
         """
+        # 优先使用动态权重覆盖
+        state_key = market_state.value
+        if state_key in self._weight_overrides:
+            overrides = self._weight_overrides[state_key]
+            # 只保留已启用策略的权重
+            return {name: overrides.get(name, 0.0) for name in self.strategies}
+
         weights = {name: 0.0 for name in self.strategies.keys()}
 
         if market_state == MarketState.STRONG_TREND:

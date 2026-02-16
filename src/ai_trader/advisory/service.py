@@ -1,5 +1,6 @@
 """Advisory 服务 - 协调触发器、引擎和通知"""
 
+from datetime import datetime
 from typing import Optional, List, Dict, Any
 
 from .engine import AdvisoryEngine
@@ -7,21 +8,26 @@ from .triggers import TriggerManager
 from .telegram import TelegramNotifier
 from .persistence import AdvisoryPersistenceService
 from ..models.advisory import TriggerType
+from ..persistence.database import DatabaseManager
 from ..utils.logger import logger
 
 
 class AdvisoryService:
+    CONFLICT_COOLDOWN_SECONDS = 1800  # 30 分钟
+
     def __init__(
         self,
         engine: AdvisoryEngine,
         trigger_manager: TriggerManager,
         notifier: Optional[TelegramNotifier] = None,
         persistence: Optional[AdvisoryPersistenceService] = None,
+        db: Optional[DatabaseManager] = None,
     ):
         self.engine = engine
         self.trigger_mgr = trigger_manager
         self.notifier = notifier
         self.persistence = persistence
+        self.db = db
 
     async def check_and_run(
         self,
@@ -133,3 +139,44 @@ class AdvisoryService:
                 logger.error(f"Failed to send notification: {e}")
 
         logger.info(f"Force advisory complete: advisory_id={advisory_id}")
+
+    async def check_decision_conflict(self, suggestion: Dict, symbol: str) -> bool:
+        """检查 advisory 建议是否与主循环最近决策冲突
+
+        如果主循环刚开仓 (< 30分钟)，advisory 不应建议平仓。
+
+        Returns:
+            True 表示存在冲突，应跳过该建议
+        """
+        if not self.db:
+            return False
+        try:
+            row = await self.db.fetchrow(
+                """
+                SELECT action, created_at
+                FROM decisions
+                WHERE symbol = $1
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                symbol,
+            )
+        except Exception:
+            return False
+
+        if not row:
+            return False
+
+        last_action = row["action"] or ""
+        created_at = row["created_at"]
+        time_since = datetime.now(tz=created_at.tzinfo) - created_at
+
+        if time_since.total_seconds() < self.CONFLICT_COOLDOWN_SECONDS:
+            suggestion_action = suggestion.get("action", "")
+            # 主循环刚开仓，advisory 建议平仓 → 冲突
+            if "open" in last_action and "close" in suggestion_action:
+                logger.warning(
+                    f"Advisory 建议与主循环决策冲突（{last_action} → {suggestion_action}），"
+                    f"冷却期内跳过: {symbol}"
+                )
+                return True
+        return False

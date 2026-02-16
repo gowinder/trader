@@ -84,6 +84,25 @@ DEFAULT_PARAMETERS = {
         category="position",
         description="最大杠杆",
     ),
+    # 融合决策阈值
+    "score_threshold": AdjustableParameter(
+        name="score_threshold",
+        current_value=0.15,
+        min_bound=0.05,
+        max_bound=0.35,
+        step=0.05,
+        category="decision",
+        description="融合得分阈值",
+    ),
+    "fusion_confidence_threshold": AdjustableParameter(
+        name="fusion_confidence_threshold",
+        current_value=0.5,
+        min_bound=0.3,
+        max_bound=0.7,
+        step=0.05,
+        category="decision",
+        description="融合最低置信度阈值",
+    ),
     # 风险控制类
     "stop_loss_percent": AdjustableParameter(
         name="stop_loss_percent",
