@@ -48,14 +48,17 @@ export async function action({ request }: ActionFunctionArgs) {
 
   try {
     const body = await request.json();
-    const config: TradingConfig = {
-      enabled: body.enabled ?? true,
-      decisionInterval: body.decisionInterval ?? 1,
-      lastTrigger: body.lastTrigger,
+    const client = await getRedisClient();
+
+    // 读取现有配置并合并更新，保留其他字段
+    const existing = await client.get(REDIS_KEY);
+    const prev = existing ? JSON.parse(existing) : {};
+    const config = {
+      ...prev,
+      ...body,
       updatedAt: new Date().toISOString(),
     };
 
-    const client = await getRedisClient();
     await client.set(REDIS_KEY, JSON.stringify(config));
 
     // 同时发布配置更新事件，让 trader 服务能够实时响应
