@@ -268,6 +268,7 @@ class Scheduler:
             self._advisory_service = AdvisoryService(
                 engine=engine, trigger_manager=trigger_mgr,
                 notifier=notifier, persistence=persistence,
+                db=self.db_manager,
             )
             # 在 advisory_service 就绪后启动执行队列监听
             if self._redis:
@@ -1287,6 +1288,22 @@ class Scheduler:
         detail = task.get("detail", {})
 
         try:
+            # 冲突检测：position_action 类型在执行前检查与主循环决策的冲突
+            if suggestion_type == "position_action" and self._advisory_service:
+                conflict = await self._advisory_service.check_decision_conflict(
+                    {"action": action}, target
+                )
+                if conflict:
+                    logger.info(f"Advisory suggestion skipped due to conflict: {target} {action}")
+                    if self.persistence_service:
+                        try:
+                            await self.persistence_service.update_suggestion_status(
+                                suggestion_id, "skipped", "与主循环决策冲突，冷却期内跳过"
+                            )
+                        except Exception:
+                            pass
+                    return
+
             if suggestion_type == "param_adjust":
                 executor = ConfigExecutor(self._redis)
                 result = await executor.execute(action, target, detail)
@@ -1638,24 +1655,80 @@ class Scheduler:
         return position
 
     async def _build_testnet_account_state(self, symbol: str, current_price: float):
-        """构建 testnet 虚拟账户状态（含本地持仓）。"""
+        """构建 testnet 虚拟账户状态（汇总所有交易对仓位）。"""
         from .exchange.base import AccountInfo
 
         position = await self._load_testnet_virtual_position(symbol, current_price)
-        base_equity = 10000.0
+        base_equity = config.testnet_initial_equity
 
-        margin_used = position.margin if position else 0.0
-        unrealized_pnl = position.unrealized_pnl if position else 0.0
-        total_equity = base_equity + unrealized_pnl
-        available_balance = max(total_equity - margin_used, 0.0)
+        # 汇总所有 open 仓位的保证金和未实现盈亏
+        total_margin = 0.0
+        total_unrealized_pnl = 0.0
+
+        if self.db_manager:
+            try:
+                all_positions = await self.db_manager.fetch(
+                    "SELECT symbol, side, entry_price, entry_size, "
+                    "COALESCE(leverage, 1) AS leverage "
+                    "FROM position_history WHERE status='open' AND entry_size > 0"
+                )
+                for row in all_positions:
+                    pos_symbol = row["symbol"]
+                    entry_price = float(row["entry_price"])
+                    size = float(row["entry_size"])
+                    leverage = max(1, int(float(row["leverage"])))
+                    side = str(row["side"]).lower()
+
+                    if pos_symbol == symbol:
+                        mark_price = current_price
+                    else:
+                        try:
+                            ticker = await self.exchange.get_ticker(pos_symbol)
+                            mark_price = ticker.last_price
+                        except Exception:
+                            mark_price = entry_price
+
+                    if side == "long":
+                        unrealized = (mark_price - entry_price) * size
+                    else:
+                        unrealized = (entry_price - mark_price) * size
+
+                    margin = (entry_price * size) / leverage if leverage > 0 else 0.0
+                    total_margin += margin
+                    total_unrealized_pnl += unrealized
+            except Exception as e:
+                logger.warning(f"Failed to aggregate testnet positions: {e}")
+                total_margin = position.margin if position else 0.0
+                total_unrealized_pnl = position.unrealized_pnl if position else 0.0
+        else:
+            total_margin = position.margin if position else 0.0
+            total_unrealized_pnl = position.unrealized_pnl if position else 0.0
+
+        realized_pnl = await self._get_total_realized_pnl()
+        total_equity = base_equity + realized_pnl + total_unrealized_pnl
+        available_balance = max(total_equity - total_margin, 0.0)
 
         account = AccountInfo(
             total_equity=total_equity,
             available_balance=available_balance,
-            margin_used=margin_used,
-            unrealized_pnl=unrealized_pnl,
+            margin_used=total_margin,
+            unrealized_pnl=total_unrealized_pnl,
         )
         return account, position
+
+    async def _get_total_realized_pnl(self) -> float:
+        """获取 testnet 所有已实现盈亏总和"""
+        if not self.db_manager:
+            return 0.0
+        try:
+            row = await self.db_manager.fetchrow(
+                "SELECT COALESCE(SUM(realized_pnl), 0) AS total "
+                "FROM position_history WHERE status='closed' AND realized_pnl IS NOT NULL"
+            )
+            return float(row["total"]) if row else 0.0
+        except Exception as e:
+            logger.warning(f"Failed to get total realized PnL: {e}")
+            return 0.0
 
     async def run_cycle_for_symbol(self, symbol: str):
         """执行指定 symbol 的交易循环"""

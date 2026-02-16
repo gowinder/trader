@@ -61,6 +61,10 @@ class TradingConfig(BaseSettings):
     testnet_exchange: str = Field(default="binance", validation_alias="TESTNET_EXCHANGE")
     testnet_api_key: str = Field(default="", validation_alias="TESTNET_API_KEY")
     testnet_api_secret: str = Field(default="", validation_alias="TESTNET_API_SECRET")
+    testnet_initial_equity: float = Field(
+        default=10000.0, validation_alias="TESTNET_INITIAL_EQUITY",
+        description="Testnet 虚拟账户初始权益 (USDT)",
+    )
 
     # ============= Binance配置 =============
     binance_api_key: str = Field(default="", validation_alias="BINANCE_API_KEY")

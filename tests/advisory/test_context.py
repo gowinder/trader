@@ -13,6 +13,7 @@ async def test_context_builder_builds_prompt():
          "pnl_percent": -2.5, "entry_price": 50000.0, "exit_price": 48750.0,
          "entry_time": None, "exit_time": None, "leverage": 5},
     ])
+    mock_db.fetchrow = AsyncMock(return_value=None)
 
     builder = AdvisoryContextBuilder(db=mock_db)
     context = await builder.build(

@@ -390,13 +390,26 @@ class HybridDecisionEngine(DecisionEngine):
             if sentiment_result:
                 final_confidence += sentiment_result.confidence * weights["sentiment"]
 
-        # Determine final action
-        SCORE_THRESHOLD = 0.15
-        CONFIDENCE_THRESHOLD = 0.5
+        # 动态阈值（基于 ATR 相对波动率）
+        atr = market_data.indicators.atr if market_data.indicators and market_data.indicators.atr else 0
+        atr_pct = (atr / market_data.current_price * 100) if market_data.current_price > 0 else 0
+
+        if atr_pct > 3.0:
+            # 高波动：提高阈值减少噪音
+            score_threshold = 0.25
+            confidence_threshold = 0.55
+        elif atr_pct < 0.5:
+            # 低波动：降低阈值捕捉机会
+            score_threshold = 0.10
+            confidence_threshold = 0.45
+        else:
+            score_threshold = 0.15
+            confidence_threshold = 0.50
+
         action = "hold"
-        if final_score > SCORE_THRESHOLD and final_confidence > CONFIDENCE_THRESHOLD:
+        if final_score > score_threshold and final_confidence > confidence_threshold:
             action = "open_long"
-        elif final_score < -SCORE_THRESHOLD and final_confidence > CONFIDENCE_THRESHOLD:
+        elif final_score < -score_threshold and final_confidence > confidence_threshold:
             action = "open_short"
 
         # ── 独立平仓路径：量化明确平仓信号 + AI 不持反向观点 ──

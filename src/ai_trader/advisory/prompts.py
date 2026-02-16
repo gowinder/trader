@@ -57,6 +57,11 @@ ADVISORY_USER = """## 触发原因
 ## 账户概况
 {account_summary}
 
+## 主循环最近决策
+{last_decisions}
+注意：你的建议应与主循环决策保持一致性。如果建议与主循环最近决策矛盾，
+请在 reasoning 中明确说明为什么需要覆盖主循环的判断。
+
 请综合分析以上信息，给出交易建议。如果一切正常无需调整，suggestions 可以为空。"""
 
 ADVISORY_SCHEMA = {
