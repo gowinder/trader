@@ -48,6 +48,10 @@ export const decisions = pgTable(
     // 策略预设
     strategyPreset: varchar("strategy_preset", { length: 50 }),
 
+    // 量化策略信号 (用于权重优化反馈闭环)
+    marketState: varchar("market_state", { length: 30 }),
+    strategySignals: jsonb("strategy_signals"),
+
     // 决策质量评分 (0-100)
     qualityScore: smallint("quality_score"),
 
