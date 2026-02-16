@@ -65,14 +65,14 @@ export async function loader({ request }: LoaderFunctionArgs) {
             ) as suggestions
           FROM advisories a
           LEFT JOIN advisory_suggestions s ON s.advisory_id = a.id
-          WHERE a.status = ANY(${status === "pending" ? ["pending", "running"] : [status]}::text[])
+          WHERE a.status = ANY(${status === "pending" ? ["pending", "running", "failed"] : [status]}::text[])
           GROUP BY a.id
           ORDER BY a.created_at DESC
           LIMIT ${limit}
         `;
 
     const [{ count }] = await sql`
-      SELECT COUNT(*)::int as count FROM advisories WHERE status IN ('pending', 'running')
+      SELECT COUNT(*)::int as count FROM advisories WHERE status IN ('pending', 'running', 'failed')
     `;
 
     await sql.end();

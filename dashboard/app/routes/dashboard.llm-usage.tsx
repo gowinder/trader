@@ -88,6 +88,9 @@ function formatUSD(n: number): string {
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const baseUrl = new URL(request.url).origin;
+  const { loader: llmUsageLoader } = await import("./api.llm-usage");
+  const { loader: providersLoader } = await import("./api.llm-config.providers");
+  const { loader: routingLoader } = await import("./api.llm-config.routing");
 
   // 获取统计数据
   let stats: UsageStats = {
@@ -104,8 +107,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
   let records: UsageRecord[] = [];
 
   try {
-    const statsResp = await fetch(`${baseUrl}/api/llm-usage?action=stats`);
-    if (statsResp.ok) {
+    const statsResp = await llmUsageLoader({ request: new Request(`${baseUrl}/api/llm-usage?action=stats`) } as any);
+    if (statsResp instanceof Response && statsResp.ok) {
       stats = await statsResp.json();
     }
   } catch (e) {
@@ -113,8 +116,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
   }
 
   try {
-    const dailyResp = await fetch(`${baseUrl}/api/llm-usage?action=daily&days=30`);
-    if (dailyResp.ok) {
+    const dailyResp = await llmUsageLoader({ request: new Request(`${baseUrl}/api/llm-usage?action=daily&days=30`) } as any);
+    if (dailyResp instanceof Response && dailyResp.ok) {
       dailyStats = await dailyResp.json();
     }
   } catch (e) {
@@ -122,8 +125,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
   }
 
   try {
-    const recordsResp = await fetch(`${baseUrl}/api/llm-usage?action=records&limit=50`);
-    if (recordsResp.ok) {
+    const recordsResp = await llmUsageLoader({ request: new Request(`${baseUrl}/api/llm-usage?action=records&limit=50`) } as any);
+    if (recordsResp instanceof Response && recordsResp.ok) {
       const data = await recordsResp.json();
       records = data.records || [];
     }
@@ -176,8 +179,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
   let mainStrategy = "priority";
 
   try {
-    const poolResp = await fetch(`${baseUrl}/api/llm-config/providers`);
-    if (poolResp.ok) {
+    const poolResp = await providersLoader({ request: new Request(`${baseUrl}/api/llm-config/providers`) } as any);
+    if (poolResp instanceof Response && poolResp.ok) {
       const poolData = await poolResp.json();
       if (poolData.providers) {
         providerPool = poolData.providers.map((p: ProviderPoolItem) => ({
@@ -194,8 +197,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
   }
 
   try {
-    const routingResp = await fetch(`${baseUrl}/api/llm-config/routing?scope=main`);
-    if (routingResp.ok) {
+    const routingResp = await routingLoader({ request: new Request(`${baseUrl}/api/llm-config/routing?scope=main`) } as any);
+    if (routingResp instanceof Response && routingResp.ok) {
       const routingData = await routingResp.json();
       if (routingData.routing?.length > 0) {
         providerConfig = routingData.routing.map((r: { providerId: number; model: string }) => ({
