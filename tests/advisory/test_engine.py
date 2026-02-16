@@ -27,6 +27,9 @@ def mock_deps():
     llm.model_name = "deepseek/deepseek-chat"
 
     persistence = AsyncMock()
+    persistence.create_running_advisory = AsyncMock(return_value=uuid4())
+    persistence.complete_advisory = AsyncMock()
+    persistence.fail_advisory = AsyncMock()
     persistence.save_advisory = AsyncMock(return_value=uuid4())
 
     context_builder = AsyncMock()
@@ -50,7 +53,8 @@ async def test_engine_generate_advisory(mock_deps):
     )
     assert advisory_id is not None
     llm.chat.assert_called_once()
-    persistence.save_advisory.assert_called_once()
+    persistence.create_running_advisory.assert_called_once()
+    persistence.complete_advisory.assert_called_once()
     assert engine.last_result is not None
     assert engine.last_result.urgency.value == "medium"
 

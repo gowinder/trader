@@ -58,6 +58,10 @@ class Scheduler:
         self.order_mgr = OrderManager(self.exchange)
         self.position_mgr = PositionManager(self.exchange)
 
+        # Phase 1: Multi-timeframe analysis
+        from .data.multi_timeframe import MultiTimeframeManager
+        self.mtf_manager = MultiTimeframeManager(self.exchange)
+
         # Use HybridDecisionEngine for enhanced features (quant, sentiment, persistence)
         self.decision_engine = HybridDecisionEngine(self.llm)
         self.reporter = Reporter()
@@ -76,6 +80,10 @@ class Scheduler:
         self.shadow_runner: Optional[ShadowRunner] = None
         self.parameter_registry = ParameterRegistry()
         self._optimization_orchestrator: Optional[OptimizationOrchestrator] = None
+
+        # Phase 2: Strategy weight optimizer
+        self._weight_optimizer = None
+        self._last_weight_update: str = ""
 
         self.running = False
 
@@ -157,6 +165,12 @@ class Scheduler:
                     redis_client=self._redis,
                 )
                 logger.info("Memory and optimization system initialized (async mode)")
+
+            # Phase 2: 初始化策略权重优化器
+            if self.decision_engine.strategy_selector:
+                from .optimization.weight_optimizer import StrategyWeightOptimizer
+                self._weight_optimizer = StrategyWeightOptimizer(self.db_manager)
+                logger.info("Strategy weight optimizer initialized")
 
             # 注入 Prompt 上下文增强器到决策引擎
             self.decision_engine.prompt_enricher = PromptContextEnricher(self.db_manager)
@@ -846,6 +860,12 @@ class Scheduler:
                 self._trading_halted = False
                 logger.info(f"新交易日: {today_str}, 每日盈亏统计已重置")
 
+            # ── 每小时更新策略权重 ──
+            current_hour = _dt.utcnow().strftime("%Y-%m-%d %H")
+            if current_hour != self._last_weight_update:
+                self._last_weight_update = current_hour
+                await self._update_strategy_weights()
+
             # Check if trading is enabled
             if not self._trading_enabled:
                 logger.debug("Trading paused, waiting...")
@@ -1435,6 +1455,21 @@ class Scheduler:
         except Exception as e:
             logger.error(f"Advisory manual trigger listener error: {e}")
 
+    async def _update_strategy_weights(self):
+        """定期更新策略权重（基于历史表现）"""
+        if not self._weight_optimizer or not self.decision_engine.strategy_selector:
+            return
+        try:
+            updated = await self._weight_optimizer.update_strategy_selector(
+                self.decision_engine.strategy_selector
+            )
+            if updated > 0:
+                logger.info(f"策略权重已更新: {updated} 个市场状态")
+            else:
+                logger.debug("权重优化: 样本不足或无更新")
+        except Exception as e:
+            logger.error(f"Strategy weight update failed: {e}")
+
     async def _run_advisory_check(self, force: bool = False):
         """运行 advisory 检查"""
         if not self._advisory_service:
@@ -1760,6 +1795,19 @@ class Scheduler:
         if not market_data:
             return
 
+        # 1.1 获取多时间框架数据（失败时降级为单时间框架）
+        mtf_data = None
+        try:
+            mtf_data = await self.mtf_manager.get_multi_timeframe_data(symbol)
+            if mtf_data:
+                logger.info(
+                    f"MTF [{symbol}]: trend={mtf_data.overall_trend.value}, "
+                    f"confluence={mtf_data.confluence_score:.2f}, "
+                    f"action={mtf_data.recommended_action}"
+                )
+        except Exception as e:
+            logger.warning(f"MTF analysis failed for {symbol}, continuing without: {e}")
+
         # For testnet mode, use simulated account/position data
         # CCXT no longer supports Binance Futures Testnet private API
         if config.trading_mode == "testnet":
@@ -1912,10 +1960,11 @@ class Scheduler:
                 )
             return  # 跳过本轮决策
 
-        # 2. 决策
+        # 2. 决策（含多时间框架数据）
         try:
             decision, tech, risk = await self.decision_engine.analyze_and_decide(
-                market_data, position, balance, equity
+                market_data, position, balance, equity,
+                mtf_data=mtf_data,
             )
         except Exception as e:
             logger.error(f"Decision engine failed: {e}")
