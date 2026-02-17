@@ -396,6 +396,9 @@ export const llmUsage = pgTable(
     success: boolean("success").default(true),
     errorMessage: text("error_message"),
 
+    // 使用类型：decision(决策), advisory(顾问), analysis(分析), optimization(优化), other(其他)
+    usageType: varchar("usage_type", { length: 30 }),
+
     // 关联上下文（可选）
     decisionId: uuid("decision_id").references(() => decisions.id),
   },

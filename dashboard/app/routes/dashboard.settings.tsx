@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from "react";
-import { Eye, EyeOff, Plus, Trash2, X, ChevronUp, ChevronDown, Save, RefreshCw, Zap } from "lucide-react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { Eye, EyeOff, Plus, Trash2, X, ChevronUp, ChevronDown, Save, RefreshCw, Zap, KeyRound, LogIn, ExternalLink, Loader2 } from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -60,6 +60,19 @@ export default function SettingsPage() {
   const [testResult, setTestResult] = useState<Record<number, { success: boolean; message: string } | null>>({});
   const [modelPickerOpen, setModelPickerOpen] = useState<Record<number, boolean>>({});
   const [availableModels, setAvailableModels] = useState<Record<number, string[]>>({});
+
+  // OAuth token status
+  const [oauthStatus, setOauthStatus] = useState<Record<number, { hasToken: boolean; expired: boolean; expiresAt: string | null; message: string } | null>>({});
+  const [checkingOauth, setCheckingOauth] = useState<Record<number, boolean>>({});
+
+  // OAuth device auth flow
+  const [oauthAuthState, setOauthAuthState] = useState<Record<number, {
+    phase: "idle" | "waiting" | "polling" | "success" | "error";
+    verificationUri?: string;
+    userCode?: string;
+    message?: string;
+  }>>({});
+  const pollTimerRef = useRef<Record<number, ReturnType<typeof setInterval>>>({});
 
   // add provider modal
   const [showAddModal, setShowAddModal] = useState(false);
@@ -268,6 +281,110 @@ export default function SettingsPage() {
     if (edit.models.includes(val)) return;
     updateCardEdit(providerId, { models: [...edit.models, val] });
     setNewModelInput((prev) => ({ ...prev, [providerId]: "" }));
+  };
+
+  // cleanup poll timers on unmount
+  useEffect(() => {
+    return () => {
+      Object.values(pollTimerRef.current).forEach(clearInterval);
+    };
+  }, []);
+
+  const stopPolling = (providerId: number) => {
+    if (pollTimerRef.current[providerId]) {
+      clearInterval(pollTimerRef.current[providerId]);
+      delete pollTimerRef.current[providerId];
+    }
+  };
+
+  const handleOauthStart = async (p: Provider) => {
+    stopPolling(p.id);
+    setOauthAuthState((s) => ({ ...s, [p.id]: { phase: "waiting", message: "正在请求授权..." } }));
+    try {
+      const res = await fetch("/api/llm-config/oauth-auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ providerId: p.id, action: "start" }),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) {
+        setOauthAuthState((s) => ({ ...s, [p.id]: { phase: "error", message: data.error || "请求失败" } }));
+        return;
+      }
+
+      // 打开授权链接
+      if (data.verificationUri) {
+        window.open(data.verificationUri, "_blank");
+      }
+
+      setOauthAuthState((s) => ({
+        ...s,
+        [p.id]: {
+          phase: "polling",
+          verificationUri: data.verificationUri,
+          userCode: data.userCode,
+          message: "请在浏览器中完成授权...",
+        },
+      }));
+
+      // 开始轮询
+      const interval = Math.max((data.interval || 2) * 1000, 2000);
+      pollTimerRef.current[p.id] = setInterval(async () => {
+        try {
+          const pollRes = await fetch("/api/llm-config/oauth-auth", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ providerId: p.id, action: "poll" }),
+          });
+          const pollData = await pollRes.json();
+
+          if (pollData.status === "success") {
+            stopPolling(p.id);
+            setOauthAuthState((s) => ({ ...s, [p.id]: { phase: "success", message: pollData.message || "授权成功" } }));
+            // 刷新 token 状态
+            handleCheckOauth(p);
+          } else if (pollData.status === "expired" || pollData.status === "error") {
+            stopPolling(p.id);
+            setOauthAuthState((s) => ({ ...s, [p.id]: { phase: "error", message: pollData.message } }));
+          }
+          // pending → 继续轮询
+        } catch {
+          stopPolling(p.id);
+          setOauthAuthState((s) => ({ ...s, [p.id]: { phase: "error", message: "轮询失败" } }));
+        }
+      }, interval);
+    } catch {
+      setOauthAuthState((s) => ({ ...s, [p.id]: { phase: "error", message: "网络错误" } }));
+    }
+  };
+
+  const handleOauthCancel = async (p: Provider) => {
+    stopPolling(p.id);
+    try {
+      await fetch("/api/llm-config/oauth-auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ providerId: p.id, action: "cancel" }),
+      });
+    } catch { /* ignore */ }
+    setOauthAuthState((s) => ({ ...s, [p.id]: { phase: "idle" } }));
+  };
+
+  const handleCheckOauth = async (p: Provider) => {
+    setCheckingOauth((s) => ({ ...s, [p.id]: true }));
+    try {
+      const res = await fetch("/api/llm-config/oauth-status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ providerId: p.id }),
+      });
+      const data = await res.json();
+      setOauthStatus((s) => ({ ...s, [p.id]: data }));
+    } catch {
+      setOauthStatus((s) => ({ ...s, [p.id]: { hasToken: false, expired: true, expiresAt: null, message: "查询失败" } }));
+    } finally {
+      setCheckingOauth((s) => ({ ...s, [p.id]: false }));
+    }
   };
 
   const handleFetchModels = async (p: Provider) => {
@@ -617,26 +734,155 @@ export default function SettingsPage() {
 
                 {/* Card Content */}
                 <div className="px-6 py-4 space-y-4">
-                  {/* API Key */}
-                  <div>
-                    <label className="block text-sm text-muted-foreground mb-1">API Key</label>
-                    <div className="relative">
-                      <input
-                        type={showKey[p.id] ? "text" : "password"}
-                        value={cardEdits[p.id]?.apiKey ?? ""}
-                        onChange={(e) => updateCardEdit(p.id, { apiKey: e.target.value })}
-                        placeholder={p.hasApiKey ? p.apiKey : "未设置"}
-                        className={inputCls + " pr-9"}
-                      />
-                      <button
-                        type="button"
-                        onClick={() => setShowKey((s) => ({ ...s, [p.id]: !s[p.id] }))}
-                        className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                      >
-                        {showKey[p.id] ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                      </button>
+                  {/* OAuth Token Status (for oauth providers) */}
+                  {p.providerType === "oauth" ? (
+                    <div className="space-y-3">
+                      {/* Token 状态 */}
+                      <div>
+                        <div className="flex items-center justify-between mb-1">
+                          <label className="block text-sm text-muted-foreground">OAuth Token</label>
+                          <button
+                            type="button"
+                            onClick={() => handleCheckOauth(p)}
+                            disabled={checkingOauth[p.id]}
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs border border-border hover:bg-accent disabled:opacity-50"
+                          >
+                            <KeyRound className={`h-3 w-3 ${checkingOauth[p.id] ? "animate-pulse" : ""}`} />
+                            {checkingOauth[p.id] ? "检查中..." : "检查状态"}
+                          </button>
+                        </div>
+                        {oauthStatus[p.id] ? (
+                          <div className={`rounded-md px-3 py-2 text-sm ${
+                            oauthStatus[p.id]!.hasToken && !oauthStatus[p.id]!.expired
+                              ? "bg-green-500/10 text-green-400 border border-green-500/20"
+                              : "bg-red-500/10 text-red-400 border border-red-500/20"
+                          }`}>
+                            {oauthStatus[p.id]!.message}
+                          </div>
+                        ) : (
+                          <div className="rounded-md px-3 py-2 text-sm bg-secondary text-muted-foreground">
+                            点击「检查状态」查看 Token，或点击下方「授权登录」完成 OAuth。
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 授权操作 */}
+                      <div>
+                        {(() => {
+                          const authState = oauthAuthState[p.id];
+                          const phase = authState?.phase || "idle";
+
+                          if (phase === "polling") {
+                            return (
+                              <div className="space-y-2">
+                                <div className="rounded-md px-3 py-2 text-sm bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                    <span>{authState?.message || "等待授权..."}</span>
+                                  </div>
+                                  {authState?.verificationUri && (
+                                    <a
+                                      href={authState.verificationUri}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="inline-flex items-center gap-1 text-xs text-blue-300 hover:text-blue-200 underline mt-1"
+                                    >
+                                      <ExternalLink className="h-3 w-3" />
+                                      如果浏览器未自动打开，点击此处
+                                    </a>
+                                  )}
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleOauthCancel(p)}
+                                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md border border-border text-sm text-muted-foreground hover:bg-accent"
+                                >
+                                  <X className="h-3.5 w-3.5" /> 取消
+                                </button>
+                              </div>
+                            );
+                          }
+
+                          if (phase === "waiting") {
+                            return (
+                              <div className="rounded-md px-3 py-2 text-sm bg-blue-500/10 text-blue-400 border border-blue-500/20">
+                                <div className="flex items-center gap-2">
+                                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                  <span>正在请求授权码...</span>
+                                </div>
+                              </div>
+                            );
+                          }
+
+                          if (phase === "success") {
+                            return (
+                              <div className="space-y-2">
+                                <div className="rounded-md px-3 py-2 text-sm bg-green-500/10 text-green-400 border border-green-500/20">
+                                  {authState?.message || "授权成功"}
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleOauthStart(p)}
+                                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md border border-border text-sm hover:bg-accent"
+                                >
+                                  <LogIn className="h-3.5 w-3.5" /> 重新授权
+                                </button>
+                              </div>
+                            );
+                          }
+
+                          if (phase === "error") {
+                            return (
+                              <div className="space-y-2">
+                                <div className="rounded-md px-3 py-2 text-sm bg-red-500/10 text-red-400 border border-red-500/20">
+                                  {authState?.message || "授权失败"}
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleOauthStart(p)}
+                                  className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90"
+                                >
+                                  <LogIn className="h-3.5 w-3.5" /> 重试授权
+                                </button>
+                              </div>
+                            );
+                          }
+
+                          // idle
+                          return (
+                            <button
+                              type="button"
+                              onClick={() => handleOauthStart(p)}
+                              className="inline-flex items-center gap-1 px-3 py-1.5 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90"
+                            >
+                              <LogIn className="h-3.5 w-3.5" /> 授权登录
+                            </button>
+                          );
+                        })()}
+                      </div>
                     </div>
-                  </div>
+                  ) : (
+                    /* API Key (for non-oauth providers) */
+                    <div>
+                      <label className="block text-sm text-muted-foreground mb-1">API Key</label>
+                      <div className="relative">
+                        <input
+                          type={showKey[p.id] ? "text" : "password"}
+                          value={cardEdits[p.id]?.apiKey ?? ""}
+                          onChange={(e) => updateCardEdit(p.id, { apiKey: e.target.value })}
+                          placeholder={p.hasApiKey ? p.apiKey : "未设置"}
+                          className={inputCls + " pr-9"}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setShowKey((s) => ({ ...s, [p.id]: !s[p.id] }))}
+                          className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                        >
+                          {showKey[p.id] ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                        </button>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Base URL */}
                   <div>

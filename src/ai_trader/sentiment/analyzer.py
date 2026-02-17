@@ -235,6 +235,7 @@ Respond in JSON format:
             result_data = await self.llm_client.chat(
                 messages=[{"role": "user", "content": prompt}],
                 schema=schema,
+                usage_type="analysis",
             )
 
             # 结果可能直接是 dict 或包含在 content 中

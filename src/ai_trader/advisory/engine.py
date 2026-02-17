@@ -72,6 +72,7 @@ class AdvisoryEngine:
                 schema=ADVISORY_SCHEMA,
                 max_tokens=4000,
                 temperature=0.3,
+                usage_type="advisory",
             )
             result = self._parse_result(raw_result)
             self._last_result = result

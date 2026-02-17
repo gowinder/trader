@@ -130,6 +130,7 @@ class UsageTracker:
         success: bool = True,
         error_message: str = "",
         decision_id: Optional[str] = None,
+        usage_type: Optional[str] = None,
     ):
         """记录一次调用"""
         if not self._initialized or not self._persistence_service:
@@ -156,6 +157,7 @@ class UsageTracker:
                 success=success,
                 error_message=error_message if not success else None,
                 decision_id=decision_uuid,
+                usage_type=usage_type,
             )
         except Exception as e:
             logger.error(f"Failed to record LLM usage: {e}")

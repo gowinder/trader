@@ -695,24 +695,9 @@ class DecisionPersistenceService:
         success: bool = True,
         error_message: Optional[str] = None,
         decision_id: Optional[UUID] = None,
+        usage_type: Optional[str] = None,
     ) -> UUID:
-        """记录 LLM 调用
-
-        Args:
-            provider: LLM 提供商 (openrouter, codex, gemini, qwen)
-            model: 模型名称
-            input_tokens: 输入 token 数
-            output_tokens: 输出 token 数
-            total_tokens: 总 token 数
-            cost_usd: 费用（美元）
-            latency_ms: 延迟（毫秒）
-            success: 是否成功
-            error_message: 错误信息
-            decision_id: 关联的决策 ID
-
-        Returns:
-            记录 ID
-        """
+        """记录 LLM 调用"""
         if total_tokens == 0:
             total_tokens = input_tokens + output_tokens
 
@@ -720,8 +705,9 @@ class DecisionPersistenceService:
             """
             INSERT INTO llm_usage (
                 provider, model, input_tokens, output_tokens, total_tokens,
-                cost_usd, latency_ms, success, error_message, decision_id
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                cost_usd, latency_ms, success, error_message, decision_id,
+                usage_type
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             RETURNING id
             """,
             provider,
@@ -734,10 +720,11 @@ class DecisionPersistenceService:
             success,
             error_message,
             decision_id,
+            usage_type,
         )
         logger.debug(
             f"Recorded LLM usage: {provider}/{model} "
-            f"tokens={total_tokens} cost=${cost_usd:.6f}"
+            f"tokens={total_tokens} cost=${cost_usd:.6f} type={usage_type}"
         )
         return record_id
 

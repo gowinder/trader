@@ -1,0 +1,79 @@
+services:
+
+  # 数据库迁移服务 - 启动时自动运行迁移
+  db-migrate:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    container_name: trader-db-migrate
+    env_file:
+      - .env
+    command: ["npm", "run", "db:push"]
+    networks:
+      - trader-network
+    # 迁移完成后退出
+    restart: "no"
+  trader:
+    build:
+      context: .
+      dockerfile: Dockerfile.trader
+    container_name: ai-trader
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./src:/app/src:ro
+      - ./trades:/app/trades
+      - ./run_output:/app/run_output
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - oauth-tokens:/root/.qwen
+    networks:
+      - trader-network
+    depends_on:
+      db-migrate:
+        condition: service_completed_successfully
+
+  reflection:
+    build:
+      context: .
+      dockerfile: Dockerfile.reflection
+    container_name: trader-reflection
+    restart: unless-stopped
+    env_file:
+      - .env
+    networks:
+      - trader-network
+    depends_on:
+      db-migrate:
+        condition: service_completed_successfully
+
+  dashboard:
+    build:
+      context: ./dashboard
+      dockerfile: Dockerfile
+    container_name: trader-dashboard
+    restart: unless-stopped
+    ports:
+      - "3500:3000"
+    env_file:
+      - .env
+    environment:
+      - LLM_USAGE_DB=/data/llm_usage.db
+      - TRADER_LOG_FILE=/logs/trading.log
+    volumes:
+      - ./data:/data:ro
+      - ./logs:/logs:ro
+      - oauth-tokens:/root/.qwen
+    depends_on:
+      db-migrate:
+        condition: service_completed_successfully
+    networks:
+      - trader-network
+
+volumes:
+  oauth-tokens:
+
+networks:
+  trader-network:
+    driver: bridge

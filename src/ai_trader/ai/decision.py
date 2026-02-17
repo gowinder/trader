@@ -160,6 +160,7 @@ class DecisionEngine:
             ],
             schema=RISK_SCHEMA,
             max_tokens=1500,
+            usage_type="optimization",
         )
 
         return RiskAssessment(**response)
@@ -286,6 +287,7 @@ class DecisionEngine:
             ],
             schema=TRADING_SCHEMA,
             max_tokens=1000,
+            usage_type="decision",
         )
 
         decision = TradingDecision(**response)

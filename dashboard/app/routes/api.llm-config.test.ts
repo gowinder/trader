@@ -3,6 +3,13 @@ import { db } from "db";
 import { llmProviders } from "db/schema";
 import { eq } from "drizzle-orm";
 import { decrypt } from "~/lib/encryption";
+import { readFile } from "fs/promises";
+import { homedir } from "os";
+import { join } from "path";
+
+const OAUTH_TOKEN_PATHS: Record<string, string> = {
+  "qwen-code": ".qwen/oauth_creds.json",
+};
 
 export async function action({ request }: ActionFunctionArgs) {
   if (request.method !== "POST") {
@@ -24,6 +31,62 @@ export async function action({ request }: ActionFunctionArgs) {
     const [provider] = await db.select().from(llmProviders).where(eq(llmProviders.id, providerId));
     if (!provider) {
       return Response.json({ error: "Provider 不存在" }, { status: 404 });
+    }
+
+    // OAuth provider: 从本地 token 文件读取
+    if (provider.providerType === "oauth") {
+      const tokenRelPath = OAUTH_TOKEN_PATHS[provider.name];
+      if (!tokenRelPath) {
+        return Response.json({ success: false, latency: 0, message: "该 OAuth Provider 无 token 路径配置" });
+      }
+
+      let oauthToken: string;
+      try {
+        const tokenPath = join(homedir(), tokenRelPath);
+        const raw = await readFile(tokenPath, "utf-8");
+        const tokenData = JSON.parse(raw);
+        oauthToken = tokenData.access_token || "";
+        if (!oauthToken) {
+          return Response.json({ success: false, latency: 0, message: "Token 文件中 access_token 为空" });
+        }
+        const expiryMs = tokenData.expiry_date;
+        if (expiryMs && Date.now() >= expiryMs) {
+          return Response.json({ success: false, latency: 0, message: "Token 已过期，请先运行 qwen auth login 重新登录" });
+        }
+      } catch {
+        return Response.json({ success: false, latency: 0, message: "Token 文件不存在，请先运行 qwen auth login" });
+      }
+
+      const baseUrl = (provider.baseUrl || "https://portal.qwen.ai/v1").replace(/\/+$/, "");
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 15000);
+      const startTime = Date.now();
+
+      try {
+        const reqUrl = `${baseUrl}/chat/completions`;
+        const reqBody = { model, messages: [{ role: "user", content: "Hi" }], max_tokens: 10, stream: false };
+        const res = await fetch(reqUrl, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${oauthToken}`, "Content-Type": "application/json" },
+          body: JSON.stringify(reqBody),
+          signal: controller.signal,
+        });
+        const latency = Date.now() - startTime;
+        const resText = await res.text().catch(() => "");
+
+        console.log(`[LLM Test OAuth] URL: ${reqUrl}`);
+        console.log(`[LLM Test OAuth] Status: ${res.status}, Response: ${resText.slice(0, 200)}`);
+
+        if (res.ok) {
+          return Response.json({ success: true, latency, message: `OAuth 连接成功，延迟 ${latency}ms` });
+        }
+        if (res.status === 401) {
+          return Response.json({ success: false, latency, message: "Token 无效或已过期 (401)，请重新登录" });
+        }
+        return Response.json({ success: false, latency, message: `请求失败 (${res.status}): ${resText.slice(0, 500)}` });
+      } finally {
+        clearTimeout(timer);
+      }
     }
 
     const apiKey = clientApiKey || (provider.apiKeyEncrypted ? decrypt(provider.apiKeyEncrypted) : "");

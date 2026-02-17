@@ -96,6 +96,7 @@ class LLMClient:
         schema=None,
         max_tokens=2000,
         temperature=0.3,
+        usage_type=None,
     ):
         await self._ensure_started()
         return await self._manager.chat(
@@ -103,6 +104,7 @@ class LLMClient:
             schema=schema,
             max_tokens=max_tokens,
             temperature=temperature,
+            usage_type=usage_type,
         )
 
     async def close(self):

@@ -10,7 +10,8 @@ const BUILTIN_PROVIDERS = [
   { name: "deepseek", displayName: "DeepSeek", providerType: "openai_compatible", baseUrl: "https://api.deepseek.com/v1", models: ["deepseek-chat", "deepseek-reasoner"] },
   { name: "gemini", displayName: "Gemini", providerType: "gemini_native", baseUrl: "https://generativelanguage.googleapis.com/v1beta", models: ["gemini-2.0-flash", "gemini-2.5-pro"] },
   { name: "glm", displayName: "智谱 GLM", providerType: "anthropic_compatible", baseUrl: "https://open.bigmodel.cn/api/anthropic", models: ["glm-4.7", "glm-4.7-flash", "glm-4-plus", "glm-4-flash"] },
-  { name: "qwen", displayName: "通义千问", providerType: "openai_compatible", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", models: ["qwen-max", "qwen-plus", "qwen-turbo"] },
+  { name: "qwen", displayName: "通义千问 (Dashscope)", providerType: "openai_compatible", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", models: ["qwen-max", "qwen-plus", "qwen-turbo"] },
+  { name: "qwen-code", displayName: "通义千问 (OAuth)", providerType: "oauth", baseUrl: "https://portal.qwen.ai/v1", models: ["coder-model", "qwen3-coder-plus", "qwen3-max"] },
 ];
 
 async function ensureBuiltinProviders() {

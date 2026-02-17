@@ -21,9 +21,13 @@
     "o1-mini": {"input": 3.0, "output": 12.0}
   },
   "qwen": {
-    "qwen-max-latest": {"input": 0, "output": 0},
-    "qwen-max": {"input": 0, "output": 0},
-    "qwen-plus": {"input": 0, "output": 0},
-    "qwen-turbo": {"input": 0, "output": 0}
+    "qwen-max": {"input": 0.02, "output": 0.06},
+    "qwen-plus": {"input": 0.004, "output": 0.012},
+    "qwen-turbo": {"input": 0.002, "output": 0.006}
+  },
+  "qwen-code": {
+    "coder-model": {"input": 0, "output": 0},
+    "qwen3-coder-plus": {"input": 0, "output": 0},
+    "qwen3-max": {"input": 0, "output": 0}
   }
 }
