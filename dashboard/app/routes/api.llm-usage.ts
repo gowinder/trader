@@ -47,14 +47,25 @@ export async function loader({ request }: { request: Request }) {
     switch (action) {
       case "stats":
         return await handleStats(sql);
-      case "daily":
+      case "daily": {
         const days = parseInt(url.searchParams.get("days") || "30");
         return await handleDailyStats(sql, days);
-      case "records":
+      }
+      case "records": {
         const limit = parseInt(url.searchParams.get("limit") || "100");
         const offset = parseInt(url.searchParams.get("offset") || "0");
         const provider = url.searchParams.get("provider") || undefined;
         return await handleRecords(sql, limit, offset, provider);
+      }
+      case "timeseries": {
+        const hours = parseInt(url.searchParams.get("hours") || "24");
+        return await handleTimeSeries(sql, hours);
+      }
+      case "usage_types": {
+        const hoursParam = url.searchParams.get("hours");
+        const hours = hoursParam ? parseInt(hoursParam) : undefined;
+        return await handleUsageTypeStats(sql, hours);
+      }
       default:
         return Response.json({ error: "Unknown action" }, { status: 400 });
     }
@@ -139,20 +150,98 @@ async function handleStats(sql: postgres.Sql): Promise<Response> {
 async function handleDailyStats(sql: postgres.Sql, days: number): Promise<Response> {
   const result = await sql`
     SELECT
-      DATE(created_at) as date,
+      TO_CHAR(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') as date,
       provider,
       COUNT(*) as calls,
       COALESCE(SUM(total_tokens), 0) as tokens,
       COALESCE(SUM(cost_usd), 0) as cost_usd
     FROM llm_usage
-    WHERE created_at >= NOW() - INTERVAL '${days} days'
-    GROUP BY DATE(created_at), provider
+    WHERE created_at >= NOW() - make_interval(days => ${days})
+    GROUP BY TO_CHAR(created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD'), provider
     ORDER BY date
   `;
 
   const rows = result.map((row) => ({
-    date: row.date,
+    date: String(row.date),
     provider: row.provider,
+    calls: Number(row.calls),
+    tokens: Number(row.tokens),
+    cost_usd: Number(row.cost_usd),
+  }));
+
+  return Response.json(rows);
+}
+
+async function handleTimeSeries(sql: postgres.Sql, hours: number): Promise<Response> {
+  // 根据时间范围决定时间粒度
+  let bucketExpr: string;
+  let formatExpr: string;
+  if (hours <= 6) {
+    // <=6h: 5分钟粒度
+    bucketExpr = "date_trunc('hour', created_at) + INTERVAL '5 min' * FLOOR(EXTRACT(MINUTE FROM created_at) / 5)";
+    formatExpr = "TO_CHAR(date_trunc('hour', created_at) + INTERVAL '5 min' * FLOOR(EXTRACT(MINUTE FROM created_at) / 5), 'MM-DD HH24:MI')";
+  } else if (hours <= 24) {
+    // <=24h: 30分钟粒度
+    bucketExpr = "date_trunc('hour', created_at) + INTERVAL '30 min' * FLOOR(EXTRACT(MINUTE FROM created_at) / 30)";
+    formatExpr = "TO_CHAR(date_trunc('hour', created_at) + INTERVAL '30 min' * FLOOR(EXTRACT(MINUTE FROM created_at) / 30), 'MM-DD HH24:MI')";
+  } else if (hours <= 72) {
+    // <=3d: 1小时粒度
+    bucketExpr = "date_trunc('hour', created_at)";
+    formatExpr = "TO_CHAR(date_trunc('hour', created_at), 'MM-DD HH24')";
+  } else if (hours <= 168) {
+    // <=7d: 4小时粒度
+    bucketExpr = "date_trunc('hour', created_at) - INTERVAL '1 hour' * (EXTRACT(HOUR FROM created_at)::int % 4)";
+    formatExpr = "TO_CHAR(date_trunc('hour', created_at) - INTERVAL '1 hour' * (EXTRACT(HOUR FROM created_at)::int % 4), 'MM-DD HH24')";
+  } else if (hours <= 720) {
+    // <=30d: 天粒度
+    bucketExpr = "date_trunc('day', created_at)";
+    formatExpr = "TO_CHAR(date_trunc('day', created_at), 'MM-DD')";
+  } else {
+    // >30d: 周粒度
+    bucketExpr = "date_trunc('week', created_at)";
+    formatExpr = "TO_CHAR(date_trunc('week', created_at), 'YYYY-MM-DD')";
+  }
+
+  const result = await sql.unsafe(`
+    SELECT
+      ${formatExpr} as time_label,
+      COUNT(*) as calls,
+      COALESCE(SUM(total_tokens), 0) as tokens,
+      COALESCE(SUM(cost_usd), 0) as cost_usd
+    FROM llm_usage
+    WHERE created_at >= NOW() - make_interval(hours => $1)
+    GROUP BY ${bucketExpr}
+    ORDER BY ${bucketExpr}
+  `, [hours]);
+
+  const rows = result.map((row) => ({
+    time: String(row.time_label),
+    calls: Number(row.calls),
+    tokens: Number(row.tokens),
+    cost_usd: Number(row.cost_usd),
+  }));
+
+  return Response.json(rows);
+}
+
+async function handleUsageTypeStats(sql: postgres.Sql, hours?: number): Promise<Response> {
+  const whereClause = hours ? `WHERE created_at >= NOW() - make_interval(hours => $1)` : "";
+  const params = hours ? [hours] : [];
+
+  const result = await sql.unsafe(`
+    SELECT
+      COALESCE(usage_type, 'unknown') as usage_type,
+      COUNT(*) as calls,
+      COALESCE(SUM(total_tokens), 0) as tokens,
+      COALESCE(SUM(cost_usd), 0) as cost_usd
+    FROM llm_usage
+    ${whereClause}
+    GROUP BY COALESCE(usage_type, 'unknown')
+    ORDER BY calls DESC
+  `, params);
+
+  const rows = result.map((row) => ({
+    usage_type: String(row.usage_type),
     calls: Number(row.calls),
     tokens: Number(row.tokens),
     cost_usd: Number(row.cost_usd),
@@ -172,7 +261,7 @@ async function handleRecords(
     result = await sql`
       SELECT
         id, created_at, provider, model, input_tokens, output_tokens,
-        total_tokens, cost_usd, latency_ms, success, error_message
+        total_tokens, cost_usd, latency_ms, success, error_message, usage_type
       FROM llm_usage
       WHERE provider = ${provider}
       ORDER BY created_at DESC
@@ -182,7 +271,7 @@ async function handleRecords(
     result = await sql`
       SELECT
         id, created_at, provider, model, input_tokens, output_tokens,
-        total_tokens, cost_usd, latency_ms, success, error_message
+        total_tokens, cost_usd, latency_ms, success, error_message, usage_type
       FROM llm_usage
       ORDER BY created_at DESC
       LIMIT ${limit} OFFSET ${offset}
@@ -201,6 +290,7 @@ async function handleRecords(
     latency_ms: Number(row.latency_ms),
     success: row.success,
     error_message: row.error_message,
+    usage_type: row.usage_type || "unknown",
   }));
 
   // 获取总数

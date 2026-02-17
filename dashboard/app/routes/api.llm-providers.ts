@@ -9,7 +9,7 @@ interface ProviderItem {
 }
 
 const DEFAULT_PROVIDERS: ProviderItem[] = [
-  { name: "qwen", model: "qwen-max" },
+  { name: "qwen-code", model: "coder-model" },
   { name: "gemini", model: "gemini-2.0-flash" },
   { name: "codex", model: "gpt-4o" },
   { name: "openrouter", model: "google/gemini-2.0-flash-exp:free" },

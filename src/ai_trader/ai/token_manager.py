@@ -57,7 +57,7 @@ class TokenManager:
     # OAuth 刷新端点
     OAUTH_ENDPOINTS = {
         "gemini": "https://oauth2.googleapis.com/token",
-        "qwen": "https://portal.qwen.ai/api/oauth/token",
+        "qwen": "https://chat.qwen.ai/api/v1/oauth2/token",
     }
 
     # OAuth client ID (从 CLI 工具中提取)
@@ -232,12 +232,16 @@ class TokenManager:
                 return True
 
             elif provider == "qwen":
-                # Qwen OAuth 刷新
+                # Qwen OAuth 刷新 (Device Flow)
                 data = {
                     "refresh_token": token_info.refresh_token,
                     "grant_type": "refresh_token",
+                    "client_id": "f0304373b74a44d2b584a3fb70ca9e56",
                 }
-                resp = await client.post(endpoint, json=data)
+                resp = await client.post(endpoint, data=data, headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Accept": "application/json",
+                })
                 resp.raise_for_status()
                 new_data = resp.json()
 

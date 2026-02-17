@@ -67,6 +67,7 @@ class AdvisoryLLMClient:
         schema: Optional[Dict[str, Any]] = None,
         max_tokens: int = 4000,
         temperature: float = 0.3,
+        usage_type: Optional[str] = None,
     ) -> Dict[str, Any]:
         start_time = time.time()
         tracker = get_usage_tracker()
@@ -84,6 +85,7 @@ class AdvisoryLLMClient:
                 output_tokens=usage.get("completion_tokens", 0),
                 latency_ms=latency_ms,
                 success=True,
+                usage_type=usage_type,
             )
             return result
         except Exception as e:
@@ -96,6 +98,7 @@ class AdvisoryLLMClient:
                 latency_ms=latency_ms,
                 success=False,
                 error_message=str(e),
+                usage_type=usage_type,
             )
             raise
 

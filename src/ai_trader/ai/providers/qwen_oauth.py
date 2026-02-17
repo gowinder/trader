@@ -11,8 +11,8 @@ from ...utils.logger import logger
 class QwenOAuthProvider(BaseLLMProvider):
     """Qwen OAuth Provider - 使用本地 OAuth token 调用 Qwen API"""
 
-    BASE_URL = "https://chat.qwen.ai/api/v1"
-    DEFAULT_MODEL = "qwen-max-latest"
+    BASE_URL = "https://portal.qwen.ai/v1"
+    DEFAULT_MODEL = "coder-model"
 
     def __init__(
         self,

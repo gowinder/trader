@@ -12,7 +12,7 @@ from .providers.qwen_oauth import QwenOAuthProvider
 from .providers.gemini_oauth import GeminiOAuthProvider
 from .providers.codex_oauth import CodexOAuthProvider
 from .providers.openrouter import OpenRouterProvider
-from .providers.cli_provider import GeminiCLIProvider, QwenCLIProvider
+from .providers.cli_provider import GeminiCLIProvider
 from ..config import config
 from ..utils.logger import logger
 
@@ -62,13 +62,14 @@ class LLMManager:
             return [
                 ProviderConfig(name="openrouter", priority=1, cost_tier="free", weight=10),
                 ProviderConfig(name="codex", priority=2, cost_tier="paid", weight=2),
+                ProviderConfig(name="qwen-code", priority=3, cost_tier="free", weight=1),
                 ProviderConfig(name="qwen", priority=3, cost_tier="paid", weight=1),
                 ProviderConfig(name="gemini", priority=3, cost_tier="paid", weight=1),
             ]
         else:
-            # 默认：免费 CLI 优先
+            # 默认：免费优先（qwen-code OAuth, gemini, codex）
             return [
-                ProviderConfig(name="qwen", priority=1, cost_tier="free", weight=4),
+                ProviderConfig(name="qwen-code", priority=1, cost_tier="free", weight=4),
                 ProviderConfig(name="gemini", priority=1, cost_tier="free", weight=3),
                 ProviderConfig(name="codex", priority=1, cost_tier="free", weight=3),
                 ProviderConfig(name="openrouter", priority=2, cost_tier="paid", weight=1),
@@ -100,7 +101,7 @@ class LLMManager:
 
         if name == "qwen":
             if api_key:
-                # 有 API Key 时使用 HTTP Provider（OpenAI 兼容）
+                # 有 API Key 时使用 HTTP Provider（dashscope OpenAI 兼容）
                 from .providers.base import HTTPBasedProvider
                 return HTTPBasedProvider(
                     api_key=api_key,
@@ -108,7 +109,10 @@ class LLMManager:
                     base_url=base_url or "https://dashscope.aliyuncs.com/compatible-mode/v1",
                     timeout=timeout,
                 )
-            return QwenCLIProvider(model=model or "qwen-max")
+            raise ValueError("Provider 'qwen' requires api_key (configure in Dashboard settings)")
+        elif name == "qwen-code":
+            # qwen-code 使用 OAuth 验证（读取 ~/.qwen/oauth_creds.json）
+            return QwenOAuthProvider(model=model or "coder-model")
         elif name == "gemini":
             if api_key:
                 from .providers.gemini import GeminiProvider
@@ -181,9 +185,12 @@ class LLMManager:
         pool = getattr(self, '_providers_pool', {})
         pool_info = pool.get(provider_config.name, {})
 
-        # CLI Provider - 有 pool api_key 时走 HTTP，否则检查 CLI 命令
+        # qwen: 必须有 API Key
         if provider_config.name == "qwen":
-            return bool(pool_info.get("api_key")) or shutil.which("qwen") is not None
+            return bool(pool_info.get("api_key"))
+        # qwen-code: 使用 OAuth token
+        if provider_config.name == "qwen-code":
+            return self._token_manager.is_available("qwen")
         elif provider_config.name == "gemini":
             return bool(pool_info.get("api_key")) or shutil.which("gemini") is not None
 
@@ -325,6 +332,7 @@ class LLMManager:
         max_tokens: int = 2000,
         temperature: float = 0.3,
         provider: Optional[str] = None,
+        usage_type: Optional[str] = None,
     ) -> Dict[str, Any]:
         """发送聊天请求，自动负载均衡和故障转移
 
@@ -383,6 +391,7 @@ class LLMManager:
                         output_tokens=usage.get("completion_tokens", 0),
                         latency_ms=latency_ms,
                         success=True,
+                        usage_type=usage_type,
                     )
 
                 return result
@@ -405,6 +414,7 @@ class LLMManager:
                         latency_ms=latency_ms,
                         success=False,
                         error_message=str(e),
+                        usage_type=usage_type,
                     )
 
                 # 退避等待（最后一个 provider 不等待）

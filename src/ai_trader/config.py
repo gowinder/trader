@@ -249,7 +249,7 @@ class TradingConfig(BaseSettings):
     @classmethod
     def validate_provider(cls, v: str) -> str:
         """验证 Provider 类型"""
-        valid_providers = ["openrouter", "deepseek", "glm", "gemini", "qwen"]
+        valid_providers = ["openrouter", "deepseek", "glm", "gemini", "qwen", "qwen-code"]
         if v.lower() not in valid_providers:
             raise ValueError(f"无效的 LLM Provider: {v}. 支持的类型: {valid_providers}")
         return v.lower()

@@ -15,6 +15,8 @@ export default [
   route("api/llm-config/routing", "routes/api.llm-config.routing.ts"),
   route("api/llm-config/models", "routes/api.llm-config.models.ts"),
   route("api/llm-config/test", "routes/api.llm-config.test.ts"),
+  route("api/llm-config/oauth-auth", "routes/api.llm-config.oauth-auth.ts"),
+  route("api/llm-config/oauth-status", "routes/api.llm-config.oauth-status.ts"),
   route("api/strategy-presets", "routes/api.strategy-presets.ts"),
   route("api/strategy-presets/activate", "routes/api.strategy-presets.activate.ts"),
   route("api/strategy-presets/history", "routes/api.strategy-presets.history.ts"),

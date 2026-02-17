@@ -62,6 +62,7 @@ class MarketAnalyzer:
             schema=TECHNICAL_SCHEMA,
             max_tokens=1500,
             temperature=0.3,
+            usage_type="analysis",
         )
 
         # LLM 有时返回嵌套结构如 {"analysis": {...}}，需要展开
