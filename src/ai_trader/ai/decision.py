@@ -39,6 +39,7 @@ class DecisionEngine:
         trades_today: int = 0,
         consecutive_losses: int = 0,
         emotional_state: str = "calm",
+        trigger_context: list | None = None,
     ) -> Tuple[TradingDecision, TechnicalAnalysisResult, RiskAssessment]:
         """Execute complete decision flow: technical analysis -> risk assessment -> trading decision
 
@@ -52,6 +53,7 @@ class DecisionEngine:
             trades_today: Number of trades executed today
             consecutive_losses: Number of consecutive losing trades
             emotional_state: Current emotional state
+            trigger_context: Event trigger context for event-driven calls
 
         Returns:
             Tuple of (trading decision, technical analysis, risk assessment)
@@ -84,6 +86,7 @@ class DecisionEngine:
             trades_today,
             consecutive_losses,
             emotional_state,
+            trigger_context=trigger_context,
         )
 
         return decision, tech_result, risk_result
@@ -177,6 +180,7 @@ class DecisionEngine:
         trades_today: int,
         consecutive_losses: int,
         emotional_state: str,
+        trigger_context: list | None = None,
     ) -> TradingDecision:
         """Make final trading decision with multi-timeframe and discipline constraints"""
         pos_info = "No position"
@@ -280,6 +284,15 @@ class DecisionEngine:
             active_rules=active_rules,
         )
 
+        # Inject event trigger context if present
+        if trigger_context:
+            from ..events.detector import format_trigger_context
+            trigger_text = format_trigger_context(
+                trigger_context,
+                active_strategies=config.enabled_strategies,
+            )
+            user_prompt = trigger_text + "\n\n---\n\n" + user_prompt
+
         response = await self.llm.chat(
             messages=[
                 {"role": "system", "content": TRADING_SYSTEM},
@@ -377,6 +390,7 @@ class HybridDecisionEngine(DecisionEngine):
         trades_today: int = 0,
         consecutive_losses: int = 0,
         emotional_state: str = "calm",
+        trigger_context: list | None = None,
     ) -> Tuple[TradingDecision, TechnicalAnalysisResult, RiskAssessment]:
         """Execute hybrid decision flow with quantitative and AI integration
 
@@ -413,6 +427,7 @@ class HybridDecisionEngine(DecisionEngine):
             trades_today=trades_today,
             consecutive_losses=consecutive_losses,
             emotional_state=emotional_state,
+            trigger_context=trigger_context,
         )
 
         # Step 5: Hybrid decision fusion
