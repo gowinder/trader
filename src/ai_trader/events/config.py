@@ -36,21 +36,17 @@ DEFAULT_EVENT_TRIGGER_CONFIG: dict = {
     "events": {
         "price_surge": {
             "enabled": True,
-            "threshold_pct": 3.0,
-            "window_minutes": 5,
-            "severity": "high",
+            "atr_multiplier": 1.5,
+            "lookback_seconds": 300,
         },
         "volume_spike": {
             "enabled": True,
-            "threshold_multiplier": 3.0,
-            "window_minutes": 5,
-            "severity": "medium",
+            "volume_multiplier": 2.5,
         },
         "rsi_extreme": {
             "enabled": True,
-            "overbought": 80,
-            "oversold": 20,
-            "severity": "medium",
+            "upper_threshold": 75,
+            "lower_threshold": 25,
         },
         "macd_cross": {
             "enabled": True,
@@ -68,9 +64,8 @@ DEFAULT_EVENT_TRIGGER_CONFIG: dict = {
         },
         "position_pnl": {
             "enabled": True,
-            "profit_threshold_pct": 5.0,
-            "loss_threshold_pct": -3.0,
-            "severity": "high",
+            "profit_threshold_percent": 3.0,
+            "loss_threshold_percent": -2.0,
         },
     },
 }

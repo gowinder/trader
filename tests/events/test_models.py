@@ -102,8 +102,9 @@ class TestDefaultEventTriggerConfig:
 
     def test_price_surge_has_params(self):
         cfg = DEFAULT_EVENT_TRIGGER_CONFIG["events"]["price_surge"]
-        assert "threshold_pct" in cfg
+        assert "atr_multiplier" in cfg
+        assert "lookback_seconds" in cfg
 
     def test_volume_spike_has_params(self):
         cfg = DEFAULT_EVENT_TRIGGER_CONFIG["events"]["volume_spike"]
-        assert "threshold_multiplier" in cfg
+        assert "volume_multiplier" in cfg

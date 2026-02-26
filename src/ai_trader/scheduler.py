@@ -1004,7 +1004,7 @@ class Scheduler:
                                         position = await self.position_mgr.get_position(symbol)
 
                                     trigger_events = event_detector.scan(
-                                        md, md.indicators, position, market_state=market_state_str
+                                        md, position, market_state=market_state_str
                                     )
                             except Exception as e:
                                 logger.warning(f"Event detection failed for {symbol}: {e}")

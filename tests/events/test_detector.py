@@ -7,62 +7,8 @@ import pytest
 from ai_trader.events.config import DEFAULT_EVENT_TRIGGER_CONFIG, STRATEGY_EVENT_DEFAULTS
 from ai_trader.events.detector import EventDetector, format_trigger_context
 from ai_trader.events.models import TriggerEvent
-from ai_trader.models.market import Indicators, Kline, MarketData
 
-
-# ── helpers ──────────────────────────────────────────────────────────
-
-
-def _make_indicators(**overrides) -> Indicators:
-    defaults = dict(
-        ma7=100.0,
-        ma25=100.0,
-        ma99=100.0,
-        rsi=50.0,
-        macd=0.0,
-        macd_signal=0.0,
-        macd_histogram=0.0,
-        boll_upper=110.0,
-        boll_middle=100.0,
-        boll_lower=90.0,
-        atr=2.0,
-    )
-    defaults.update(overrides)
-    return Indicators(**defaults)
-
-
-def _make_kline(close: float, volume: float = 1000.0, ts_offset: int = 0) -> Kline:
-    return Kline(
-        timestamp=1700000000 + ts_offset * 60,
-        open=close,
-        high=close + 1,
-        low=close - 1,
-        close=close,
-        volume=volume,
-    )
-
-
-def _make_market_data(
-    current_price: float = 100.0,
-    indicators: Indicators | None = None,
-    klines: list[Kline] | None = None,
-    interval: str = "5m",
-) -> MarketData:
-    if indicators is None:
-        indicators = _make_indicators()
-    if klines is None:
-        klines = [_make_kline(100.0, ts_offset=i) for i in range(30)]
-    return MarketData(
-        symbol="BTCUSDT",
-        current_price=current_price,
-        klines=klines,
-        interval=interval,
-        indicators=indicators,
-        high_24h=105.0,
-        low_24h=95.0,
-        change_24h=1.0,
-        volume_24h=50000.0,
-    )
+from .conftest import _make_indicators, _make_kline, _make_market_data
 
 
 # ── Tests ────────────────────────────────────────────────────────────
@@ -86,7 +32,7 @@ class TestScanNoEvents:
             enabled_strategies=["trend_following"],
         )
         md = _make_market_data(current_price=100.0)
-        events = det.scan(md, md.indicators, None, market_state=None)
+        events = det.scan(md, None, market_state=None)
         assert events == []
 
 
@@ -103,7 +49,7 @@ class TestStrategyFiltering:
             current_price=100.0,
             indicators=_make_indicators(rsi=20.0),
         )
-        events = det.scan(md, md.indicators, None, market_state=None)
+        events = det.scan(md, None, market_state=None)
         rsi_events = [e for e in events if e.event_type == "rsi_extreme"]
         assert len(rsi_events) == 0
 
@@ -117,7 +63,7 @@ class TestStrategyFiltering:
             current_price=100.0,
             indicators=_make_indicators(rsi=20.0),
         )
-        events = det.scan(md, md.indicators, None, market_state=None)
+        events = det.scan(md, None, market_state=None)
         rsi_events = [e for e in events if e.event_type == "rsi_extreme"]
         assert len(rsi_events) == 1
         assert rsi_events[0].event_type == "rsi_extreme"
@@ -145,12 +91,12 @@ class TestCooldown:
             current_price=100.0,
             indicators=_make_indicators(rsi=20.0),
         )
-        events1 = det.scan(md, md.indicators, None, market_state=None)
+        events1 = det.scan(md, None, market_state=None)
         rsi_events1 = [e for e in events1 if e.event_type == "rsi_extreme"]
         assert len(rsi_events1) == 1
 
         # Second scan immediately (within cooldown)
-        events2 = det.scan(md, md.indicators, None, market_state=None)
+        events2 = det.scan(md, None, market_state=None)
         assert events2 == []
 
 
@@ -175,7 +121,7 @@ class TestDisabledEvent:
             current_price=100.0,
             indicators=_make_indicators(rsi=20.0),
         )
-        events = det.scan(md, md.indicators, None, market_state=None)
+        events = det.scan(md, None, market_state=None)
         rsi_events = [e for e in events if e.event_type == "rsi_extreme"]
         assert len(rsi_events) == 0
 
