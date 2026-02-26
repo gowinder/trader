@@ -36,21 +36,21 @@ class EventDetector:
     def _init_detectors(self) -> None:
         events_cfg = self._config.get("events", {})
 
-        price_cfg = events_cfg.get("price_surge", {})
+        ps_cfg = events_cfg.get("price_surge", {})
         self._price_surge = PriceSurgeDetector(
-            atr_multiplier=price_cfg.get("threshold_pct", 3.0) / 2.0,
-            lookback_seconds=price_cfg.get("window_minutes", 5) * 60,
+            atr_multiplier=ps_cfg.get("atr_multiplier", 1.5),
+            lookback_seconds=ps_cfg.get("lookback_seconds", 300),
         )
 
-        volume_cfg = events_cfg.get("volume_spike", {})
+        vs_cfg = events_cfg.get("volume_spike", {})
         self._volume_spike = VolumeSpikeDetector(
-            volume_multiplier=volume_cfg.get("threshold_multiplier", 3.0),
+            volume_multiplier=vs_cfg.get("volume_multiplier", 2.5),
         )
 
         rsi_cfg = events_cfg.get("rsi_extreme", {})
         self._rsi_extreme = RSIExtremeDetector(
-            upper_threshold=rsi_cfg.get("overbought", 80),
-            lower_threshold=rsi_cfg.get("oversold", 20),
+            upper_threshold=rsi_cfg.get("upper_threshold", 75),
+            lower_threshold=rsi_cfg.get("lower_threshold", 25),
         )
 
         self._macd_cross = MACDCrossDetector()
@@ -61,8 +61,8 @@ class EventDetector:
 
         pnl_cfg = events_cfg.get("position_pnl", {})
         self._position_pnl = PositionPnLDetector(
-            profit_threshold=pnl_cfg.get("profit_threshold_pct", 5.0),
-            loss_threshold=pnl_cfg.get("loss_threshold_pct", -3.0),
+            profit_threshold=pnl_cfg.get("profit_threshold_percent", 3.0),
+            loss_threshold=pnl_cfg.get("loss_threshold_percent", -2.0),
         )
 
         # 检测器映射: event_type -> (detector, is_standard)
@@ -109,7 +109,6 @@ class EventDetector:
     def scan(
         self,
         market_data,
-        indicators,
         position,
         market_state: str | None,
     ) -> list[TriggerEvent]:
@@ -152,7 +151,7 @@ class EventDetector:
             event: Optional[TriggerEvent] = None
             try:
                 if is_standard:
-                    event = detector.check(market_data, indicators, position)
+                    event = detector.check(market_data, market_data.indicators, position)
                 else:
                     # MarketStateChangeDetector 特殊接口
                     if market_state is not None:
