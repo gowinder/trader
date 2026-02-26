@@ -2,11 +2,13 @@
 
 import asyncio
 import json
+import time as _time
 from dataclasses import dataclass
 from datetime import datetime as _dt, timedelta as _td
 from typing import Optional
 from uuid import UUID
 
+import pandas as pd
 import redis.asyncio as redis
 
 from .config import config
@@ -44,6 +46,8 @@ from .advisory.context import AdvisoryContextBuilder
 from .advisory.triggers import TriggerManager, TriggerConfig
 from .advisory.telegram import TelegramBot
 from .notification import NotificationManager
+from .events.detector import EventDetector
+from .events.config import DEFAULT_EVENT_TRIGGER_CONFIG
 
 
 class Scheduler:
@@ -93,6 +97,7 @@ class Scheduler:
         # Advisory system
         self._advisory_service: Optional[AdvisoryService] = None
         self._advisory_tasks: list = []
+        self._advisory_auto_execute: bool = False
         self._price_history: dict = {}
         self._consecutive_losses: int = 0
 
@@ -103,6 +108,12 @@ class Scheduler:
         self._redis: Optional[redis.Redis] = None
         self._trading_enabled = True
         self._decision_interval = config.decision_interval
+
+        # Event-driven trigger system (per-symbol isolation)
+        self._event_detectors: dict[str, EventDetector] = {}  # per-symbol
+        self._event_trigger_config: dict = dict(DEFAULT_EVENT_TRIGGER_CONFIG)
+        self._decision_timers: dict[str, float] = {}  # per-symbol
+        self._scan_interval: int = DEFAULT_EVENT_TRIGGER_CONFIG.get("scan_interval_seconds", 30)
 
         # Strategy preset
         self._active_preset_name: Optional[str] = None
@@ -284,6 +295,16 @@ class Scheduler:
                 notifier=notifier, persistence=persistence,
                 db=self.db_manager,
             )
+            # 读取自动执行配置
+            if self._redis:
+                try:
+                    auto_exec = await self._redis.get("advisory:auto_execute")
+                    if auto_exec is not None:
+                        self._advisory_auto_execute = json.loads(auto_exec)
+                        config.advisory_auto_execute = self._advisory_auto_execute
+                        logger.info(f"Advisory auto-execute: {self._advisory_auto_execute}")
+                except Exception:
+                    pass
             # 在 advisory_service 就绪后启动执行队列监听
             if self._redis:
                 self._advisory_tasks.append(asyncio.create_task(self._advisory_execute_listener()))
@@ -308,6 +329,31 @@ class Scheduler:
             # Load initial config from Redis
             await self._load_trading_config()
             await self._load_llm_providers_config()
+
+            # Load event trigger config from Redis
+            try:
+                raw = await self._redis.get("trading:event_trigger_config")
+                if raw:
+                    self._event_trigger_config = json.loads(raw)
+                    self._scan_interval = self._event_trigger_config.get("scan_interval_seconds", 30)
+                    logger.info(f"Loaded event trigger config from Redis")
+                else:
+                    # Initialize default config in Redis
+                    await self._redis.set(
+                        "trading:event_trigger_config",
+                        json.dumps(DEFAULT_EVENT_TRIGGER_CONFIG),
+                    )
+                    logger.info("Initialized default event trigger config in Redis")
+            except Exception as e:
+                logger.warning(f"Failed to load event trigger config: {e}")
+
+            # Initialize per-symbol EventDetectors
+            for symbol in config.symbols_list:
+                self._event_detectors[symbol] = EventDetector(
+                    event_config=self._event_trigger_config,
+                    enabled_strategies=config.enabled_strategies,
+                )
+            logger.info(f"EventDetector initialized for {len(config.symbols_list)} symbol(s)")
 
             # Start config listener in background
             asyncio.create_task(self._config_listener())
@@ -455,7 +501,7 @@ class Scheduler:
 
         try:
             pubsub = self._redis.pubsub()
-            await pubsub.subscribe("trading:config:updated", "strategy:preset:updated", "llm:providers:updated", "advisory:config:updated", "advisory:llm_config:updated", "llm:config:updated", "notification:config:updated", "notification:test")
+            await pubsub.subscribe("trading:config:updated", "strategy:preset:updated", "llm:providers:updated", "advisory:config:updated", "advisory:llm_config:updated", "advisory:auto_execute:updated", "llm:config:updated", "notification:config:updated", "notification:test", "trading:event_trigger_config:updated")
 
             async for message in pubsub.listen():
                 if message["type"] == "message":
@@ -487,6 +533,11 @@ class Scheduler:
                                 new_trigger_cfg = TriggerConfig(**cfg)
                                 self._advisory_service.trigger_mgr.update_config(new_trigger_cfg)
                                 logger.info(f"Advisory trigger config updated: {cfg}")
+                        elif channel == "advisory:auto_execute:updated":
+                            val = json.loads(message["data"])
+                            self._advisory_auto_execute = bool(val)
+                            config.advisory_auto_execute = self._advisory_auto_execute
+                            logger.info(f"Advisory auto-execute updated: {self._advisory_auto_execute}")
                         elif channel == "advisory:llm_config:updated":
                             llm_cfg = json.loads(message["data"])
                             provider = llm_cfg.get("provider", "")
@@ -554,6 +605,19 @@ class Scheduler:
                             if self._notification_manager:
                                 await self._notification_manager.send_test_message()
                                 logger.info("Notification test message sent")
+                        elif channel == "trading:event_trigger_config:updated":
+                            try:
+                                raw = await self._redis.get("trading:event_trigger_config")
+                                if raw:
+                                    self._event_trigger_config = json.loads(raw)
+                                    self._scan_interval = self._event_trigger_config.get("scan_interval_seconds", 30)
+                                    for sym, det in self._event_detectors.items():
+                                        det.update_config(
+                                            self._event_trigger_config, config.enabled_strategies
+                                        )
+                                    logger.info("Event trigger config updated from Redis")
+                            except Exception as e:
+                                logger.error(f"Failed to update event trigger config: {e}")
                         else:
                             cfg = json.loads(message["data"])
                             # optimization 模块发布的参数变更事件，不含交易配置字段，跳过
@@ -913,7 +977,57 @@ class Scheduler:
                 # Run cycle for each symbol (re-read from config for hot-reload)
                 for symbol in config.symbols_list:
                     try:
-                        await self.run_cycle_for_symbol(symbol)
+                        trigger_events = []
+
+                        # Event detection (per-symbol EventDetector)
+                        event_detector = self._event_detectors.get(symbol)
+                        if event_detector and self._event_trigger_config.get("enabled", True):
+                            try:
+                                md = await self.market_mgr.get_market_data(
+                                    symbol, interval=f"{config.analysis_interval}m"
+                                )
+                                if md:
+                                    # Get market state for MarketStateChangeDetector
+                                    market_state_str = None
+                                    if self.decision_engine.market_classifier:
+                                        klines_data = [k.model_dump() for k in md.klines]
+                                        df = pd.DataFrame(klines_data)
+                                        mc = self.decision_engine.market_classifier.classify(df)
+                                        market_state_str = mc.state.value
+
+                                    # Get position for PositionPnLDetector
+                                    position = None
+                                    if config.trading_mode == "testnet":
+                                        if hasattr(self, '_testnet_positions') and symbol in self._testnet_positions:
+                                            position = self._testnet_positions[symbol]
+                                    else:
+                                        position = await self.position_mgr.get_position(symbol)
+
+                                    trigger_events = event_detector.scan(
+                                        md, position, market_state=market_state_str
+                                    )
+                            except Exception as e:
+                                logger.warning(f"Event detection failed for {symbol}: {e}")
+
+                        now = _time.monotonic()
+                        should_run_llm = False
+                        trigger_context = None
+
+                        # Case 1: Events triggered
+                        if trigger_events:
+                            should_run_llm = True
+                            trigger_context = trigger_events
+                            logger.info(f"Event-driven LLM trigger for {symbol}: {[e.event_type for e in trigger_events]}")
+
+                        # Case 2: Per-symbol decision timer expired
+                        symbol_timer = self._decision_timers.get(symbol, 0.0)
+                        if not should_run_llm and (now - symbol_timer) >= self._decision_interval:
+                            should_run_llm = True
+
+                        if should_run_llm:
+                            await self.run_cycle_for_symbol(symbol, trigger_context=trigger_context)
+                            self._decision_timers[symbol] = _time.monotonic()
+
                     except Exception as e:
                         logger.error(f"Error in cycle for {symbol}: {e}")
 
@@ -926,8 +1040,8 @@ class Scheduler:
             except Exception as e:
                 logger.error(f"Error in main cycle: {e}")
 
-            logger.info(f"Waiting {self._decision_interval}s...")
-            await asyncio.sleep(self._decision_interval)
+            logger.info(f"Waiting {self._scan_interval}s...")
+            await asyncio.sleep(self._scan_interval)
 
     async def stop(self):
         """停止调度器"""
@@ -1661,14 +1775,14 @@ class Scheduler:
                 pass
 
             if force:
-                await self._advisory_service.force_run(
+                advisory_id = await self._advisory_service.force_run(
                     symbols=symbols, positions=positions,
                     market_data=market_data, sentiment=None,
                     current_config=current_config,
                     account_summary=account_summary,
                 )
             else:
-                await self._advisory_service.check_and_run(
+                advisory_id = await self._advisory_service.check_and_run(
                     symbols=symbols, positions=positions,
                     market_data=market_data, sentiment=None,
                     current_config=current_config,
@@ -1676,8 +1790,55 @@ class Scheduler:
                     price_context=price_context,
                     account_summary=account_summary,
                 )
+
+            # 自动执行：跳过手动确认，直接入队执行
+            if advisory_id and self._advisory_auto_execute:
+                await self._auto_execute_advisory(advisory_id)
         except Exception as e:
             logger.error(f"Advisory check error: {e}")
+
+    async def _auto_execute_advisory(self, advisory_id: str):
+        """自动执行 advisory 的所有 pending suggestions，跳过手动确认"""
+        if not self._advisory_service or not self._advisory_service.persistence or not self._redis:
+            return
+        try:
+            from uuid import UUID
+            aid = UUID(advisory_id)
+            rows = await self.db_manager.pool.fetch(
+                """
+                SELECT id, type, target, action, detail, status
+                FROM advisory_suggestions
+                WHERE advisory_id = $1 AND status = 'pending'
+                ORDER BY sort_order
+                """,
+                aid,
+            )
+            if not rows:
+                return
+
+            for row in rows:
+                sid = row["id"]
+                # 原子更新：pending → confirmed
+                updated = await self._advisory_service.persistence.update_suggestion_status_if(
+                    sid, "confirmed", "pending"
+                )
+                if not updated:
+                    continue
+                detail = row["detail"]
+                if isinstance(detail, str):
+                    detail = json.loads(detail)
+                task = {
+                    "suggestion_id": str(sid),
+                    "type": row["type"],
+                    "target": row["target"],
+                    "action": row["action"],
+                    "detail": detail,
+                }
+                await self._redis.lpush("advisory:execute_tasks", json.dumps(task))
+
+            logger.info(f"Advisory {advisory_id} auto-executed: {len(rows)} suggestions queued")
+        except Exception as e:
+            logger.error(f"Advisory auto-execute failed: {e}")
 
     async def run_cycle(self):
         """执行单次交易循环（兼容旧版单 symbol）"""
@@ -1825,12 +1986,12 @@ class Scheduler:
             logger.warning(f"Failed to get total realized PnL: {e}")
             return 0.0
 
-    async def run_cycle_for_symbol(self, symbol: str):
+    async def run_cycle_for_symbol(self, symbol: str, trigger_context: list | None = None):
         """执行指定 symbol 的交易循环"""
         async with self._get_symbol_lock(symbol):
-            await self._run_cycle_for_symbol_impl(symbol)
+            await self._run_cycle_for_symbol_impl(symbol, trigger_context=trigger_context)
 
-    async def _run_cycle_for_symbol_impl(self, symbol: str):
+    async def _run_cycle_for_symbol_impl(self, symbol: str, trigger_context: list | None = None):
         """执行指定 symbol 的交易循环（内部实现，已持有 symbol 锁）"""
         logger.info(f"Starting cycle for {symbol}")
 
@@ -2025,6 +2186,7 @@ class Scheduler:
             decision, tech, risk = await self.decision_engine.analyze_and_decide(
                 market_data, position, balance, equity,
                 mtf_data=mtf_data,
+                trigger_context=trigger_context,
             )
         except Exception as e:
             logger.error(f"Decision engine failed: {e}")
