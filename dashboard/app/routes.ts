@@ -25,6 +25,9 @@ export default [
   route("api/advisory-trigger", "routes/api.advisory-trigger.ts"),
   route("api/advisory-settings", "routes/api.advisory-settings.ts"),
   route("api/notification-settings", "routes/api.notification-settings.ts"),
+  route("api/event-triggers/logs", "routes/api.event-triggers.logs.ts"),
+  route("api/event-triggers/config", "routes/api.event-triggers.config.ts"),
+  route("api/event-triggers/mapping", "routes/api.event-triggers.mapping.ts"),
   route("api/account-state", "routes/api.account-state.ts"),
   route("api/change-password", "routes/api.change-password.ts"),
   route("dashboard", "routes/dashboard.tsx", [
@@ -45,5 +48,6 @@ export default [
     route("advisory", "routes/dashboard.advisory.tsx"),
     route("advisory-settings", "routes/dashboard.advisory-settings.tsx"),
     route("notification-settings", "routes/dashboard.notification-settings.tsx"),
+    route("event-triggers", "routes/dashboard.event-triggers.tsx"),
   ]),
 ] satisfies RouteConfig;

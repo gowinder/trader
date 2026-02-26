@@ -32,7 +32,7 @@ class TestScanNoEvents:
             enabled_strategies=["trend_following"],
         )
         md = _make_market_data(current_price=100.0)
-        events = det.scan(md, None, market_state=None)
+        events = det.scan("BTCUSDT", md, None, market_state=None)
         assert events == []
 
 
@@ -49,7 +49,7 @@ class TestStrategyFiltering:
             current_price=100.0,
             indicators=_make_indicators(rsi=20.0),
         )
-        events = det.scan(md, None, market_state=None)
+        events = det.scan("BTCUSDT", md, None, market_state=None)
         rsi_events = [e for e in events if e.event_type == "rsi_extreme"]
         assert len(rsi_events) == 0
 
@@ -63,7 +63,7 @@ class TestStrategyFiltering:
             current_price=100.0,
             indicators=_make_indicators(rsi=20.0),
         )
-        events = det.scan(md, None, market_state=None)
+        events = det.scan("BTCUSDT", md, None, market_state=None)
         rsi_events = [e for e in events if e.event_type == "rsi_extreme"]
         assert len(rsi_events) == 1
         assert rsi_events[0].event_type == "rsi_extreme"
@@ -91,12 +91,12 @@ class TestCooldown:
             current_price=100.0,
             indicators=_make_indicators(rsi=20.0),
         )
-        events1 = det.scan(md, None, market_state=None)
+        events1 = det.scan("BTCUSDT", md, None, market_state=None)
         rsi_events1 = [e for e in events1 if e.event_type == "rsi_extreme"]
         assert len(rsi_events1) == 1
 
         # Second scan immediately (within cooldown)
-        events2 = det.scan(md, None, market_state=None)
+        events2 = det.scan("BTCUSDT", md, None, market_state=None)
         assert events2 == []
 
 
@@ -121,7 +121,7 @@ class TestDisabledEvent:
             current_price=100.0,
             indicators=_make_indicators(rsi=20.0),
         )
-        events = det.scan(md, None, market_state=None)
+        events = det.scan("BTCUSDT", md, None, market_state=None)
         rsi_events = [e for e in events if e.event_type == "rsi_extreme"]
         assert len(rsi_events) == 0
 
