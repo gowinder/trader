@@ -139,6 +139,7 @@ class HybridDecisionEngine(DecisionEngine):
         trades_today: int = 0,
         consecutive_losses: int = 0,
         emotional_state: str = "calm",
+        trigger_context: list | None = None,
     ) -> Tuple[TradingDecision, TechnicalAnalysisResult, RiskAssessment]:
         """Execute hybrid decision flow with sentiment analysis
 
@@ -159,6 +160,7 @@ class HybridDecisionEngine(DecisionEngine):
             trades_today: Today's trade count
             consecutive_losses: Consecutive losses
             emotional_state: Emotional state
+            trigger_context: Event trigger context for event-driven calls
 
         Returns:
             Tuple of (decision, technical analysis, risk assessment)
@@ -243,6 +245,7 @@ class HybridDecisionEngine(DecisionEngine):
             trades_today=trades_today,
             consecutive_losses=consecutive_losses,
             emotional_state=emotional_state,
+            trigger_context=trigger_context,
         )
 
         # Step 6: Persist decision to database
@@ -293,6 +296,7 @@ class HybridDecisionEngine(DecisionEngine):
         trades_today: int,
         consecutive_losses: int,
         emotional_state: str,
+        trigger_context: list | None = None,
     ) -> TradingDecision:
         """Make hybrid trading decision by fusing multiple signals
 
@@ -325,6 +329,7 @@ class HybridDecisionEngine(DecisionEngine):
             trades_today,
             consecutive_losses,
             emotional_state,
+            trigger_context=trigger_context,
         )
 
         # If quant strategies not enabled, return base decision
