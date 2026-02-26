@@ -8,6 +8,7 @@ from datetime import datetime as _dt, timedelta as _td
 from typing import Optional
 from uuid import UUID
 
+import pandas as pd
 import redis.asyncio as redis
 
 from .config import config
@@ -45,7 +46,7 @@ from .advisory.context import AdvisoryContextBuilder
 from .advisory.triggers import TriggerManager, TriggerConfig
 from .advisory.telegram import TelegramBot
 from .notification import NotificationManager
-from .events.detector import EventDetector, format_trigger_context
+from .events.detector import EventDetector
 from .events.config import DEFAULT_EVENT_TRIGGER_CONFIG
 
 
@@ -108,10 +109,10 @@ class Scheduler:
         self._trading_enabled = True
         self._decision_interval = config.decision_interval
 
-        # Event-driven trigger system
-        self._event_detector: Optional[EventDetector] = None
+        # Event-driven trigger system (per-symbol isolation)
+        self._event_detectors: dict[str, EventDetector] = {}  # per-symbol
         self._event_trigger_config: dict = dict(DEFAULT_EVENT_TRIGGER_CONFIG)
-        self._decision_timer: float = 0.0  # monotonic time of last LLM call
+        self._decision_timers: dict[str, float] = {}  # per-symbol
         self._scan_interval: int = DEFAULT_EVENT_TRIGGER_CONFIG.get("scan_interval_seconds", 30)
 
         # Strategy preset
@@ -346,12 +347,13 @@ class Scheduler:
             except Exception as e:
                 logger.warning(f"Failed to load event trigger config: {e}")
 
-            # Initialize EventDetector
-            self._event_detector = EventDetector(
-                event_config=self._event_trigger_config,
-                enabled_strategies=config.enabled_strategies,
-            )
-            logger.info("EventDetector initialized")
+            # Initialize per-symbol EventDetectors
+            for symbol in config.symbols_list:
+                self._event_detectors[symbol] = EventDetector(
+                    event_config=self._event_trigger_config,
+                    enabled_strategies=config.enabled_strategies,
+                )
+            logger.info(f"EventDetector initialized for {len(config.symbols_list)} symbol(s)")
 
             # Start config listener in background
             asyncio.create_task(self._config_listener())
@@ -609,8 +611,8 @@ class Scheduler:
                                 if raw:
                                     self._event_trigger_config = json.loads(raw)
                                     self._scan_interval = self._event_trigger_config.get("scan_interval_seconds", 30)
-                                    if self._event_detector:
-                                        self._event_detector.update_config(
+                                    for sym, det in self._event_detectors.items():
+                                        det.update_config(
                                             self._event_trigger_config, config.enabled_strategies
                                         )
                                     logger.info("Event trigger config updated from Redis")
@@ -977,8 +979,9 @@ class Scheduler:
                     try:
                         trigger_events = []
 
-                        # Event detection (if EventDetector is initialized)
-                        if self._event_detector and self._event_trigger_config.get("enabled", True):
+                        # Event detection (per-symbol EventDetector)
+                        event_detector = self._event_detectors.get(symbol)
+                        if event_detector and self._event_trigger_config.get("enabled", True):
                             try:
                                 md = await self.market_mgr.get_market_data(
                                     symbol, interval=f"{config.analysis_interval}m"
@@ -987,7 +990,6 @@ class Scheduler:
                                     # Get market state for MarketStateChangeDetector
                                     market_state_str = None
                                     if self.decision_engine.market_classifier:
-                                        import pandas as pd
                                         klines_data = [k.model_dump() for k in md.klines]
                                         df = pd.DataFrame(klines_data)
                                         mc = self.decision_engine.market_classifier.classify(df)
@@ -1001,7 +1003,7 @@ class Scheduler:
                                     else:
                                         position = await self.position_mgr.get_position(symbol)
 
-                                    trigger_events = self._event_detector.scan(
+                                    trigger_events = event_detector.scan(
                                         md, md.indicators, position, market_state=market_state_str
                                     )
                             except Exception as e:
@@ -1017,13 +1019,14 @@ class Scheduler:
                             trigger_context = trigger_events
                             logger.info(f"Event-driven LLM trigger for {symbol}: {[e.event_type for e in trigger_events]}")
 
-                        # Case 2: Decision timer expired
-                        if not should_run_llm and (now - self._decision_timer) >= self._decision_interval:
+                        # Case 2: Per-symbol decision timer expired
+                        symbol_timer = self._decision_timers.get(symbol, 0.0)
+                        if not should_run_llm and (now - symbol_timer) >= self._decision_interval:
                             should_run_llm = True
 
                         if should_run_llm:
                             await self.run_cycle_for_symbol(symbol, trigger_context=trigger_context)
-                            self._decision_timer = _time.monotonic()
+                            self._decision_timers[symbol] = _time.monotonic()
 
                     except Exception as e:
                         logger.error(f"Error in cycle for {symbol}: {e}")
