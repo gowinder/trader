@@ -108,6 +108,7 @@ class EventDetector:
 
     def scan(
         self,
+        symbol: str,
         market_data,
         position,
         market_state: str | None,
@@ -169,8 +170,36 @@ class EventDetector:
                 f"事件检测完成: 触发 {len(triggered)} 个事件 "
                 f"[{', '.join(e.event_type for e in triggered)}]"
             )
-
         return triggered
+
+
+async def persist_trigger_events(db_manager, symbol: str, events: list[TriggerEvent]) -> None:
+    """异步将触发事件写入 PostgreSQL event_trigger_logs 表。
+
+    使用项目已有的 DatabaseManager (asyncpg) 连接池，避免同步阻塞。
+    由 scheduler 在 scan() 返回事件后调用。
+    """
+    import json
+
+    if not db_manager or not events:
+        return
+
+    try:
+        async with db_manager.acquire() as conn:
+            for event in events:
+                await conn.execute(
+                    """INSERT INTO event_trigger_logs
+                       (symbol, event_type, severity, description, key_data, triggered_at)
+                       VALUES ($1, $2, $3, $4, $5, $6)""",
+                    symbol,
+                    event.event_type,
+                    event.severity,
+                    event.description,
+                    json.dumps(event.key_data),
+                    event.timestamp,
+                )
+    except Exception:
+        logger.exception("事件持久化写入失败")
 
 
 def format_trigger_context(

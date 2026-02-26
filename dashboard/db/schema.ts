@@ -408,6 +408,26 @@ export const llmUsage = pgTable(
   })
 );
 
+// ==================== 事件触发记录 ====================
+
+export const eventTriggerLogs = pgTable(
+  "event_trigger_logs",
+  {
+    id: serial("id").primaryKey(),
+    symbol: varchar("symbol", { length: 20 }).notNull(),
+    eventType: varchar("event_type", { length: 50 }).notNull(),
+    severity: varchar("severity", { length: 10 }).notNull(),
+    description: text("description").notNull(),
+    keyData: jsonb("key_data"),
+    triggeredAt: timestamp("triggered_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    symbolTimeIdx: index("idx_event_trigger_symbol_time").on(table.symbol, table.triggeredAt),
+    eventTypeIdx: index("idx_event_trigger_type").on(table.eventType),
+  })
+);
+
 // ==================== 系统管理 ====================
 
 export const operationLogs = pgTable("operation_logs", {

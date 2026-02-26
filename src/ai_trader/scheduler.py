@@ -1004,7 +1004,7 @@ class Scheduler:
                                         position = await self.position_mgr.get_position(symbol)
 
                                     trigger_events = event_detector.scan(
-                                        md, position, market_state=market_state_str
+                                        symbol, md, position, market_state=market_state_str
                                     )
                             except Exception as e:
                                 logger.warning(f"Event detection failed for {symbol}: {e}")
@@ -1018,6 +1018,10 @@ class Scheduler:
                             should_run_llm = True
                             trigger_context = trigger_events
                             logger.info(f"Event-driven LLM trigger for {symbol}: {[e.event_type for e in trigger_events]}")
+                            # 异步持久化事件到数据库
+                            if self.db_manager:
+                                from .events.detector import persist_trigger_events
+                                await persist_trigger_events(self.db_manager, symbol, trigger_events)
 
                         # Case 2: Per-symbol decision timer expired
                         symbol_timer = self._decision_timers.get(symbol, 0.0)

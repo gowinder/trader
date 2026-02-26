@@ -18,12 +18,14 @@ import {
   BrainCircuit,
   SlidersVertical,
   MessageSquare,
+  Zap,
 } from "lucide-react";
 
 const navItems = [
   { to: "/dashboard", icon: LayoutDashboard, label: "概览" },
   { to: "/dashboard/chart", icon: LineChart, label: "图表" },
   { to: "/dashboard/decisions", icon: FileText, label: "决策" },
+  { to: "/dashboard/event-triggers", icon: Zap, label: "事件触发" },
   { to: "/dashboard/positions", icon: History, label: "仓位" },
   { to: "/dashboard/analytics", icon: BarChart3, label: "分析" },
   { to: "/dashboard/llm-usage", icon: Cpu, label: "LLM" },
