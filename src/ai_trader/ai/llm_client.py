@@ -34,7 +34,7 @@ class LLMClient:
         """发送请求，支持 JSON Schema 结构化输出"""
         start_time = time.time()
         self._current_usage_type = usage_type
-        self._current_trigger_source = trigger_source
+        self._current_trigger_source = trigger_source or getattr(self, "_cycle_trigger_source", None)
         used_model = self.model
         headers = {
             "Authorization": f"Bearer {self.api_key}",

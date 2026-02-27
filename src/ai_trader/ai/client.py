@@ -97,14 +97,19 @@ class LLMClient:
         max_tokens=2000,
         temperature=0.3,
         usage_type=None,
+        trigger_source=None,
     ):
         await self._ensure_started()
+        # 如果没有显式传 trigger_source，使用当前周期的触发来源
+        if trigger_source is None:
+            trigger_source = getattr(self, "_cycle_trigger_source", None)
         return await self._manager.chat(
             messages=messages,
             schema=schema,
             max_tokens=max_tokens,
             temperature=temperature,
             usage_type=usage_type,
+            trigger_source=trigger_source,
         )
 
     async def close(self):
