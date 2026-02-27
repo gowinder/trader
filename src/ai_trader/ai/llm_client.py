@@ -29,10 +29,12 @@ class LLMClient:
         max_tokens: int = 2000,
         temperature: float = 0.3,
         usage_type: Optional[str] = None,
+        trigger_source: Optional[str] = None,
     ) -> Dict[str, Any]:
         """发送请求，支持 JSON Schema 结构化输出"""
         start_time = time.time()
         self._current_usage_type = usage_type
+        self._current_trigger_source = trigger_source
         used_model = self.model
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -110,6 +112,7 @@ class LLMClient:
                 success=success,
                 error_message=error_message,
                 usage_type=getattr(self, "_current_usage_type", None),
+                trigger_source=getattr(self, "_current_trigger_source", None),
             )
         except Exception as e:
             logger.debug(f"Usage tracking failed: {e}")

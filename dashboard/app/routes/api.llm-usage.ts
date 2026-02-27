@@ -261,7 +261,7 @@ async function handleRecords(
     result = await sql`
       SELECT
         id, created_at, provider, model, input_tokens, output_tokens,
-        total_tokens, cost_usd, latency_ms, success, error_message, usage_type
+        total_tokens, cost_usd, latency_ms, success, error_message, usage_type, trigger_source
       FROM llm_usage
       WHERE provider = ${provider}
       ORDER BY created_at DESC
@@ -271,7 +271,7 @@ async function handleRecords(
     result = await sql`
       SELECT
         id, created_at, provider, model, input_tokens, output_tokens,
-        total_tokens, cost_usd, latency_ms, success, error_message, usage_type
+        total_tokens, cost_usd, latency_ms, success, error_message, usage_type, trigger_source
       FROM llm_usage
       ORDER BY created_at DESC
       LIMIT ${limit} OFFSET ${offset}
@@ -291,6 +291,7 @@ async function handleRecords(
     success: row.success,
     error_message: row.error_message,
     usage_type: row.usage_type || "unknown",
+    trigger_source: row.trigger_source || null,
   }));
 
   // 获取总数

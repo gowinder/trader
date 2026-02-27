@@ -57,6 +57,9 @@ export const decisions = pgTable(
     // 决策质量评分 (0-100)
     qualityScore: smallint("quality_score"),
 
+    // 触发来源: "event" | "timer"
+    triggerSource: varchar("trigger_source", { length: 20 }),
+
     // 关联
     orderId: uuid("order_id").references(() => orders.id),
   },
@@ -398,6 +401,9 @@ export const llmUsage = pgTable(
 
     // 使用类型：decision(决策), advisory(顾问), analysis(分析), optimization(优化), other(其他)
     usageType: varchar("usage_type", { length: 30 }),
+
+    // 触发来源: "event" | "timer"
+    triggerSource: varchar("trigger_source", { length: 20 }),
 
     // 关联上下文（可选）
     decisionId: uuid("decision_id").references(() => decisions.id),

@@ -20,6 +20,7 @@ export async function loader({ request }: Route.LoaderArgs) {
   const page = parseInt(url.searchParams.get("page") || "1");
   const symbol = url.searchParams.get("symbol") || "";
   const action = url.searchParams.get("action") || "";
+  const triggerSource = url.searchParams.get("trigger") || "";
   const days = parseInt(url.searchParams.get("days") || "0");
   const limit = 20;
   const offset = (page - 1) * limit;
@@ -35,6 +36,9 @@ export async function loader({ request }: Route.LoaderArgs) {
     } else {
       conditions.push(eq(decisionsTable.action, action));
     }
+  }
+  if (triggerSource) {
+    conditions.push(eq(decisionsTable.triggerSource, triggerSource));
   }
   if (days > 0) {
     const startDate = new Date();
@@ -67,6 +71,7 @@ export async function loader({ request }: Route.LoaderArgs) {
         reasoningZh: decisionsTable.reasoningZh,
         llmProvider: decisionsTable.llmProvider,
         strategyPreset: decisionsTable.strategyPreset,
+        triggerSource: decisionsTable.triggerSource,
       })
       .from(decisionsTable)
       .where(whereClause)
@@ -93,6 +98,7 @@ export async function loader({ request }: Route.LoaderArgs) {
       reasoningZh: d.reasoningZh,
       llmProvider: d.llmProvider,
       strategyPreset: d.strategyPreset,
+      triggerSource: d.triggerSource,
       resultPnl: null, // TODO: 从 position_history 计算
     })),
     pagination: {
@@ -104,6 +110,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     filters: {
       symbol,
       action,
+      triggerSource,
       days,
       availableSymbols: symbolsResult.map((s) => s.symbol),
     },
@@ -129,7 +136,7 @@ export default function DecisionsPage({ loaderData }: Route.ComponentProps) {
     setSearchParams({});
   };
 
-  const hasFilters = filters.symbol || filters.action || filters.days > 0;
+  const hasFilters = filters.symbol || filters.action || filters.triggerSource || filters.days > 0;
 
   return (
     <div className="space-y-4">
@@ -172,6 +179,19 @@ export default function DecisionsPage({ loaderData }: Route.ComponentProps) {
             <SelectItem value="close_long">平多</SelectItem>
             <SelectItem value="close_short">平空</SelectItem>
             <SelectItem value="hold">持有</SelectItem>
+          </SelectContent>
+        </Select>
+
+        <Select
+          value={filters.triggerSource}
+          onValueChange={(v) => updateFilter("trigger", v)}
+        >
+          <SelectTrigger className="w-[120px]">
+            <SelectValue placeholder="触发类型" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="event">事件触发</SelectItem>
+            <SelectItem value="timer">定时任务</SelectItem>
           </SelectContent>
         </Select>
 
@@ -224,6 +244,9 @@ export default function DecisionsPage({ loaderData }: Route.ComponentProps) {
                     策略
                   </th>
                   <th className="px-4 py-3 text-left text-sm font-medium">
+                    触发
+                  </th>
+                  <th className="px-4 py-3 text-left text-sm font-medium">
                     盈亏
                   </th>
                   <th className="px-4 py-3 text-left text-sm font-medium">
@@ -238,7 +261,7 @@ export default function DecisionsPage({ loaderData }: Route.ComponentProps) {
                 {decisions.length === 0 ? (
                   <tr>
                     <td
-                      colSpan={9}
+                      colSpan={10}
                       className="px-4 py-8 text-center text-muted-foreground"
                     >
                       暂无数据
@@ -299,6 +322,19 @@ export default function DecisionsPage({ loaderData }: Route.ComponentProps) {
                         {decision.strategyPreset ? (
                           <span className="rounded bg-muted px-2 py-0.5 text-xs">
                             {formatPresetName(decision.strategyPreset)}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">-</span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3 text-sm">
+                        {decision.triggerSource === "event" ? (
+                          <span className="rounded bg-blue-500/20 px-2 py-0.5 text-xs text-blue-400">
+                            事件触发
+                          </span>
+                        ) : decision.triggerSource === "timer" ? (
+                          <span className="rounded bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+                            定时任务
                           </span>
                         ) : (
                           <span className="text-muted-foreground">-</span>

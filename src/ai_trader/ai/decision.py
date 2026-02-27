@@ -301,6 +301,7 @@ class DecisionEngine:
             schema=TRADING_SCHEMA,
             max_tokens=1000,
             usage_type="decision",
+            trigger_source="event" if trigger_context else "timer",
         )
 
         decision = TradingDecision(**response)

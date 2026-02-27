@@ -276,6 +276,7 @@ class HybridDecisionEngine(DecisionEngine):
                     strategy_preset=self.active_preset_name,
                     market_state=_market_state_str,
                     strategy_signals=_strategy_signals_dict,
+                    trigger_source="event" if trigger_context else "timer",
                 )
             except Exception as e:
                 logger.error(f"Failed to persist decision: {e}")

@@ -333,6 +333,7 @@ class LLMManager:
         temperature: float = 0.3,
         provider: Optional[str] = None,
         usage_type: Optional[str] = None,
+        trigger_source: Optional[str] = None,
     ) -> Dict[str, Any]:
         """发送聊天请求，自动负载均衡和故障转移
 
@@ -392,6 +393,7 @@ class LLMManager:
                         latency_ms=latency_ms,
                         success=True,
                         usage_type=usage_type,
+                        trigger_source=trigger_source,
                     )
 
                 return result
@@ -415,6 +417,7 @@ class LLMManager:
                         success=False,
                         error_message=str(e),
                         usage_type=usage_type,
+                        trigger_source=trigger_source,
                     )
 
                 # 退避等待（最后一个 provider 不等待）

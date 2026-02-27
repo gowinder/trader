@@ -54,6 +54,7 @@ interface UsageRecord {
   success: boolean;
   error_message: string | null;
   usage_type: string;
+  trigger_source: string | null;
 }
 
 interface ProviderItem {
@@ -745,6 +746,7 @@ export default function LLMUsagePage() {
                   <tr className="border-b">
                     <th className="text-left py-2 px-3 font-medium">时间</th>
                     <th className="text-left py-2 px-3 font-medium">类型</th>
+                    <th className="text-left py-2 px-3 font-medium">触发</th>
                     <th className="text-left py-2 px-3 font-medium">Provider</th>
                     <th className="text-left py-2 px-3 font-medium">Model</th>
                     <th className="text-right py-2 px-3 font-medium">Input</th>
@@ -770,6 +772,13 @@ export default function LLMUsagePage() {
                         >
                           {USAGE_TYPE_LABELS[record.usage_type] || record.usage_type}
                         </span>
+                      </td>
+                      <td className="py-2 px-3">
+                        {record.trigger_source === "event" ? (
+                          <span className="rounded bg-blue-500/20 px-1.5 py-0.5 text-xs text-blue-400">事件</span>
+                        ) : record.trigger_source === "timer" ? (
+                          <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">定时</span>
+                        ) : null}
                       </td>
                       <td className="py-2 px-3">
                         <span className="px-2 py-0.5 rounded text-xs font-medium text-white" style={{ backgroundColor: PROVIDER_COLORS[record.provider] || "#666" }}>
@@ -852,6 +861,16 @@ export default function LLMUsagePage() {
                 <span className="text-muted-foreground">延迟</span>
                 <span className="tabular-nums">{selectedRecord.latency_ms.toFixed(0)} ms</span>
               </div>
+              {selectedRecord.trigger_source && (
+                <div className="flex justify-between border-b pb-2">
+                  <span className="text-muted-foreground">触发来源</span>
+                  {selectedRecord.trigger_source === "event" ? (
+                    <span className="rounded bg-blue-500/20 px-1.5 py-0.5 text-xs text-blue-400">事件触发</span>
+                  ) : (
+                    <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">定时任务</span>
+                  )}
+                </div>
+              )}
               <div className="flex justify-between border-b pb-2">
                 <span className="text-muted-foreground">状态</span>
                 <span className={selectedRecord.success ? "text-green-500" : "text-red-500"}>
