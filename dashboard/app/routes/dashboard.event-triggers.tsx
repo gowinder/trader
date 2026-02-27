@@ -181,6 +181,11 @@ function LogsTab() {
 
   return (
     <div className="space-y-4">
+      {/* 说明 */}
+      <div className="rounded-md bg-blue-50 px-4 py-2 text-sm text-blue-800 dark:bg-blue-900/20 dark:text-blue-300">
+        以下记录的事件均已触发 LLM 调用（仅触发了 LLM 的事件会被记录）
+      </div>
+
       {/* 筛选栏 */}
       <div className="flex flex-wrap gap-3">
         <Select value={symbol} onValueChange={setSymbol}>
@@ -505,8 +510,13 @@ function ConfigTab() {
 
 // ==================== 策略映射 Tab ====================
 
+interface PresetMapping {
+  displayName: string;
+  events: string[];
+}
+
 function MappingTab() {
-  const [mapping, setMapping] = useState<Record<string, string[]>>({});
+  const [presetMapping, setPresetMapping] = useState<Record<string, PresetMapping>>({});
   const [allEventTypes, setAllEventTypes] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -514,7 +524,7 @@ function MappingTab() {
     fetch("/api/event-triggers/mapping")
       .then((r) => r.json())
       .then((data) => {
-        setMapping(data.mapping || {});
+        setPresetMapping(data.presetMapping || {});
         setAllEventTypes(data.allEventTypes || []);
       })
       .catch(() => {})
@@ -525,12 +535,12 @@ function MappingTab() {
     return <div className="py-8 text-center text-muted-foreground">加载中...</div>;
   }
 
-  const strategies = Object.keys(mapping);
+  const presets = Object.entries(presetMapping);
 
   return (
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
-        映射关系由代码定义（STRATEGY_EVENT_DEFAULTS），展示各策略关注的事件类型
+        每个策略预设包含不同的底层策略组合，关注的事件类型是其所有底层策略的并集
       </p>
 
       <Card>
@@ -539,7 +549,7 @@ function MappingTab() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b bg-muted/50">
-                  <th className="px-4 py-3 text-left font-medium">策略</th>
+                  <th className="px-4 py-3 text-left font-medium">策略预设</th>
                   {allEventTypes.map((et) => (
                     <th key={et} className="px-3 py-3 text-center font-medium">
                       <span className="text-xs">{EVENT_LABELS[et] || et}</span>
@@ -548,12 +558,15 @@ function MappingTab() {
                 </tr>
               </thead>
               <tbody>
-                {strategies.map((strategy) => (
-                  <tr key={strategy} className="border-b hover:bg-muted/30">
-                    <td className="whitespace-nowrap px-4 py-3 font-mono text-xs">{strategy}</td>
+                {presets.map(([name, preset]) => (
+                  <tr key={name} className="border-b hover:bg-muted/30">
+                    <td className="whitespace-nowrap px-4 py-3">
+                      <span className="font-medium">{preset.displayName}</span>
+                      <span className="ml-2 text-xs text-muted-foreground">{name}</span>
+                    </td>
                     {allEventTypes.map((et) => (
                       <td key={et} className="px-3 py-3 text-center">
-                        {mapping[strategy]?.includes(et) ? (
+                        {preset.events.includes(et) ? (
                           <Check className="mx-auto h-4 w-4 text-green-500" />
                         ) : null}
                       </td>
