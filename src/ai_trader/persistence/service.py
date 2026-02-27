@@ -41,6 +41,7 @@ class DecisionPersistenceService:
         strategy_preset: Optional[str] = None,
         market_state: Optional[str] = None,
         strategy_signals: Optional[dict] = None,
+        trigger_source: Optional[str] = None,
     ) -> UUID:
         """保存完整决策数据
 
@@ -67,9 +68,9 @@ class DecisionPersistenceService:
                     leverage, position_size_pct, entry_price,
                     stop_loss, take_profit, reasoning, reasoning_zh,
                     llm_provider, llm_model, llm_raw_output, llm_tokens_used,
-                    strategy_preset, market_state, strategy_signals
+                    strategy_preset, market_state, strategy_signals, trigger_source
                 ) VALUES (
-                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18
+                    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19
                 ) RETURNING id
                 """,
                 market_data.symbol,
@@ -90,6 +91,7 @@ class DecisionPersistenceService:
                 strategy_preset,
                 market_state,
                 json.dumps(strategy_signals) if strategy_signals else None,
+                trigger_source,
             )
 
             # 2. 插入技术分析快照
@@ -696,6 +698,7 @@ class DecisionPersistenceService:
         error_message: Optional[str] = None,
         decision_id: Optional[UUID] = None,
         usage_type: Optional[str] = None,
+        trigger_source: Optional[str] = None,
     ) -> UUID:
         """记录 LLM 调用"""
         if total_tokens == 0:
@@ -706,8 +709,8 @@ class DecisionPersistenceService:
             INSERT INTO llm_usage (
                 provider, model, input_tokens, output_tokens, total_tokens,
                 cost_usd, latency_ms, success, error_message, decision_id,
-                usage_type
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                usage_type, trigger_source
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
             RETURNING id
             """,
             provider,
@@ -721,6 +724,7 @@ class DecisionPersistenceService:
             error_message,
             decision_id,
             usage_type,
+            trigger_source,
         )
         logger.debug(
             f"Recorded LLM usage: {provider}/{model} "
@@ -841,7 +845,7 @@ class DecisionPersistenceService:
             f"""
             SELECT
                 id, created_at, provider, model, input_tokens, output_tokens,
-                total_tokens, cost_usd, latency_ms, success, error_message
+                total_tokens, cost_usd, latency_ms, success, error_message, trigger_source
             FROM llm_usage
             {where_clause}
             ORDER BY created_at DESC
@@ -871,6 +875,7 @@ class DecisionPersistenceService:
                 "latency_ms": r["latency_ms"],
                 "success": r["success"],
                 "error_message": r["error_message"],
+                "trigger_source": r["trigger_source"],
             }
             for r in rows
         ]
