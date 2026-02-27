@@ -168,6 +168,9 @@ class HybridDecisionEngine(DecisionEngine):
         # Initialize persistence if enabled
         await self._init_persistence()
 
+        # 设置当前周期的触发来源，供所有 LLM 调用自动使用
+        self.llm._cycle_trigger_source = "event" if trigger_context else "timer"
+
         # Step 1: Technical analysis (AI)
         tech_result = await self.analyzer.analyze_technical(market_data)
 

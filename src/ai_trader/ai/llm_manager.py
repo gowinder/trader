@@ -339,6 +339,8 @@ class LLMManager:
 
         按优先级逐个尝试 provider，成功立即返回，失败则 fallback 到下一个。
         """
+        if trigger_source is None:
+            trigger_source = getattr(self, "_cycle_trigger_source", None)
         start_time = time.time()
         last_error = None
         tried_providers = set()
