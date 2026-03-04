@@ -1,6 +1,6 @@
 # PnL 优化设计文档
 
-> **版本**: v2（2026-03-04）— 纳入 Codex CLI 审核意见 + 数据库验证结果
+> **版本**: v3（2026-03-04）— 纳入两轮 Codex CLI 审核意见 + 数据库验证结果
 
 ## 问题背景
 
@@ -139,27 +139,117 @@ if decision.action in ("open_long", "open_short", "add_long", "add_short"):
 
 **文件**: `src/ai_trader/prompts/risk.py`
 
-将 RISK_SYSTEM 中硬编码的杠杆规则改为动态引用：
+**关键约束**：`RISK_SYSTEM` 是常量，在 `decision.py:159` 原样传给 LLM，不做 `format()`。`RISK_USER` 通过 `format()` 传入动态值。因此**动态杠杆规则必须放在 `RISK_USER` 中**，不能放在 `RISK_SYSTEM`。
 
-```
+具体修改：
+
+**RISK_SYSTEM** — 移除硬编码的 "max 5x for confluence > 0.7"，改为通用描述：
+
+```python
+RISK_SYSTEM = """...
 ## Position Sizing Rules (Fixed Percentage Risk Method)
 1. **Risk Per Trade**: 1% for normal trades, 2% for high-confidence setups only
 2. **Formula**: Position Size = (Account Balance × Risk %) / (Entry Price - Stop Loss Price)
-3. **Leverage Selection** (MANDATORY: must be within [{leverage_min}x, {leverage_max}x]):
-   - High Confluence (≥ 0.7): Use higher leverage (up to {leverage_max}x)
-   - Medium Confluence (0.5-0.7): Use midpoint leverage
-   - Low Confluence (< 0.5): Use {leverage_min}x or recommend HOLD
-   ⚠️ NEVER return recommended_leverage < {leverage_min} or > {leverage_max}
+3. **Leverage Selection**: Choose leverage within the allowed range (see Strategy Configuration below).
+   Higher confluence allows higher leverage; low confluence should use minimum leverage or HOLD.
 4. **Daily Loss Limit**: Stop trading if daily loss exceeds 3% of account balance
+..."""
 ```
 
-注意：RISK_SYSTEM 是静态模板，`{leverage_min}` 等占位符需要在 RISK_USER 中通过 format 传入。当前 RISK_USER 已有 `Allowed Leverage: {leverage_min}x - {leverage_max}x`，但 RISK_SYSTEM 中的规则硬编码了 "max 5x"，需要移除硬编码引用改为通用描述。
+**RISK_USER** — 在 `## Strategy Configuration` 区域追加强制指令：
+
+```python
+RISK_USER = """...
+## Strategy Configuration
+- Strategy Type: {strategy_type}
+- Allowed Leverage: {leverage_min}x - {leverage_max}x
+- Max Position %: {max_position_percent}%
+- Default Stop Loss: {stop_loss_percent}%
+- Default Take Profit: {take_profit_percent}%
+
+⚠️ MANDATORY: recommended_leverage MUST be between {leverage_min} and {leverage_max}.
+- High Confluence (≥ 0.7): Use up to {leverage_max}x
+- Medium Confluence (0.5-0.7): Use midpoint ({leverage_mid}x)
+- Low Confluence (< 0.5): Use {leverage_min}x or set should_trade=false
+..."""
+```
+
+`decision.py:130` 的 `RISK_USER.format()` 调用需新增 `leverage_mid` 参数：
+
+```python
+leverage_mid=(config.leverage_min + config.leverage_max) // 2,
+```
 
 #### 1.3 保存 LLM 原始输出用于诊断
 
-**文件**: `src/ai_trader/ai/decision.py` 或对应的持久化代码
+**问题**：当前 `llm_raw_output` 字段全部为空。数据链断裂分析：
 
-当前 `llm_raw_output` 字段全部为空，导致无法事后验证 LLM 行为。需要确保在保存决策记录时同时保存原始 JSON 输出。
+1. `providers/base.py:79` `_parse_response()` 接收 `data`（API 原始响应），直接解析 `content` 为 dict 返回，**原始文本被丢弃**
+2. `llm_manager.py:328` `chat()` 返回解析后的 dict
+3. `decision.py` 用返回的 dict 实例化 `TradingDecision`/`RiskAssessment`
+4. `hybrid_decision.py:271` 调 `save_decision()` 时**没有传 `llm_raw_output` 参数**
+
+**修复方案 — 完整透传链路**：
+
+**(a) provider 层保留原始文本**
+
+`providers/base.py:_parse_response()` 返回值中加入 `_raw_content` 字段：
+
+```python
+def _parse_response(self, data, schema=None):
+    content = data["choices"][0]["message"]["content"]
+    result = json.loads(content)  # ... 现有解析逻辑
+    result["_raw_content"] = content  # 附加原始文本
+    return result
+```
+
+**(b) decision.py 保存并剥离**
+
+在 `_make_decision()` 中：
+
+```python
+response = await self.llm.chat(...)
+raw_content = response.pop("_raw_content", None)  # 剥离后再传给 Pydantic
+decision = TradingDecision(**response)
+decision._raw_output = raw_content  # 临时属性，供持久化使用
+```
+
+注意：`TradingDecision` 是 Pydantic 模型，不能直接 `decision._raw_output`。改用返回时额外携带：
+
+```python
+# 在 analyze_and_decide 返回时，将 raw_output 附加到 decision 对象
+# 方案：改 analyze_and_decide 返回值为 4 元组，或在 decision 模型中增加 Optional 字段
+# 推荐：在 decision 模型中增加不参与序列化的字段
+class TradingDecision(BaseModel):
+    ...
+    _llm_raw_output: Optional[str] = None  # Pydantic private attribute
+
+    class Config:
+        # 允许 private attributes
+        underscore_attrs_are_private = True
+```
+
+实际上 Pydantic v2 使用 `model_config = ConfigDict(...)` 和 `PrivateAttr`：
+
+```python
+from pydantic import PrivateAttr
+
+class TradingDecision(BaseModel):
+    ...
+    _llm_raw_output: str = PrivateAttr(default="")
+```
+
+**(c) hybrid_decision.py 传递给 persistence**
+
+`hybrid_decision.py:271` 的 `save_decision()` 调用增加参数：
+
+```python
+await self.persistence_service.save_decision(
+    decision=decision,
+    ...
+    llm_raw_output=getattr(decision, '_llm_raw_output', None),
+)
+```
 
 ---
 
@@ -181,66 +271,192 @@ decision, tech, risk = await self.decision_engine.analyze_and_decide(
 修改为：
 ```python
 # 计算当前 symbol 的当日 PnL
-symbol_daily_pnl = self._daily_pnl.get(symbol, 0.0)
 total_daily_pnl = sum(self._daily_pnl.values())
 
 decision, tech, risk = await self.decision_engine.analyze_and_decide(
     market_data, position, balance, equity,
     mtf_data=mtf_data,
     daily_pnl=total_daily_pnl,
-    trades_today=self._trades_today,  # 需新增计数器
+    trades_today=self._trades_today,
     consecutive_losses=self._consecutive_losses,
-    emotional_state=self._get_emotional_state(),  # 基于连亏等计算
+    emotional_state=self._get_emotional_state(),
     trigger_context=trigger_context,
 )
 ```
 
-需要新增 `self._trades_today` 计数器（每日重置），以及基于连亏次数推算 emotional_state 的辅助方法。
+**新增 `self._trades_today` 计数器**：
 
-#### 2.2 补齐风险评估中的占位数据
+```python
+# __init__ 中初始化
+self._trades_today: int = 0
+self._trades_today_date: str = ""
 
-**文件**: `src/ai_trader/ai/decision.py:151-152`
+# _run_cycle_for_symbol_impl 中每日重置（同 _daily_pnl 的重置逻辑）
+today_str = _dt.utcnow().strftime("%Y-%m-%d")
+if today_str != self._trades_today_date:
+    self._trades_today = 0
+    self._trades_today_date = today_str
 
-将 `recent_trade_count=0` 和 `recent_pnl=0.0` 改为从 `prompt_enricher` 或传入参数获取真实值。
+# 每次执行订单成功后递增
+self._trades_today += 1
+```
 
-可复用已有的 `PromptContextEnricher`（`scheduler.py:187` 已注入）来获取这些数据，避免在 DecisionEngine 中直接访问数据库。
+**新增 `_get_emotional_state()` 方法**：
 
-#### 2.3 添加信号质量硬过滤
+```python
+def _get_emotional_state(self) -> str:
+    if self._consecutive_losses >= 5:
+        return "fearful"
+    elif self._consecutive_losses >= 3:
+        return "cautious"
+    elif self._trading_halted:
+        return "restricted"
+    return "calm"
+```
+
+#### 2.2 补齐风险评估中的占位数据（含 recent_win_rate）
+
+**文件**: `src/ai_trader/ai/decision.py:151-152, 231`
+
+三个占位数据 `recent_trade_count`、`recent_pnl`、`recent_win_rate` 需要补齐。
+
+**数据来源**：复用已注入的 `self.prompt_enricher`（`PromptContextEnricher`），它已经能从数据库查询历史交易数据。
+
+**方案**：在 `PromptContextEnricher` 中新增 `get_recent_stats()` 方法：
+
+```python
+# src/ai_trader/prompts/enricher.py
+
+async def get_recent_stats(self, symbol: str, hours: int = 24) -> dict:
+    """获取最近 N 小时的交易统计（用于风险评估和决策上下文）"""
+    try:
+        rows = await self.db.fetch(
+            """
+            SELECT realized_pnl
+            FROM position_history
+            WHERE symbol = $1
+              AND status = 'closed'
+              AND exit_time >= NOW() - INTERVAL '1 hour' * $2
+            ORDER BY exit_time DESC
+            """,
+            symbol, hours,
+        )
+    except Exception as e:
+        logger.warning(f"Failed to fetch recent stats: {e}")
+        return {"trade_count": 0, "total_pnl": 0.0, "win_rate": 0.0}
+
+    if not rows:
+        return {"trade_count": 0, "total_pnl": 0.0, "win_rate": 0.0}
+
+    trade_count = len(rows)
+    total_pnl = sum(float(r["realized_pnl"] or 0) for r in rows)
+    wins = sum(1 for r in rows if (r["realized_pnl"] or 0) > 0)
+    win_rate = wins / trade_count if trade_count > 0 else 0.0
+
+    return {"trade_count": trade_count, "total_pnl": total_pnl, "win_rate": win_rate}
+```
+
+**在 `decision.py` 中调用**：
+
+`_assess_risk()` 中替换 `recent_trade_count=0` 和 `recent_pnl=0.0`：
+
+```python
+# 获取真实的近期交易统计
+recent_stats = {"trade_count": 0, "total_pnl": 0.0, "win_rate": 0.0}
+if self.prompt_enricher:
+    try:
+        recent_stats = await self.prompt_enricher.get_recent_stats(market.symbol, hours=1)
+    except Exception:
+        pass
+
+user_prompt = RISK_USER.format(
+    ...
+    recent_trade_count=recent_stats["trade_count"],
+    recent_pnl=f"{recent_stats['total_pnl']:+.2f}",
+    ...
+)
+```
+
+`_make_decision()` 中替换 `recent_win_rate=0.0`：
+
+```python
+# 获取最近 50 笔交易的胜率（更长时间窗口）
+recent_win_rate = 0.0
+if self.prompt_enricher:
+    try:
+        perf = await self.prompt_enricher.get_recent_stats(market.symbol, hours=168)  # 7天
+        recent_win_rate = perf["win_rate"] * 100  # 转换为百分比
+    except Exception:
+        pass
+```
+
+#### 2.3 统一所有 action 改写到通知之前
 
 **文件**: `src/ai_trader/scheduler.py`
 
-**关键要求**（Codex 审核意见）：
-1. **过滤必须放在通知之前**，避免先通知 "open_long" 再改成 "hold" 的误通知问题
-2. **使用原地修改 `decision.action`**，不要重建 `TradingDecision` 对象（保留原始 reasoning 等上下文）
-3. **保留原始决策的可观测性**（日志记录原始 action 和过滤原因）
+**关键要求**（第二轮 Codex 审核）：不仅新增的 confidence/confluence 过滤要放在通知前，**现有的所有 action 改写逻辑也必须移到通知前**，包括：
+- 每日亏损拦截（`scheduler.py:2208`，当前在通知后）
+- `SignalFilter` 过滤（`scheduler.py:2214-2229`，当前在通知后）
+
+**重构后的执行顺序**：
 
 ```python
-# 在 LLM 决策返回后、发送通知之前
+# ── 2. 决策（含多时间框架数据）──
+decision, tech, risk = await self.decision_engine.analyze_and_decide(...)
+
+# ── 3. 所有 rule-based 过滤（统一在通知前）──
 original_action = decision.action
 
-# Confidence 过滤
+# 3a. Confidence 过滤
 if decision.action in ("open_long", "open_short"):
-    if decision.confidence < config.min_confidence_to_trade:
-        logger.info(
-            f"Confidence filter: {decision.action} -> hold "
-            f"(confidence={decision.confidence} < {config.min_confidence_to_trade})"
-        )
+    if decision.confidence < _cfg.get("min_confidence_to_trade", 60.0):
+        logger.info(f"Confidence filter: {decision.action} -> hold")
         decision.action = "hold"
         decision.reasoning += f" [FILTERED: low confidence {decision.confidence}]"
 
-# Confluence 过滤
+# 3b. Confluence 过滤
 if decision.action in ("open_long", "open_short"):
-    if mtf_data and mtf_data.confluence_score < config.min_confluence_to_trade:
-        logger.info(
-            f"Confluence filter: {decision.action} -> hold "
-            f"(confluence={mtf_data.confluence_score} < {config.min_confluence_to_trade})"
-        )
+    if mtf_data and mtf_data.confluence_score < _cfg.get("min_confluence_to_trade", 0.5):
+        logger.info(f"Confluence filter: {decision.action} -> hold")
         decision.action = "hold"
         decision.reasoning += f" [FILTERED: low confluence {mtf_data.confluence_score:.2f}]"
 
-# 然后发送通知（此时 action 已是最终值）
+# 3c. 每日亏损限制拦截（从通知后移到通知前）
+if self._trading_halted and decision.action in ("open_long", "open_short"):
+    logger.info(f"Daily loss limit: {decision.action} -> hold")
+    decision.action = "hold"
+    decision.reasoning += "\n[DailyLossLimit] 当日亏损限制已触发，禁止开新仓"
+
+# 3d. SignalFilter 过滤（从通知后移到通知前）
+if decision.action in ("open_long", "open_short"):
+    if symbol not in self._signal_filters:
+        self._signal_filters[symbol] = SignalFilter(
+            min_interval_hours=_cfg["signal_min_interval_hours"],
+            reverse_cooldown_hours=_cfg["signal_reverse_cooldown_hours"],
+        )
+    sf = self._signal_filters[symbol]
+    action_map = {"open_long": SignalAction.LONG, "open_short": SignalAction.SHORT}
+    allowed, filter_reason = sf.should_allow_signal(action_map[decision.action], _dt.utcnow())
+    if not allowed:
+        logger.info(f"[SignalFilter] {symbol} {decision.action} -> hold: {filter_reason}")
+        decision.action = "hold"
+        decision.reasoning += f"\n[SignalFilter] {filter_reason}"
+
+# 3e. 记录过滤结果
+if decision.action != original_action:
+    logger.info(f"Action changed: {original_action} -> {decision.action}")
+
+# ── 4. 发送通知（此时 action 已是最终值）──
 if self._notification_manager:
-    ...
+    await self._notification_manager.notify_decision(
+        symbol=symbol,
+        action=decision.action,
+        confidence=decision.confidence,
+        reasoning=decision.reasoning_zh or decision.reasoning,
+    )
+
+# ── 5. 执行 ──
+...
 ```
 
 #### 2.4 新增配置项
@@ -267,12 +483,51 @@ min_confluence_to_trade: float = Field(
 
 **文件**: `src/ai_trader/prompts/enricher.py`
 
-`PromptContextEnricher` 已正确初始化（`scheduler.py:187`），但当数据库查询失败或无平仓数据时降级为 "Performance data unavailable"。
+当前 `get_performance_summary(symbol, limit=20)` 只查询平仓历史。需要扩展以支持传入当前持仓和当日 PnL。
 
-修复方向：
-- 在 `get_performance_summary()` 中添加更详细的降级信息（如 "No closed trades yet" vs "Database error"）
-- 确保即使无平仓数据，也能传入当前持仓和当日 PnL 等基础信息
-- 添加日志记录降级原因，便于诊断
+**方案**：新增 `get_enhanced_performance_summary()` 方法，扩展签名以接受额外上下文：
+
+```python
+async def get_enhanced_performance_summary(
+    self,
+    symbol: str,
+    limit: int = 20,
+    current_position: Optional[dict] = None,
+    daily_pnl: float = 0.0,
+) -> str:
+    """获取增强版表现摘要（含当前持仓和当日 PnL）"""
+    base = await self.get_performance_summary(symbol, limit)
+
+    extra_lines = []
+    if daily_pnl != 0.0:
+        extra_lines.append(f"Today's PnL: {daily_pnl:+.2f} USDT")
+    if current_position:
+        side = current_position.get("side", "unknown")
+        upnl = current_position.get("unrealized_pnl", 0)
+        extra_lines.append(f"Current position: {side}, unrealized PnL: {upnl:+.2f} USDT")
+
+    if extra_lines:
+        return base + "\n" + "\n".join(extra_lines)
+    return base
+```
+
+**在 `decision.py:236` 调用时传入额外参数**：
+
+```python
+if self.prompt_enricher:
+    try:
+        pos_dict = None
+        if pos:
+            pos_dict = {"side": pos.side, "unrealized_pnl": pos.unrealized_pnl}
+        performance_summary = await self.prompt_enricher.get_enhanced_performance_summary(
+            market.symbol, current_position=pos_dict, daily_pnl=daily_pnl
+        )
+        active_rules = await self.prompt_enricher.get_active_rules()
+    except Exception as e:
+        logger.warning(f"Prompt enricher failed: {e}")
+        performance_summary = "Performance data unavailable (enricher error)"
+        active_rules = "No validated rules yet"
+```
 
 #### 3.2 优化交易提示词中的开仓条件
 
@@ -289,21 +544,26 @@ min_confluence_to_trade: float = Field(
 5. **Win Rate Awareness**: If recent win rate < 20%, increase caution and require confluence ≥ 0.75
 ```
 
+注：第 5 条的 `recent win rate` 数据来源已在 Phase 2.2 中定义（通过 `prompt_enricher.get_recent_stats()`），不存在数据源缺失问题。
+
 ---
 
 ## 涉及文件清单
 
 | 文件 | 修改内容 | Phase |
 |------|----------|-------|
-| `src/ai_trader/ai/decision.py` | response 层 leverage clamp + 补齐占位数据 | P0+P1 |
-| `src/ai_trader/prompts/risk.py` | 移除硬编码杠杆上限，强制引导范围 | P0 |
-| `src/ai_trader/scheduler.py` | 传入真实纪律上下文 + 信号质量过滤（通知前）| P1 |
+| `src/ai_trader/ai/decision.py` | response 层 leverage clamp + 补齐占位数据 + raw_output 透传 | P0+P1 |
+| `src/ai_trader/prompts/risk.py` | RISK_SYSTEM 移除硬编码杠杆；RISK_USER 追加杠杆强制指令 | P0 |
+| `src/ai_trader/scheduler.py` | 传入真实纪律上下文 + 统一所有 action 改写到通知前 | P1 |
 | `src/ai_trader/config.py` | 新增 min_confidence/confluence 配置 | P1 |
+| `src/ai_trader/prompts/enricher.py` | 新增 `get_recent_stats()` + `get_enhanced_performance_summary()` | P1+P2 |
+| `src/ai_trader/ai/providers/base.py` | `_parse_response()` 保留 `_raw_content` | P0 |
+| `src/ai_trader/ai/hybrid_decision.py` | `save_decision()` 传递 `llm_raw_output` | P0 |
+| `src/ai_trader/models/decision.py` | `TradingDecision` 增加 `_llm_raw_output` PrivateAttr | P0 |
 | `src/ai_trader/prompts/trading.py` | 提高入场标准 | P2 |
-| `src/ai_trader/prompts/enricher.py` | 改善数据降级路径和日志 | P2 |
 
 **不修改的文件**：
-- `src/ai_trader/models/decision.py` — Pydantic 模型默认值保持 1，不硬编码业务配置。通过 response 层 clamp 解决。
+- `src/ai_trader/models/decision.py` 的默认杠杆值 — 保持 1，不硬编码业务配置。通过 response 层 clamp 解决。
 
 ## 预期效果
 
@@ -313,6 +573,8 @@ min_confluence_to_trade: float = Field(
 | 补齐纪律上下文（P1）| LLM 能感知当日 PnL/连亏/交易次数，做出更有纪律的决策 |
 | confidence/confluence 过滤（P1）| 减少低质量交易，胜率提升 |
 | 补齐 win_rate 等真实数据（P1）| LLM 自适应调整策略 |
+| 统一 action 改写时序（P1）| 消除误通知问题 |
+| llm_raw_output 保存（P0）| 支持事后诊断 LLM 行为 |
 | 提示词优化（P2）| 长期提升信号质量 |
 
 ## 风险评估
@@ -321,23 +583,36 @@ min_confluence_to_trade: float = Field(
 |------|------|----------|
 | 杠杆放大亏损 | 从 1x 提升到 3-5x，亏损也同比放大 | 先用 `leverage_min=3` 运行 1 周观察 |
 | 交易频率降低 | confidence/confluence 过滤可能大幅减少交易 | confidence 阈值从 60 开始，逐步调整 |
-| 误通知 | 如果过滤放在通知后，会发"假"开仓通知 | **已解决**：过滤放在通知前 |
-| 数据依赖失败 | prompt_enricher 查询数据库异常 | 保留降级路径，添加异常日志 |
-| LLM 仍返回低杠杆 | 即使提示词改了，LLM 可能仍偏保守 | **已解决**：代码层 clamp 强制 `[min, max]` |
+| 通知时序变更 | 现有 action 改写逻辑移到通知前，通知行为会变 | 变更本身是修正，但需确认外部系统无依赖 |
+| 数据依赖失败 | prompt_enricher 查询数据库异常 | 所有新增查询都有 try/except 降级，返回默认值 |
+| LLM 仍返回低杠杆 | 即使提示词改了，LLM 可能仍偏保守 | 代码层 clamp 强制 `[min, max]` 兜底 |
 | 400 重试丢 schema | provider 回退后字段可能缺失 | Pydantic 默认值 1 仍生效，但 clamp 会修正 |
+| raw_output 体积 | 每笔决策多存一个文本字段 | 数据库已有 `llm_raw_output text` 列，无额外 schema 变更 |
 
 ## 实施顺序
 
-1. **Phase 1**：修复杠杆（response 层 clamp + 提示词优化）— 影响最大，风险最低
-2. **Phase 2**：补齐上下文 + 信号过滤 — 与 Phase 1 一起部署
+1. **Phase 1**：修复杠杆（response 层 clamp + 提示词优化 + raw_output 保存）— 影响最大，风险最低
+2. **Phase 2**：补齐上下文 + 信号过滤 + 统一 action 改写时序 — 与 Phase 1 一起部署
 3. **Phase 3**：提示词入场标准优化 + 数据降级修复 — Phase 1+2 稳定后再做
 
 ## 附录：Codex CLI 审核要点及处理
 
+### 第一轮审核（v1 → v2）
+
 | 审核意见 | 处理方式 |
 |----------|----------|
-| P0 根因证据不足 | 已通过数据库验证杠杆分布，确认为多因素问题（LLM 主动选择 + 400 回退 + 默认值），不再简单定性为"Bug" |
-| 默认值方案自相矛盾 | 已改为"不修改模型默认值，在 response 层按运行时配置 clamp" |
-| 过滤插入点时序问题 | 已改为"过滤放在通知之前"，且使用原地修改 `decision.action` |
-| prompt_enricher 分析不准 | 已修正为"已初始化但数据依赖和降级路径问题" |
-| 遗漏占位数据 | 已补充 `recent_trade_count`、`recent_pnl`、scheduler 未传 `daily_pnl/trades_today/consecutive_losses` |
+| P0 根因证据不足 | 已通过数据库验证杠杆分布，确认为多因素问题 |
+| 默认值方案自相矛盾 | 已改为 response 层按运行时配置 clamp |
+| 过滤插入点时序问题 | 部分解决（见第二轮） |
+| prompt_enricher 分析不准 | 已修正为"已初始化但数据依赖问题" |
+| 遗漏占位数据 | 部分补充（见第二轮） |
+
+### 第二轮审核（v2 → v3）
+
+| 审核意见 | 处理方式 |
+|----------|----------|
+| RISK_SYSTEM 动态占位不可行 | 已明确：动态杠杆规则放在 RISK_USER 中，RISK_SYSTEM 只保留通用描述 |
+| 过滤时序未彻底解决 | 已将**所有** action 改写逻辑（含日亏损拦截、SignalFilter）统一移到通知前 |
+| `recent_win_rate` 无落地方案 | 已定义：通过 `enricher.get_recent_stats()` 获取，时间窗口 7 天，转百分比后传入 |
+| `performance_summary` 接口不够 | 已新增 `get_enhanced_performance_summary()` 方法，扩展签名接受持仓和当日 PnL |
+| `llm_raw_output` 透传链路未定义 | 已定义完整链路：provider 保留 → decision 剥离存 PrivateAttr → hybrid_decision 传给 persistence |
