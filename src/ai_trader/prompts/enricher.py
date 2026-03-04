@@ -81,6 +81,57 @@ class PromptContextEnricher:
             f"{loss_pattern}"
         )
 
+    async def get_recent_stats(self, symbol: str, hours: int = 24) -> dict:
+        """Get recent trading stats for risk assessment and decision context."""
+        try:
+            rows = await self.db.fetch(
+                """
+                SELECT realized_pnl
+                FROM position_history
+                WHERE symbol = $1
+                  AND status = 'closed'
+                  AND exit_time >= NOW() - INTERVAL '1 hour' * $2
+                ORDER BY exit_time DESC
+                """,
+                symbol,
+                hours,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to fetch recent stats: {e}")
+            return {"trade_count": 0, "total_pnl": 0.0, "win_rate": 0.0}
+
+        if not rows:
+            return {"trade_count": 0, "total_pnl": 0.0, "win_rate": 0.0}
+
+        trade_count = len(rows)
+        total_pnl = sum(float(r["realized_pnl"] or 0) for r in rows)
+        wins = sum(1 for r in rows if (r["realized_pnl"] or 0) > 0)
+        win_rate = wins / trade_count if trade_count > 0 else 0.0
+
+        return {"trade_count": trade_count, "total_pnl": total_pnl, "win_rate": win_rate}
+
+    async def get_enhanced_performance_summary(
+        self,
+        symbol: str,
+        limit: int = 20,
+        current_position: dict | None = None,
+        daily_pnl: float = 0.0,
+    ) -> str:
+        """Get enhanced performance summary with current position and daily PnL context."""
+        base = await self.get_performance_summary(symbol, limit)
+
+        extra_lines = []
+        if daily_pnl != 0.0:
+            extra_lines.append(f"Today's PnL: {daily_pnl:+.2f} USDT")
+        if current_position:
+            side = current_position.get("side", "unknown")
+            upnl = current_position.get("unrealized_pnl", 0)
+            extra_lines.append(f"Current position: {side}, unrealized PnL: {upnl:+.2f} USDT")
+
+        if extra_lines:
+            return base + "\n" + "\n".join(extra_lines)
+        return base
+
     async def get_active_rules(self) -> str:
         """获取已验证生效的规则"""
         try:

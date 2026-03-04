@@ -65,6 +65,10 @@ class MarketAnalyzer:
             usage_type="analysis",
         )
 
+        # Strip debug fields injected by provider
+        response.pop("_raw_content", None)
+        response.pop("usage", None)
+
         # LLM 有时返回嵌套结构如 {"analysis": {...}}，需要展开
         if "trend" not in response and len(response) == 1:
             inner = next(iter(response.values()))

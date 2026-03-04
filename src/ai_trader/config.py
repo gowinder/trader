@@ -195,6 +195,14 @@ class TradingConfig(BaseSettings):
         default=12.0, validation_alias="SIGNAL_REVERSE_COOLDOWN_HOURS",
         description="Cooldown hours before allowing direction flip (LONG->SHORT)",
     )
+    min_confidence_to_trade: float = Field(
+        default=60.0, validation_alias="MIN_CONFIDENCE_TO_TRADE",
+        description="Min confidence score to allow opening a position",
+    )
+    min_confluence_to_trade: float = Field(
+        default=0.5, validation_alias="MIN_CONFLUENCE_TO_TRADE",
+        description="Min confluence score to allow opening a position",
+    )
 
     # ============= 记忆与自优化配置 =============
     enable_auto_optimization: bool = Field(
@@ -221,6 +229,10 @@ class TradingConfig(BaseSettings):
     advisory_interval_minutes: int = Field(
         default=60, validation_alias="ADVISORY_INTERVAL_MINUTES",
         description="定时检查间隔（分钟）"
+    )
+    advisory_auto_execute: bool = Field(
+        default=False, validation_alias="ADVISORY_AUTO_EXECUTE",
+        description="自动执行 advisory 建议（跳过手动确认）"
     )
 
     # Advisory LLM 配置通过 Dashboard/Redis 管理，不再从 .env 读取
@@ -249,7 +261,7 @@ class TradingConfig(BaseSettings):
     @classmethod
     def validate_provider(cls, v: str) -> str:
         """验证 Provider 类型"""
-        valid_providers = ["openrouter", "deepseek", "glm", "gemini", "qwen", "qwen-code"]
+        valid_providers = ["openrouter", "deepseek", "glm", "gemini", "qwen", "qwen-code", "codex"]
         if v.lower() not in valid_providers:
             raise ValueError(f"无效的 LLM Provider: {v}. 支持的类型: {valid_providers}")
         return v.lower()

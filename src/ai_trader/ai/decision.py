@@ -20,6 +20,16 @@ from ..strategies.strategy_selector import StrategySelector
 from ..strategies.strategy_base import SignalAction
 
 
+def _safe_int(value, default: int) -> int:
+    """Safely convert LLM response value to int, handling non-standard types from 400 fallback"""
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return default
+
+
 class DecisionEngine:
     """Trading decision engine with multi-timeframe analysis support"""
 
@@ -127,6 +137,14 @@ class DecisionEngine:
         daily_loss_limit = 3.0  # 3% default
         consecutive_loss_days = max(0, consecutive_losses // 3)  # Approximate
 
+        # Fetch real recent trading stats for risk assessment
+        recent_stats = {"trade_count": 0, "total_pnl": 0.0, "win_rate": 0.0}
+        if self.prompt_enricher:
+            try:
+                recent_stats = await self.prompt_enricher.get_recent_stats(market.symbol, hours=1)
+            except Exception:
+                pass
+
         user_prompt = RISK_USER.format(
             mtf_summary=mtf_summary,
             trend=tech.trend,
@@ -145,11 +163,12 @@ class DecisionEngine:
             strategy_type=config.trading_strategy,
             leverage_min=config.leverage_min,
             leverage_max=config.leverage_max,
+            leverage_mid=(config.leverage_min + config.leverage_max) // 2,
             max_position_percent=config.max_position_percent,
             stop_loss_percent=config.stop_loss_percent,
             take_profit_percent=config.take_profit_percent,
-            recent_trade_count=0,  # TODO: Track from journal
-            recent_pnl=0.0,  # TODO: Track from journal
+            recent_trade_count=recent_stats["trade_count"],
+            recent_pnl=f"{recent_stats['total_pnl']:+.2f}",
             daily_pnl=f"{daily_pnl:+.2f}",
             consecutive_loss_days=consecutive_loss_days,
             daily_loss_limit=daily_loss_limit,
@@ -165,6 +184,21 @@ class DecisionEngine:
             max_tokens=1500,
             usage_type="optimization",
         )
+
+        # Strip internal fields before passing to Pydantic
+        response.pop("_raw_content", None)
+        response.pop("usage", None)
+
+        # Type-safe leverage clamp (handles 400 fallback non-standard types)
+        raw_lev = response.get("recommended_leverage")
+        lev = _safe_int(raw_lev, config.default_leverage)
+        if response.get("should_trade", False):
+            # Clamp to [min, max] when should_trade=true
+            lev = max(config.leverage_min, min(config.leverage_max, lev))
+        else:
+            # When not trading, still prevent absurd values from entering prompts
+            lev = min(config.leverage_max, max(1, lev))
+        response["recommended_leverage"] = lev
 
         return RiskAssessment(**response)
 
@@ -227,14 +261,23 @@ class DecisionEngine:
         # Get ATR from market indicators
         atr = market.indicators.atr if market.indicators else 0.0
 
-        # Calculate recent win rate (placeholder - should come from journal)
-        recent_win_rate = 0.0  # TODO: Calculate from recent trades
+        # Fetch recent win rate from trading history (7-day window)
+        recent_win_rate = 0.0
+        if self.prompt_enricher:
+            try:
+                perf = await self.prompt_enricher.get_recent_stats(market.symbol, hours=168)
+                recent_win_rate = perf["win_rate"] * 100
+            except Exception:
+                pass
 
         # 动态注入历史表现和已验证规则
         if self.prompt_enricher:
             try:
-                performance_summary = await self.prompt_enricher.get_performance_summary(
-                    market.symbol
+                pos_dict = None
+                if pos:
+                    pos_dict = {"side": pos.side, "unrealized_pnl": pos.unrealized_pnl}
+                performance_summary = await self.prompt_enricher.get_enhanced_performance_summary(
+                    market.symbol, current_position=pos_dict, daily_pnl=daily_pnl
                 )
                 active_rules = await self.prompt_enricher.get_active_rules()
             except Exception as e:
@@ -304,7 +347,23 @@ class DecisionEngine:
             trigger_source="event" if trigger_context else "timer",
         )
 
+        # Strip internal fields before passing to Pydantic
+        raw_content = response.pop("_raw_content", None)
+        response.pop("usage", None)
+
+        # Type-safe leverage conversion (handles 400 fallback non-standard types like "5x", 3.7)
+        if "leverage" in response:
+            response["leverage"] = _safe_int(response["leverage"], config.default_leverage)
+
         decision = TradingDecision(**response)
+
+        # Preserve raw LLM output for diagnostic persistence
+        if raw_content:
+            decision._llm_raw_output = raw_content
+
+        # Clamp leverage to config range for opening/adding actions
+        if decision.action in ("open_long", "open_short", "add_long", "add_short"):
+            decision.leverage = max(config.leverage_min, min(config.leverage_max, decision.leverage))
 
         # Fill in missing price fields based on current price and ATR
         if decision.action in ["open_long", "open_short", "add_long", "add_short"]:

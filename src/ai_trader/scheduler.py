@@ -100,6 +100,8 @@ class Scheduler:
         self._advisory_auto_execute: bool = False
         self._price_history: dict = {}
         self._consecutive_losses: int = 0
+        self._trades_today: int = 0
+        self._trades_today_date: str = ""
 
         # Notification manager
         self._notification_manager: Optional[NotificationManager] = None
@@ -137,6 +139,16 @@ class Scheduler:
         if symbol not in self._symbol_locks:
             self._symbol_locks[symbol] = asyncio.Lock()
         return self._symbol_locks[symbol]
+
+    def _get_emotional_state(self) -> str:
+        """Return emotional state label based on recent trading performance."""
+        if self._consecutive_losses >= 5:
+            return "fearful"
+        elif self._consecutive_losses >= 3:
+            return "cautious"
+        elif self._trading_halted:
+            return "restricted"
+        return "calm"
 
     async def _init_persistence(self):
         """初始化仓位持久化服务"""
@@ -959,6 +971,8 @@ class Scheduler:
                 self._daily_pnl = {}
                 self._daily_pnl_date = today_str
                 self._trading_halted = False
+                self._trades_today = 0
+                self._trades_today_date = today_str
                 logger.info(f"新交易日: {today_str}, 每日盈亏统计已重置")
 
             # ── 每小时更新策略权重 ──
@@ -2006,11 +2020,15 @@ class Scheduler:
                 "stop_loss_percent": config.stop_loss_percent,
                 "take_profit_percent": config.take_profit_percent,
                 "leverage_max": config.leverage_max,
+                "leverage_min": config.leverage_min,
+                "default_leverage": config.default_leverage,
                 "ai_weight": config.ai_weight,
                 "quant_weight": config.quant_weight,
                 "daily_loss_limit_percent": config.daily_loss_limit_percent,
                 "signal_min_interval_hours": config.signal_min_interval_hours,
                 "signal_reverse_cooldown_hours": config.signal_reverse_cooldown_hours,
+                "min_confidence_to_trade": config.min_confidence_to_trade,
+                "min_confluence_to_trade": config.min_confluence_to_trade,
             }
 
         # 1. 获取数据
@@ -2185,33 +2203,48 @@ class Scheduler:
                 )
             return  # 跳过本轮决策
 
-        # 2. 决策（含多时间框架数据）
+        # 2. 决策（含多时间框架数据 + 真实纪律上下文）
+        total_daily_pnl = sum(self._daily_pnl.values())
         try:
             decision, tech, risk = await self.decision_engine.analyze_and_decide(
                 market_data, position, balance, equity,
                 mtf_data=mtf_data,
+                daily_pnl=total_daily_pnl,
+                trades_today=self._trades_today,
+                consecutive_losses=self._consecutive_losses,
+                emotional_state=self._get_emotional_state(),
                 trigger_context=trigger_context,
             )
         except Exception as e:
             logger.error(f"Decision engine failed: {e}")
             return
 
-        # 发送决策通知
-        if self._notification_manager:
-            await self._notification_manager.notify_decision(
-                symbol=symbol,
-                action=decision.action,
-                confidence=decision.confidence,
-                reasoning=decision.reasoning_zh or decision.reasoning,
-            )
+        # ── 3. All rule-based filters (unified before notification) ──
+        original_action = decision.action
 
-        # ── halt 状态下只允许平仓操作 ──
+        # 3a. Confidence filter
+        if decision.action in ("open_long", "open_short"):
+            min_conf = _cfg.get("min_confidence_to_trade", 60.0)
+            if decision.confidence < min_conf:
+                logger.info(f"Confidence filter: {decision.action} -> hold (conf={decision.confidence}<{min_conf})")
+                decision.action = "hold"
+                decision.reasoning += f" [FILTERED: low confidence {decision.confidence}]"
+
+        # 3b. Confluence filter
+        if decision.action in ("open_long", "open_short"):
+            min_confl = _cfg.get("min_confluence_to_trade", 0.5)
+            if mtf_data and mtf_data.confluence_score < min_confl:
+                logger.info(f"Confluence filter: {decision.action} -> hold (confl={mtf_data.confluence_score:.2f}<{min_confl})")
+                decision.action = "hold"
+                decision.reasoning += f" [FILTERED: low confluence {mtf_data.confluence_score:.2f}]"
+
+        # 3c. Daily loss limit halt
         if self._trading_halted and decision.action in ("open_long", "open_short"):
-            logger.info(f"每日亏损限制已触发，拦截开仓信号: {decision.action} -> hold")
+            logger.info(f"Daily loss limit: {decision.action} -> hold")
             decision.action = "hold"
             decision.reasoning += "\n[DailyLossLimit] 当日亏损限制已触发，禁止开新仓"
 
-        # ── 信号过滤（防过度交易）──
+        # 3d. SignalFilter (anti-overtrading)
         if decision.action in ("open_long", "open_short"):
             if symbol not in self._signal_filters:
                 self._signal_filters[symbol] = SignalFilter(
@@ -2228,7 +2261,23 @@ class Scheduler:
                 decision.action = "hold"
                 decision.reasoning += f"\n[SignalFilter] {filter_reason}"
 
-        # 3. 执行
+        # 3e. Log filter result and sync reasoning_zh
+        if decision.action != original_action:
+            logger.info(f"Action changed: {original_action} -> {decision.action}")
+            # Ensure filter annotations are visible in reasoning_zh for notifications
+            if decision.reasoning_zh:
+                decision.reasoning_zh += f"\n[{original_action} -> hold]"
+
+        # ── 4. Send notification (action is finalized) ──
+        if self._notification_manager:
+            await self._notification_manager.notify_decision(
+                symbol=symbol,
+                action=decision.action,
+                confidence=decision.confidence,
+                reasoning=decision.reasoning_zh or decision.reasoning,
+            )
+
+        # 5. 执行
         order_id = None
         quantity = 0.0
         if decision.action != "hold":
@@ -2281,6 +2330,10 @@ class Scheduler:
                         order_id = await self.order_mgr.execute_order(
                             decision, symbol, quantity
                         )
+
+                    # Trade counter for discipline context
+                    if order_id:
+                        self._trades_today += 1
 
                     # 更新 SignalFilter 状态（开仓成功后记录）
                     if order_id and decision.action in ("open_long", "open_short") and symbol in self._signal_filters:

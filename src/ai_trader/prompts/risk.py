@@ -19,7 +19,8 @@ Output must be valid JSON matching the schema exactly. Do not add any extra expl
 ## Position Sizing Rules (Fixed Percentage Risk Method)
 1. **Risk Per Trade**: 1% for normal trades, 2% for high-confidence setups only
 2. **Formula**: Position Size = (Account Balance × Risk %) / (Entry Price - Stop Loss Price)
-3. **Leverage Adjustment**: Higher confluence score allows higher leverage (max 5x for confluence > 0.7)
+3. **Leverage Selection**: Choose leverage within the allowed range (see Strategy Configuration below).
+   Higher confluence allows higher leverage; low confluence should use minimum leverage or HOLD.
 4. **Daily Loss Limit**: Stop trading if daily loss exceeds 3% of account balance
 
 ## Fee Reminder
@@ -68,6 +69,11 @@ RISK_USER = """## Multi-Timeframe Analysis Summary
 - Max Position %: {max_position_percent}%
 - Default Stop Loss: {stop_loss_percent}%
 - Default Take Profit: {take_profit_percent}%
+
+MANDATORY: recommended_leverage MUST be between {leverage_min} and {leverage_max}.
+- High Confluence (>= 0.7): Use up to {leverage_max}x
+- Medium Confluence (0.5-0.7): Use midpoint ({leverage_mid}x)
+- Low Confluence (< 0.5): Use {leverage_min}x or set should_trade=false
 
 ## Recent Trading Activity
 Last 1h Trade Count: {recent_trade_count}
