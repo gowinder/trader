@@ -20,11 +20,11 @@ Output must be valid JSON matching the schema exactly. Do not add any extra expl
 6. **Avoid Overtrading**: Hold when confluence < 0.5 or signals conflict
 
 ## Opening Conditions (ALL required for new positions):
-1. **Multi-Timeframe Alignment**: Confluence score ≥ 0.7 (or ≥ 0.5 for moderate setups)
-2. **Clear Trend**: Trend confidence > 60% across at least 2 timeframes
+1. **Multi-Timeframe Alignment**: Confluence score ≥ 0.6 (raised threshold — need clear agreement)
+2. **Clear Trend**: Trend confidence > 65% across at least 2 timeframes
 3. **Risk Assessment**: should_trade = true, risk_level not "very_high"
-4. **Entry Timing**: Price near support (long) or resistance (short) with confirmation
-5. **Fee Viability**: Expected profit > 0.18% (2× total fees)
+4. **Minimum Risk-Reward**: Expected move > 2× total fees (>0.18%) AND risk-reward ≥ 2:1
+5. **Win Rate Awareness**: If recent win rate < 20%, increase caution and require confluence ≥ 0.75
 
 ## Position Management Rules
 ### Pyramid Scaling (Add to Winning Positions)

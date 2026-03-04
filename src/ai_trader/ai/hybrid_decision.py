@@ -276,6 +276,7 @@ class HybridDecisionEngine(DecisionEngine):
                     sentiment=sentiment_result,
                     llm_provider=config.llm_provider,
                     llm_model=config.llm_model,
+                    llm_raw_output=getattr(decision, "_llm_raw_output", None) or None,
                     strategy_preset=self.active_preset_name,
                     market_state=_market_state_str,
                     strategy_signals=_strategy_signals_dict,
@@ -487,6 +488,10 @@ class HybridDecisionEngine(DecisionEngine):
 
         # Update decision
         decision = base_decision.model_copy(deep=True)
+        # Ensure raw output is preserved after model_copy
+        raw_output = getattr(base_decision, "_llm_raw_output", "")
+        if raw_output:
+            decision._llm_raw_output = raw_output
         decision.action = action
         decision.confidence = final_confidence * 100.0  # Convert back to 0-100 for TradingDecision model
 

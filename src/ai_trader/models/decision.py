@@ -1,6 +1,6 @@
 """决策模型"""
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, PrivateAttr, field_validator
 from typing import List, Literal, Optional
 
 
@@ -24,7 +24,7 @@ class RiskAssessment(BaseModel):
 
     risk_level: Literal["very_low", "low", "medium", "high", "very_high"] = "medium"
     risk_score: float = Field(default=50.0, ge=0, le=100)
-    recommended_leverage: int = 1
+    recommended_leverage: int = Field(default=1, ge=1)
     recommended_position_percent: float = 10.0
     should_trade: bool = False
     fee_warning: bool = False
@@ -58,6 +58,7 @@ class TradingDecision(BaseModel):
     execution_urgency: Literal["immediate", "wait_for_price", "low_priority"] = (
         "wait_for_price"
     )
+    _llm_raw_output: str = PrivateAttr(default="")
 
     @field_validator("leverage")
     @classmethod

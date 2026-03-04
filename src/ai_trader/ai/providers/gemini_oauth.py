@@ -115,33 +115,40 @@ class GeminiOAuthProvider(BaseLLMProvider):
         }
 
         if schema:
+            result = None
             # 尝试解析 JSON
             try:
-                return json.loads(text)
+                result = json.loads(text)
             except json.JSONDecodeError:
                 pass
 
-            # 尝试提取 JSON 代码块
-            json_match = re.search(r"```(?:json)?\s*\n?(.+?)\n?```", text, re.DOTALL)
-            if json_match:
-                try:
-                    return json.loads(json_match.group(1))
-                except json.JSONDecodeError:
-                    pass
+            if result is None:
+                # 尝试提取 JSON 代码块
+                json_match = re.search(r"```(?:json)?\s*\n?(.+?)\n?```", text, re.DOTALL)
+                if json_match:
+                    try:
+                        result = json.loads(json_match.group(1))
+                    except json.JSONDecodeError:
+                        pass
 
-            # 尝试从文本中提取 JSON
-            start = text.find("{")
-            end = text.rfind("}")
-            if start != -1 and end != -1 and end > start:
-                try:
-                    return json.loads(text[start : end + 1])
-                except json.JSONDecodeError:
-                    pass
+            if result is None:
+                # 尝试从文本中提取 JSON
+                start = text.find("{")
+                end = text.rfind("}")
+                if start != -1 and end != -1 and end > start:
+                    try:
+                        result = json.loads(text[start : end + 1])
+                    except json.JSONDecodeError:
+                        pass
 
-            logger.error(f"Failed to parse JSON from Gemini response: {text[:200]}...")
-            raise RuntimeError("Failed to parse JSON from Gemini response")
+            if result is None:
+                logger.error(f"Failed to parse JSON from Gemini response: {text[:200]}...")
+                raise RuntimeError("Failed to parse JSON from Gemini response")
 
-        return {"content": text, "usage": usage}
+            result["_raw_content"] = text
+            return result
+
+        return {"content": text, "_raw_content": text, "usage": usage}
 
     async def chat(
         self,

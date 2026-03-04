@@ -1,6 +1,6 @@
 # PnL 优化设计文档
 
-> **版本**: v3（2026-03-04）— 纳入两轮 Codex CLI 审核意见 + 数据库验证结果
+> **版本**: v4（2026-03-04）— 纳入三轮 Codex CLI 审核意见 + 数据库验证结果
 
 ## 问题背景
 
@@ -114,26 +114,44 @@
 
 **方案**：不修改 Pydantic 模型的默认值（避免硬编码业务配置），而是在原始 response 实例化模型**之前**，按运行时配置补默认值。
 
+**类型安全处理**（第三轮 Codex 审核）：400 fallback 路径去掉了 `response_format` schema 校验，LLM 可能返回非标类型（字符串 `"3"`、`null`、浮点 `3.5` 等）。因此 clamp 前必须做类型转换：
+
+```python
+def _safe_int(value, default: int) -> int:
+    """安全地将 LLM 返回值转为 int，处理 400 fallback 可能产生的非标类型"""
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (ValueError, TypeError):
+        return default
+```
+
 在 `_assess_risk()` 的 `return RiskAssessment(**response)` 之前：
 
 ```python
-# 确保 leverage 在配置范围内（防止 LLM 返回过低/过高或字段缺失使用默认值 1）
-if "recommended_leverage" not in response or response["recommended_leverage"] < config.leverage_min:
-    response["recommended_leverage"] = config.default_leverage
-response["recommended_leverage"] = max(
-    config.leverage_min,
-    min(config.leverage_max, response["recommended_leverage"])
-)
+# 类型安全 + leverage clamp
+raw_lev = response.get("recommended_leverage")
+lev = _safe_int(raw_lev, config.default_leverage)
+# 仅当 should_trade=true 时 clamp 到 [min, max]；should_trade=false 时尊重 LLM 的保守信号
+if response.get("should_trade", False):
+    lev = max(config.leverage_min, min(config.leverage_max, lev))
+response["recommended_leverage"] = lev
 return RiskAssessment(**response)
 ```
 
 在 `_make_decision()` 的 `decision = TradingDecision(**response)` 之后：
 
 ```python
-# 强制杠杆在配置范围内
+# 仅对开仓/加仓动作 clamp 杠杆（hold/close 不需要）
+# 类型已由 Pydantic field_validator 保证为 int
 if decision.action in ("open_long", "open_short", "add_long", "add_short"):
     decision.leverage = max(config.leverage_min, min(config.leverage_max, decision.leverage))
 ```
+
+**关键设计决策**（第三轮 Codex 审核 Issue #2）：
+- 当 `should_trade=false` 时，**不 clamp** `recommended_leverage`。这是因为 LLM 返回 `should_trade=false, leverage=1` 是合理的保守信号，强行改为 5x 是错误的。
+- clamp 只在 LLM 明确建议交易（`should_trade=true`）或实际开仓（`action=open_*`）时才生效。
 
 #### 1.2 优化风险提示词，强制引导杠杆范围
 
@@ -475,6 +493,34 @@ min_confluence_to_trade: float = Field(
 )
 ```
 
+#### 2.5 `_cfg` 快照补齐新配置项（第三轮 Codex 审核 Issue #1）
+
+**文件**: `src/ai_trader/scheduler.py:2004-2014`
+
+当前 `_cfg` 快照缺少新增的 `min_confidence_to_trade` 和 `min_confluence_to_trade`，导致 Phase 2.3 中的 confidence/confluence 过滤使用 `_cfg.get("min_confidence_to_trade", 60.0)` 时始终走默认值，**配置修改不会生效**。
+
+**修复**：在 `_cfg` 字典中添加：
+
+```python
+_cfg = {
+    "analysis_interval": config.analysis_interval,
+    "stop_loss_percent": config.stop_loss_percent,
+    "take_profit_percent": config.take_profit_percent,
+    "leverage_max": config.leverage_max,
+    "leverage_min": config.leverage_min,              # 新增：leverage clamp 需要
+    "default_leverage": config.default_leverage,      # 新增：leverage clamp 需要
+    "ai_weight": config.ai_weight,
+    "quant_weight": config.quant_weight,
+    "daily_loss_limit_percent": config.daily_loss_limit_percent,
+    "signal_min_interval_hours": config.signal_min_interval_hours,
+    "signal_reverse_cooldown_hours": config.signal_reverse_cooldown_hours,
+    "min_confidence_to_trade": config.min_confidence_to_trade,    # 新增
+    "min_confluence_to_trade": config.min_confluence_to_trade,    # 新增
+}
+```
+
+注：同时补充了 `leverage_min` 和 `default_leverage`，Phase 1 的 clamp 逻辑如果从 `_cfg` 取值也需要这些字段。
+
 ---
 
 ### Phase 3：优化提示词和数据降级（P2）
@@ -616,3 +662,11 @@ if self.prompt_enricher:
 | `recent_win_rate` 无落地方案 | 已定义：通过 `enricher.get_recent_stats()` 获取，时间窗口 7 天，转百分比后传入 |
 | `performance_summary` 接口不够 | 已新增 `get_enhanced_performance_summary()` 方法，扩展签名接受持仓和当日 PnL |
 | `llm_raw_output` 透传链路未定义 | 已定义完整链路：provider 保留 → decision 剥离存 PrivateAttr → hybrid_decision 传给 persistence |
+
+### 第三轮审核（v3 → v4）
+
+| 审核意见 | 处理方式 |
+|----------|----------|
+| `_cfg` 快照遗漏 `min_confidence_to_trade`/`min_confluence_to_trade` | 已在 2.5 节补充：`_cfg` 字典新增 4 个字段（含 `leverage_min`、`default_leverage`） |
+| leverage clamp 不应在 `should_trade=false` 时强改保守信号 | 已在 1.1 节修改：`_assess_risk()` 的 clamp 加 `if response.get("should_trade", False)` 条件 |
+| clamp 代码对 400 fallback 返回的非标类型不安全 | 已在 1.1 节新增 `_safe_int()` 辅助函数，处理 `None`/string/float 等非标类型 |

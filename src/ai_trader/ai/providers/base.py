@@ -85,37 +85,45 @@ class HTTPBasedProvider(BaseLLMProvider):
 
         content = data["choices"][0]["message"]["content"]
         if schema:
+            result = None
             # 首先尝试直接解析
             try:
-                return json.loads(content)
+                result = json.loads(content)
             except json.JSONDecodeError:
                 pass
 
-            # 尝试提取 JSON 代码块
-            json_match = re.search(r"```(?:json)?\s*\n?(.+?)\n?```", content, re.DOTALL)
-            if json_match:
-                try:
-                    return json.loads(json_match.group(1))
-                except json.JSONDecodeError:
-                    pass
+            if result is None:
+                # 尝试提取 JSON 代码块
+                json_match = re.search(r"```(?:json)?\s*\n?(.+?)\n?```", content, re.DOTALL)
+                if json_match:
+                    try:
+                        result = json.loads(json_match.group(1))
+                    except json.JSONDecodeError:
+                        pass
 
-            # 尝试从文本中提取 JSON 对象
-            # 查找第一个 { 和最后一个 }
-            start = content.find("{")
-            end = content.rfind("}")
-            if start != -1 and end != -1 and end > start:
-                try:
-                    return json.loads(content[start : end + 1])
-                except json.JSONDecodeError:
-                    pass
+            if result is None:
+                # 尝试从文本中提取 JSON 对象
+                # 查找第一个 { 和最后一个 }
+                start = content.find("{")
+                end = content.rfind("}")
+                if start != -1 and end != -1 and end > start:
+                    try:
+                        result = json.loads(content[start : end + 1])
+                    except json.JSONDecodeError:
+                        pass
 
-            # 如果都失败了，记录错误并抛出
-            import logging
+            if result is None:
+                # 如果都失败了，记录错误并抛出
+                import logging
 
-            logging.error(f"Failed to parse JSON from response:")
-            logging.error(f"Content: {content[:500]}...")
-            raise RuntimeError("Failed to parse JSON from LLM response")
-        return {"content": content}
+                logging.error(f"Failed to parse JSON from response:")
+                logging.error(f"Content: {content[:500]}...")
+                raise RuntimeError("Failed to parse JSON from LLM response")
+
+            # Preserve raw LLM output for diagnostic persistence
+            result["_raw_content"] = content
+            return result
+        return {"content": content, "_raw_content": content}
 
     def _extract_usage(self, data: Dict[str, Any]) -> Dict[str, int]:
         """从 API 响应中提取 usage 信息"""
