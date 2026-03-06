@@ -1,4 +1,4 @@
-"""OpenRouter LLM 客户端 - 支持结构化输出"""
+"""OpenRouter LLM client - supports structured output"""
 
 import json
 import time
@@ -63,7 +63,8 @@ class LLMClient:
 
             usage = data.get("usage", {})
             latency_ms = int((time.time() - start_time) * 1000)
-            await self._track_usage(used_model, usage, latency_ms, True)
+            await self._track_usage(used_model, usage, latency_ms, True,
+                                    messages=messages, response_content=content)
 
             if schema:
                 try:
@@ -86,23 +87,29 @@ class LLMClient:
 
                 usage = data.get("usage", {})
                 latency_ms = int((time.time() - start_time) * 1000)
-                await self._track_usage(used_model, usage, latency_ms, True)
+                await self._track_usage(used_model, usage, latency_ms, True,
+                                        messages=messages, response_content=content)
 
                 if schema:
                     return json.loads(content)
                 return {"content": content}
             except Exception as e2:
                 latency_ms = int((time.time() - start_time) * 1000)
-                await self._track_usage(used_model, {}, latency_ms, False, str(e2))
+                await self._track_usage(used_model, {}, latency_ms, False, str(e2),
+                                        messages=messages)
                 logger.error(f"备用模型也失败: {e2}")
                 raise RuntimeError(
                     f"All LLM models failed: Primary({e}), Fallback({e2})"
                 )
 
-    async def _track_usage(self, model, usage, latency_ms, success, error_message=""):
-        """记录 LLM 调用到 UsageTracker"""
+    async def _track_usage(
+        self, model, usage, latency_ms, success, error_message="",
+        messages=None, response_content=None,
+    ):
+        """Record LLM call to UsageTracker"""
         try:
             tracker = get_usage_tracker()
+            llm_prompt = json.dumps(messages, ensure_ascii=False) if messages else None
             await tracker.record(
                 provider="openrouter",
                 model=model,
@@ -113,6 +120,8 @@ class LLMClient:
                 error_message=error_message,
                 usage_type=getattr(self, "_current_usage_type", None),
                 trigger_source=getattr(self, "_current_trigger_source", None),
+                llm_prompt=llm_prompt,
+                llm_response=response_content,
             )
         except Exception as e:
             logger.debug(f"Usage tracking failed: {e}")

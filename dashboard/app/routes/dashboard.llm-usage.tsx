@@ -55,6 +55,8 @@ interface UsageRecord {
   error_message: string | null;
   usage_type: string;
   trigger_source: string | null;
+  llm_prompt: string | null;
+  llm_response: string | null;
 }
 
 interface ProviderItem {
@@ -812,76 +814,86 @@ export default function LLMUsagePage() {
       {/* 明细弹窗 */}
       {selectedRecord && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setSelectedRecord(null)}>
-          <div className="relative w-full max-w-lg rounded-lg border bg-background p-6 shadow-lg" onClick={(e) => e.stopPropagation()}>
+          <div className="relative w-full max-w-4xl max-h-[90vh] overflow-y-auto rounded-lg border bg-background p-6 shadow-lg" onClick={(e) => e.stopPropagation()}>
             <button className="absolute right-4 top-4 text-muted-foreground hover:text-foreground" onClick={() => setSelectedRecord(null)}>
               <X className="h-5 w-5" />
             </button>
             <h3 className="mb-4 text-lg font-semibold">调用详情</h3>
             <div className="space-y-3 text-sm">
-              <div className="flex justify-between border-b pb-2">
-                <span className="text-muted-foreground">时间</span>
-                <span>{new Date(selectedRecord.timestamp).toLocaleString("zh-CN")}</span>
-              </div>
-              <div className="flex justify-between border-b pb-2">
-                <span className="text-muted-foreground">类型</span>
-                <span
-                  className="rounded px-1.5 py-0.5 text-xs font-medium"
-                  style={{ backgroundColor: (USAGE_TYPE_COLORS[selectedRecord.usage_type] || "#666") + "20", color: USAGE_TYPE_COLORS[selectedRecord.usage_type] || "#666" }}
-                >
-                  {USAGE_TYPE_LABELS[selectedRecord.usage_type] || selectedRecord.usage_type}
-                </span>
-              </div>
-              <div className="flex justify-between border-b pb-2">
-                <span className="text-muted-foreground">Provider</span>
-                <span className="rounded px-2 py-0.5 text-xs font-medium text-white" style={{ backgroundColor: PROVIDER_COLORS[selectedRecord.provider] || "#666" }}>
-                  {selectedRecord.provider}
-                </span>
-              </div>
-              <div className="flex justify-between border-b pb-2">
-                <span className="text-muted-foreground">Model</span>
-                <span className="font-mono text-xs">{selectedRecord.model}</span>
-              </div>
-              <div className="flex justify-between border-b pb-2">
-                <span className="text-muted-foreground">Input Tokens</span>
-                <span className="tabular-nums">{formatNumber(selectedRecord.input_tokens)}</span>
-              </div>
-              <div className="flex justify-between border-b pb-2">
-                <span className="text-muted-foreground">Output Tokens</span>
-                <span className="tabular-nums">{formatNumber(selectedRecord.output_tokens)}</span>
-              </div>
-              <div className="flex justify-between border-b pb-2">
-                <span className="text-muted-foreground">Total Tokens</span>
-                <span className="tabular-nums font-medium">{formatNumber(selectedRecord.total_tokens)}</span>
-              </div>
-              <div className="flex justify-between border-b pb-2">
-                <span className="text-muted-foreground">费用</span>
-                <span className="font-medium">{formatUSD(selectedRecord.cost_usd)}</span>
-              </div>
-              <div className="flex justify-between border-b pb-2">
-                <span className="text-muted-foreground">延迟</span>
-                <span className="tabular-nums">{selectedRecord.latency_ms.toFixed(0)} ms</span>
-              </div>
-              {selectedRecord.trigger_source && (
+              <div className="grid grid-cols-2 gap-x-8 gap-y-2">
                 <div className="flex justify-between border-b pb-2">
-                  <span className="text-muted-foreground">触发来源</span>
-                  {selectedRecord.trigger_source === "event" ? (
-                    <span className="rounded bg-blue-500/20 px-1.5 py-0.5 text-xs text-blue-400">事件触发</span>
-                  ) : (
-                    <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">定时任务</span>
-                  )}
+                  <span className="text-muted-foreground">时间</span>
+                  <span>{new Date(selectedRecord.timestamp).toLocaleString("zh-CN")}</span>
                 </div>
-              )}
-              <div className="flex justify-between border-b pb-2">
-                <span className="text-muted-foreground">状态</span>
-                <span className={selectedRecord.success ? "text-green-500" : "text-red-500"}>
-                  {selectedRecord.success ? "成功" : "失败"}
-                </span>
+                <div className="flex justify-between border-b pb-2">
+                  <span className="text-muted-foreground">类型</span>
+                  <span
+                    className="rounded px-1.5 py-0.5 text-xs font-medium"
+                    style={{ backgroundColor: (USAGE_TYPE_COLORS[selectedRecord.usage_type] || "#666") + "20", color: USAGE_TYPE_COLORS[selectedRecord.usage_type] || "#666" }}
+                  >
+                    {USAGE_TYPE_LABELS[selectedRecord.usage_type] || selectedRecord.usage_type}
+                  </span>
+                </div>
+                <div className="flex justify-between border-b pb-2">
+                  <span className="text-muted-foreground">Provider</span>
+                  <span className="rounded px-2 py-0.5 text-xs font-medium text-white" style={{ backgroundColor: PROVIDER_COLORS[selectedRecord.provider] || "#666" }}>
+                    {selectedRecord.provider}
+                  </span>
+                </div>
+                <div className="flex justify-between border-b pb-2">
+                  <span className="text-muted-foreground">Model</span>
+                  <span className="font-mono text-xs">{selectedRecord.model}</span>
+                </div>
+                <div className="flex justify-between border-b pb-2">
+                  <span className="text-muted-foreground">Input / Output / Total</span>
+                  <span className="tabular-nums">{formatNumber(selectedRecord.input_tokens)} / {formatNumber(selectedRecord.output_tokens)} / {formatNumber(selectedRecord.total_tokens)}</span>
+                </div>
+                <div className="flex justify-between border-b pb-2">
+                  <span className="text-muted-foreground">费用 / 延迟</span>
+                  <span className="tabular-nums">{formatUSD(selectedRecord.cost_usd)} / {selectedRecord.latency_ms.toFixed(0)} ms</span>
+                </div>
+                <div className="flex justify-between border-b pb-2">
+                  <span className="text-muted-foreground">状态</span>
+                  <span className={selectedRecord.success ? "text-green-500" : "text-red-500"}>
+                    {selectedRecord.success ? "成功" : "失败"}
+                  </span>
+                </div>
+                {selectedRecord.trigger_source && (
+                  <div className="flex justify-between border-b pb-2">
+                    <span className="text-muted-foreground">触发来源</span>
+                    {selectedRecord.trigger_source === "event" ? (
+                      <span className="rounded bg-blue-500/20 px-1.5 py-0.5 text-xs text-blue-400">事件触发</span>
+                    ) : (
+                      <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">定时任务</span>
+                    )}
+                  </div>
+                )}
               </div>
               {selectedRecord.error_message && (
                 <div className="border-b pb-2">
                   <div className="text-muted-foreground mb-1">错误信息</div>
                   <div className="rounded bg-red-500/10 p-2 text-xs text-red-500 break-all">{selectedRecord.error_message}</div>
                 </div>
+              )}
+              {selectedRecord.llm_prompt && (
+                <details className="border rounded-md">
+                  <summary className="cursor-pointer px-3 py-2 font-medium text-muted-foreground hover:text-foreground">
+                    Input (Prompt)
+                  </summary>
+                  <pre className="max-h-80 overflow-auto px-3 py-2 text-xs whitespace-pre-wrap break-all bg-muted/30 border-t">
+                    {selectedRecord.llm_prompt}
+                  </pre>
+                </details>
+              )}
+              {selectedRecord.llm_response && (
+                <details className="border rounded-md">
+                  <summary className="cursor-pointer px-3 py-2 font-medium text-muted-foreground hover:text-foreground">
+                    Output (Response)
+                  </summary>
+                  <pre className="max-h-80 overflow-auto px-3 py-2 text-xs whitespace-pre-wrap break-all bg-muted/30 border-t">
+                    {selectedRecord.llm_response}
+                  </pre>
+                </details>
               )}
             </div>
           </div>

@@ -405,6 +405,10 @@ export const llmUsage = pgTable(
     // 触发来源: "event" | "timer"
     triggerSource: varchar("trigger_source", { length: 20 }),
 
+    // LLM input/output content
+    llmPrompt: text("llm_prompt"),
+    llmResponse: text("llm_response"),
+
     // 关联上下文（可选）
     decisionId: uuid("decision_id").references(() => decisions.id),
   },

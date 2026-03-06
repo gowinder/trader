@@ -387,6 +387,13 @@ class LLMManager:
                 latency_ms = int((time.time() - start_time) * 1000)
                 if self._usage_tracker:
                     usage = result.get("usage", {})
+                    import json as _json
+                    llm_prompt = _json.dumps(messages, ensure_ascii=False) if messages else None
+                    llm_response = result.get("content") or result.get("raw_content")
+                    if llm_response is None and isinstance(result, dict):
+                        llm_response = _json.dumps(result, ensure_ascii=False, default=str)
+                    elif not isinstance(llm_response, str):
+                        llm_response = _json.dumps(llm_response, ensure_ascii=False, default=str)
                     await self._usage_tracker.record(
                         provider=provider_config.name,
                         model=provider_config.model or llm_provider.model,
@@ -396,6 +403,8 @@ class LLMManager:
                         success=True,
                         usage_type=usage_type,
                         trigger_source=trigger_source,
+                        llm_prompt=llm_prompt,
+                        llm_response=llm_response,
                     )
 
                 return result
@@ -410,6 +419,8 @@ class LLMManager:
                 # 记录失败统计
                 if self._usage_tracker:
                     latency_ms = int((time.time() - start_time) * 1000)
+                    import json as _json
+                    llm_prompt = _json.dumps(messages, ensure_ascii=False) if messages else None
                     await self._usage_tracker.record(
                         provider=provider_config.name,
                         model=provider_config.model or llm_provider.model,
@@ -420,6 +431,7 @@ class LLMManager:
                         error_message=str(e),
                         usage_type=usage_type,
                         trigger_source=trigger_source,
+                        llm_prompt=llm_prompt,
                     )
 
                 # 退避等待（最后一个 provider 不等待）
