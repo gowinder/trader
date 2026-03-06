@@ -67,7 +67,8 @@ class StrategyPresetService:
     async def get_active_preset(self) -> Optional[dict]:
         """获取当前激活的策略预设"""
         row = await self.db.fetchrow(
-            """SELECT sp.*, a.activated_at as current_activated_at
+            """SELECT sp.*, a.activated_at as current_activated_at,
+                      COALESCE(a.is_locked, FALSE) as is_locked
             FROM active_strategy a
             JOIN strategy_presets sp ON sp.id = a.preset_id
             WHERE a.deactivated_at IS NULL
@@ -75,10 +76,16 @@ class StrategyPresetService:
         )
         return dict(row) if row else None
 
-    async def activate_preset(self, preset_id: int) -> bool:
-        """激活指定预设（停用当前活跃的）"""
+    async def activate_preset(self, preset_id: int, is_locked: bool = False) -> bool:
+        """Activate a preset. Refuses if current strategy is locked."""
         preset = await self.get_preset_by_id(preset_id)
         if not preset:
+            return False
+
+        # Check if current strategy is locked
+        current = await self.get_active_preset()
+        if current and current.get("is_locked"):
+            logger.warning(f"Cannot switch strategy: current preset '{current['name']}' is locked")
             return False
 
         await self.db.execute(
@@ -87,11 +94,24 @@ class StrategyPresetService:
         )
 
         await self.db.execute(
-            "INSERT INTO active_strategy (preset_id) VALUES ($1)",
+            "INSERT INTO active_strategy (preset_id, is_locked) VALUES ($1, $2)",
             preset_id,
+            is_locked,
         )
-        logger.info(f"Activated strategy preset: {preset['name']}")
+        logger.info(f"Activated strategy preset: {preset['name']} (locked={is_locked})")
         return True
+
+    async def set_strategy_lock(self, is_locked: bool) -> bool:
+        """Toggle lock on the currently active strategy."""
+        result = await self.db.execute(
+            """UPDATE active_strategy SET is_locked = $1
+            WHERE deactivated_at IS NULL""",
+            is_locked,
+        )
+        if result:
+            logger.info(f"Strategy lock set to {is_locked}")
+            return True
+        return False
 
     async def get_activation_history(self, limit: int = 20) -> list[dict]:
         """获取策略切换历史"""

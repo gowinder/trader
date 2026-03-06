@@ -90,6 +90,7 @@ class TestStrategyExecutor:
         presets = self._make_presets()
         mock_service = AsyncMock()
         mock_service.get_all_presets = AsyncMock(return_value=presets)
+        mock_service.get_active_preset = AsyncMock(return_value=None)
         mock_redis = AsyncMock()
 
         executor = StrategyExecutor(mock_service, mock_redis)
@@ -131,6 +132,7 @@ class TestStrategyExecutor:
     @pytest.mark.asyncio
     async def test_no_change_action(self):
         mock_service = AsyncMock()
+        mock_service.get_active_preset = AsyncMock(return_value=None)
         mock_redis = AsyncMock()
         executor = StrategyExecutor(mock_service, mock_redis)
         result = await executor.execute("no_change", "global", {})
@@ -141,6 +143,7 @@ class TestStrategyExecutor:
     @pytest.mark.asyncio
     async def test_unknown_action(self):
         mock_service = AsyncMock()
+        mock_service.get_active_preset = AsyncMock(return_value=None)
         mock_redis = AsyncMock()
         executor = StrategyExecutor(mock_service, mock_redis)
         result = await executor.execute("unknown_action", "global", {})

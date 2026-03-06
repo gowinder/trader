@@ -162,7 +162,7 @@ async function ensureSystemPresets(sql: postgres.Sql) {
 export async function loader() {
   const sql = getDb();
   if (!sql) {
-    return Response.json({ presets: [], activePresetId: null, activatedAt: null });
+    return Response.json({ presets: [], activePresetId: null, activatedAt: null, isLocked: false });
   }
 
   try {
@@ -178,7 +178,7 @@ export async function loader() {
 
     // 获取当前活跃策略
     const activeRows = await sql`
-      SELECT preset_id, activated_at
+      SELECT preset_id, activated_at, COALESCE(is_locked, false) as is_locked
       FROM active_strategy
       WHERE deactivated_at IS NULL
       ORDER BY activated_at DESC
@@ -187,6 +187,7 @@ export async function loader() {
 
     const activePresetId = activeRows.length > 0 ? Number(activeRows[0].preset_id) : null;
     const activatedAt = activeRows.length > 0 ? activeRows[0].activated_at : null;
+    const isLocked = activeRows.length > 0 ? activeRows[0].is_locked === true : false;
 
     // 为每个预设获取统计数据
     const presetsWithStats = await Promise.all(
@@ -249,10 +250,11 @@ export async function loader() {
       presets: presetsWithStats,
       activePresetId,
       activatedAt,
+      isLocked,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     console.error("Failed to load strategy presets:", message);
-    return Response.json({ presets: [], activePresetId: null, activatedAt: null });
+    return Response.json({ presets: [], activePresetId: null, activatedAt: null, isLocked: false });
   }
 }

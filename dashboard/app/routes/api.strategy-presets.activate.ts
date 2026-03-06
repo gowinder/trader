@@ -27,6 +27,7 @@ export async function action({ request }: { request: Request }) {
   try {
     const body = await request.json();
     const presetId = body.presetId;
+    const isLocked = body.isLocked === true;
 
     if (!presetId) {
       return Response.json({ error: "presetId is required" }, { status: 400 });
@@ -40,6 +41,17 @@ export async function action({ request }: { request: Request }) {
       return Response.json({ error: "Preset not found" }, { status: 404 });
     }
 
+    // Check if current strategy is locked
+    const activeRows = await sql`
+      SELECT COALESCE(is_locked, false) as is_locked
+      FROM active_strategy
+      WHERE deactivated_at IS NULL
+      ORDER BY activated_at DESC LIMIT 1
+    `;
+    if (activeRows.length > 0 && activeRows[0].is_locked) {
+      return Response.json({ error: "Current strategy is locked" }, { status: 423 });
+    }
+
     // 停用当前活跃策略
     await sql`
       UPDATE active_strategy SET deactivated_at = NOW()
@@ -48,7 +60,7 @@ export async function action({ request }: { request: Request }) {
 
     // 激活新策略
     await sql`
-      INSERT INTO active_strategy (preset_id) VALUES (${presetId})
+      INSERT INTO active_strategy (preset_id, is_locked) VALUES (${presetId}, ${isLocked})
     `;
 
     // 更新 Redis 缓存并发布更新事件
@@ -62,6 +74,7 @@ export async function action({ request }: { request: Request }) {
         preset_id: presetId,
         name: preset[0].name,
         config: typeof configJson === "string" ? JSON.parse(configJson) : configJson,
+        is_locked: isLocked,
       });
 
       await redisClient.set("strategy:active_preset", redisPayload);
@@ -71,7 +84,7 @@ export async function action({ request }: { request: Request }) {
       console.error("Redis update failed (non-fatal):", redisErr);
     }
 
-    return Response.json({ success: true, presetId });
+    return Response.json({ success: true, presetId, isLocked });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     console.error("Failed to activate preset:", message);

@@ -8,9 +8,9 @@ export async function loader({ request }: Route.LoaderArgs) {
     if (res instanceof Response && res.ok) {
       return await res.json();
     }
-    return { presets: [], activePresetId: null, activatedAt: null };
+    return { presets: [], activePresetId: null, activatedAt: null, isLocked: false };
   } catch {
-    return { presets: [], activePresetId: null, activatedAt: null };
+    return { presets: [], activePresetId: null, activatedAt: null, isLocked: false };
   }
 }
 
@@ -75,31 +75,69 @@ function RiskBadge({ level }: { level: string }) {
 }
 
 export default function StrategyPage({ loaderData }: Route.ComponentProps) {
-  const { presets, activePresetId, activatedAt } = loaderData as {
+  const { presets, activePresetId, activatedAt, isLocked: initialLocked } = loaderData as {
     presets: Preset[];
     activePresetId: number | null;
     activatedAt: string | null;
+    isLocked: boolean;
   };
   const [confirmPreset, setConfirmPreset] = useState<Preset | null>(null);
   const [activating, setActivating] = useState(false);
   const [currentActiveId, setCurrentActiveId] = useState(activePresetId);
+  const [locked, setLocked] = useState(initialLocked);
+  const [lockWithActivate, setLockWithActivate] = useState(false);
+  const [togglingLock, setTogglingLock] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const activePreset = presets.find((p) => p.id === currentActiveId);
 
+  const handleToggleLock = async () => {
+    setTogglingLock(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/strategy-presets/lock", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ isLocked: !locked }),
+      });
+      if (res.ok) {
+        setLocked(!locked);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error || "操作失败");
+      }
+    } catch (err) {
+      console.error("Failed to toggle lock:", err);
+      setError("网络错误");
+    } finally {
+      setTogglingLock(false);
+    }
+  };
+
   const handleActivate = async (preset: Preset) => {
     setActivating(true);
+    setError(null);
     try {
       const res = await fetch("/api/strategy-presets/activate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ presetId: preset.id }),
+        body: JSON.stringify({ presetId: preset.id, isLocked: lockWithActivate }),
       });
       if (res.ok) {
         setCurrentActiveId(preset.id);
+        setLocked(lockWithActivate);
         setConfirmPreset(null);
+        setLockWithActivate(false);
+      } else if (res.status === 423) {
+        setError("当前策略已锁定，请先解锁再切换");
+        setConfirmPreset(null);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error || "激活失败");
       }
     } catch (err) {
       console.error("Failed to activate preset:", err);
+      setError("网络错误");
     } finally {
       setActivating(false);
     }
@@ -109,21 +147,64 @@ export default function StrategyPage({ loaderData }: Route.ComponentProps) {
     <div className="p-6 space-y-6">
       <h1 className="text-2xl font-bold">策略选择</h1>
 
+      {/* 错误提示 */}
+      {error && (
+        <div className="rounded-lg border border-red-500/50 bg-red-500/10 px-4 py-3 text-sm text-red-400">
+          {error}
+          <button onClick={() => setError(null)} className="ml-2 underline text-xs">关闭</button>
+        </div>
+      )}
+
       {/* 当前活跃策略 */}
       {activePreset && (
-        <div className="rounded-lg border border-border bg-card p-6">
+        <div className={`rounded-lg border p-6 ${locked ? "border-yellow-500/50 bg-yellow-500/5" : "border-border bg-card"}`}>
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
               <div className="h-3 w-3 rounded-full bg-green-500 animate-pulse" />
               <h2 className="text-lg font-semibold">当前策略: {activePreset.displayName}</h2>
               <RiskBadge level={activePreset.riskLevel} />
+              {locked && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium bg-yellow-500/20 text-yellow-400">
+                  <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" /></svg>
+                  已锁定
+                </span>
+              )}
             </div>
-            {activatedAt && (
-              <span className="text-sm text-muted-foreground">
-                运行自 {new Date(activatedAt).toLocaleString("zh-CN")}
-              </span>
-            )}
+            <div className="flex items-center gap-3">
+              {activatedAt && (
+                <span className="text-sm text-muted-foreground">
+                  运行自 {new Date(activatedAt).toLocaleString("zh-CN")}
+                </span>
+              )}
+              {/* 锁定开关 */}
+              <button
+                type="button"
+                onClick={handleToggleLock}
+                disabled={togglingLock}
+                className={`relative inline-flex h-7 w-12 items-center rounded-full transition-colors disabled:opacity-50 ${
+                  locked ? "bg-yellow-500" : "bg-muted"
+                }`}
+                title={locked ? "点击解锁，允许自动切换策略" : "点击锁定，阻止自动切换策略"}
+              >
+                <span
+                  className={`inline-flex h-5 w-5 items-center justify-center rounded-full bg-white transition-transform ${
+                    locked ? "translate-x-6" : "translate-x-1"
+                  }`}
+                >
+                  {locked ? (
+                    <svg className="w-3 h-3 text-yellow-600" fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clipRule="evenodd" /></svg>
+                  ) : (
+                    <svg className="w-3 h-3 text-gray-400" fill="currentColor" viewBox="0 0 20 20"><path d="M10 2a5 5 0 00-5 5v2a2 2 0 00-2 2v5a2 2 0 002 2h10a2 2 0 002-2v-5a2 2 0 00-2-2H7V7a3 3 0 015.905-.75 1 1 0 001.937-.5A5.002 5.002 0 0010 2z" /></svg>
+                  )}
+                </span>
+              </button>
+            </div>
           </div>
+          {locked && (
+            <p className="text-xs text-yellow-400/80 mb-4">
+              策略已锁定，LLM 和事件驱动将无法自动切换策略。手动解锁后恢复。
+            </p>
+          )}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
             <div>
               <span className="text-muted-foreground">交易频率</span>
@@ -207,10 +288,16 @@ export default function StrategyPage({ loaderData }: Route.ComponentProps) {
 
               {!isActive && (
                 <button
-                  onClick={() => setConfirmPreset(preset)}
-                  className="w-full py-2 rounded-md bg-primary/10 text-primary hover:bg-primary/20 text-sm font-medium transition-colors"
+                  onClick={() => { setConfirmPreset(preset); setLockWithActivate(false); }}
+                  disabled={locked}
+                  className={`w-full py-2 rounded-md text-sm font-medium transition-colors ${
+                    locked
+                      ? "bg-muted text-muted-foreground cursor-not-allowed"
+                      : "bg-primary/10 text-primary hover:bg-primary/20"
+                  }`}
+                  title={locked ? "当前策略已锁定，请先解锁" : ""}
                 >
-                  激活此策略
+                  {locked ? "策略已锁定" : "激活此策略"}
                 </button>
               )}
             </div>
@@ -235,12 +322,24 @@ export default function StrategyPage({ loaderData }: Route.ComponentProps) {
                 <RiskBadge level={confirmPreset.riskLevel} />
               </p>
             </div>
+
+            {/* 锁定 checkbox */}
+            <label className="flex items-center gap-2 text-sm mb-4 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={lockWithActivate}
+                onChange={(e) => setLockWithActivate(e.target.checked)}
+                className="rounded border-border"
+              />
+              <span>同时锁定此策略（阻止自动切换）</span>
+            </label>
+
             <p className="text-xs text-muted-foreground mb-6">
               已有持仓不受影响，新策略将在下个分析周期生效。
             </p>
             <div className="flex gap-3">
               <button
-                onClick={() => setConfirmPreset(null)}
+                onClick={() => { setConfirmPreset(null); setLockWithActivate(false); }}
                 className="flex-1 py-2 rounded-md border border-border text-sm hover:bg-muted transition-colors"
               >
                 取消

@@ -395,7 +395,11 @@ class Scheduler:
                 preset_config = active["config_json"]
                 if isinstance(preset_config, str):
                     preset_config = json.loads(preset_config)
-                preset_data = {"name": active["name"], "config": preset_config}
+                preset_data = {
+                    "name": active["name"],
+                    "config": preset_config,
+                    "is_locked": active.get("is_locked", False),
+                }
                 self._active_preset_name = active["name"]
                 # 写入 Redis 缓存
                 if self._redis:
