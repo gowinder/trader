@@ -476,6 +476,7 @@ export const activeStrategy = pgTable(
       .notNull(),
     activatedAt: timestamp("activated_at", { withTimezone: true }).notNull().defaultNow(),
     deactivatedAt: timestamp("deactivated_at", { withTimezone: true }),
+    isLocked: boolean("is_locked").default(false),
   },
   (table) => ({
     activeIdx: index("idx_active_strategy_active").on(table.deactivatedAt),

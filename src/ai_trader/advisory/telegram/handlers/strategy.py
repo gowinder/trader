@@ -95,6 +95,7 @@ async def strategy_confirm_callback(update, context):
             await redis.set("strategy:active_preset", json.dumps({
                 "name": preset["name"],
                 "config": config_data,
+                "is_locked": False,
             }))
             await redis.publish("strategy:preset:updated", json.dumps({
                 "preset_id": preset_id,

@@ -553,6 +553,18 @@ class StrategyExecutor:
 
     async def execute(self, action: str, target: str, detail: Dict[str, Any]) -> ExecutionResult:
         try:
+            # Check strategy lock before any switch action
+            active = await self._strategy_service.get_active_preset()
+            if active and active.get("is_locked"):
+                action_lower = action.lower()
+                is_hold = action in ("no_change", "hold", "keep", "maintain") or \
+                    any(kw in action_lower for kw in ("hold", "keep", "maintain", "no_change", "stay"))
+                if not is_hold:
+                    return ExecutionResult(
+                        success=False,
+                        message=f"当前策略已锁定({active.get('display_name', active['name'])}), 无法自动切换",
+                    )
+
             # 精确匹配
             if action in ("switch_preset", "change_preset", "switch"):
                 return await self._switch_preset(target, detail)
@@ -589,6 +601,7 @@ class StrategyExecutor:
             await self._redis.set("strategy:active_preset", json.dumps({
                 "name": target_preset["name"],
                 "config": config_data,
+                "is_locked": False,
             }))
             await self._redis.publish("strategy:preset:updated", json.dumps({
                 "preset_id": target_preset["id"],
