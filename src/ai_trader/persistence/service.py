@@ -699,6 +699,8 @@ class DecisionPersistenceService:
         decision_id: Optional[UUID] = None,
         usage_type: Optional[str] = None,
         trigger_source: Optional[str] = None,
+        llm_prompt: Optional[str] = None,
+        llm_response: Optional[str] = None,
     ) -> UUID:
         """记录 LLM 调用"""
         if total_tokens == 0:
@@ -709,8 +711,8 @@ class DecisionPersistenceService:
             INSERT INTO llm_usage (
                 provider, model, input_tokens, output_tokens, total_tokens,
                 cost_usd, latency_ms, success, error_message, decision_id,
-                usage_type, trigger_source
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                usage_type, trigger_source, llm_prompt, llm_response
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
             RETURNING id
             """,
             provider,
@@ -725,6 +727,8 @@ class DecisionPersistenceService:
             decision_id,
             usage_type,
             trigger_source,
+            llm_prompt,
+            llm_response,
         )
         logger.debug(
             f"Recorded LLM usage: {provider}/{model} "

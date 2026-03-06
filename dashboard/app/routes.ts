@@ -19,6 +19,7 @@ export default [
   route("api/llm-config/oauth-status", "routes/api.llm-config.oauth-status.ts"),
   route("api/strategy-presets", "routes/api.strategy-presets.ts"),
   route("api/strategy-presets/activate", "routes/api.strategy-presets.activate.ts"),
+  route("api/strategy-presets/lock", "routes/api.strategy-presets.lock.ts"),
   route("api/strategy-presets/history", "routes/api.strategy-presets.history.ts"),
   route("api/advisory", "routes/api.advisory.ts"),
   route("api/advisory-action", "routes/api.advisory-action.ts"),
