@@ -72,6 +72,8 @@ export async function loader({ request }: { request: Request }) {
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     return Response.json({ error: message }, { status: 500 });
+  } finally {
+    await sql.end();
   }
 }
 

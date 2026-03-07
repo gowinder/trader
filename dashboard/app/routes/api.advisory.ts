@@ -75,11 +75,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
       SELECT COUNT(*)::int as count FROM advisories WHERE status IN ('pending', 'running', 'failed')
     `;
 
-    await sql.end();
     return Response.json({ advisories, pendingCount: count });
   } catch (error) {
-    await sql.end();
     const message = error instanceof Error ? error.message : "Unknown error";
     return Response.json({ error: message }, { status: 500 });
+  } finally {
+    await sql.end();
   }
 }
