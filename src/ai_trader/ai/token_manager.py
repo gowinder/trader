@@ -3,6 +3,7 @@
 import json
 import asyncio
 import subprocess
+import time
 from pathlib import Path
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
@@ -58,6 +59,7 @@ class TokenManager:
     OAUTH_ENDPOINTS = {
         "gemini": "https://oauth2.googleapis.com/token",
         "qwen": "https://chat.qwen.ai/api/v1/oauth2/token",
+        "codex": "https://auth.openai.com/oauth/token",
     }
 
     # OAuth client ID (从 CLI 工具中提取)
@@ -65,6 +67,9 @@ class TokenManager:
         "gemini": {
             "client_id": "681255809395-oo8ft2oprdrn9e3aqf6av3hmdib135j.apps.googleusercontent.com",
             "client_secret": "",  # Google OAuth 不需要 client_secret for installed apps
+        },
+        "codex": {
+            "client_id": "app_EMoamEEZ73f0CkXaXp7hrann",
         },
     }
 
@@ -253,6 +258,43 @@ class TokenManager:
                 logger.info(f"Token refreshed via API for {provider}")
                 return True
 
+            elif provider == "codex":
+                # Codex/OpenAI OAuth 刷新
+                data = {
+                    "refresh_token": token_info.refresh_token,
+                    "grant_type": "refresh_token",
+                    "client_id": client_config.get("client_id", ""),
+                }
+                resp = await client.post(endpoint, data=data, headers={
+                    "Content-Type": "application/x-www-form-urlencoded",
+                    "Accept": "application/json",
+                })
+                resp.raise_for_status()
+                new_data = resp.json()
+
+                token_info.access_token = new_data.get("access_token", token_info.access_token)
+                if new_data.get("refresh_token"):
+                    token_info.refresh_token = new_data["refresh_token"]
+
+                # Parse JWT exp to set expiry_date for background refresh
+                if new_data.get("expires_in"):
+                    token_info.expiry_date = time.time() + int(new_data["expires_in"])
+                else:
+                    try:
+                        import base64, json as _json
+                        parts = token_info.access_token.split(".")
+                        if len(parts) >= 2:
+                            payload = parts[1] + "=" * (4 - len(parts[1]) % 4)
+                            decoded = _json.loads(base64.urlsafe_b64decode(payload))
+                            if decoded.get("exp"):
+                                token_info.expiry_date = float(decoded["exp"])
+                    except Exception:
+                        pass
+
+                self._save_codex_token_file(provider, token_info, new_data)
+                logger.info(f"Token refreshed via API for {provider}")
+                return True
+
         except Exception as e:
             logger.warning(f"API refresh failed for {provider}: {e}")
             return False
@@ -292,6 +334,36 @@ class TokenManager:
             logger.warning(f"CLI refresh error for {provider}: {e}")
 
         return False
+
+    def _save_codex_token_file(self, provider: str, token_info: TokenInfo, new_data: dict):
+        """保存 codex 格式的 token 到文件（嵌套 tokens 结构）"""
+        path = self._token_paths.get(provider)
+        if not path:
+            return
+
+        file_path = self._expand_path(path)
+
+        try:
+            if file_path.exists():
+                with open(file_path, "r") as f:
+                    data = json.load(f)
+            else:
+                data = {"OPENAI_API_KEY": None, "tokens": {}}
+
+            tokens = data.setdefault("tokens", {})
+            tokens["access_token"] = token_info.access_token
+            if token_info.refresh_token:
+                tokens["refresh_token"] = token_info.refresh_token
+            if new_data.get("id_token"):
+                tokens["id_token"] = new_data["id_token"]
+            data["last_refresh"] = datetime.now().isoformat()
+
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(file_path, "w") as f:
+                json.dump(data, f, indent=2)
+
+        except Exception as e:
+            logger.error(f"Failed to save codex token: {e}")
 
     def _save_token_file(self, provider: str, token_info: TokenInfo):
         """保存 token 到文件"""
