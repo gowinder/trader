@@ -18,10 +18,10 @@ async function getRedisClient() {
 }
 
 export async function loader({ request }: LoaderFunctionArgs) {
+  let client: ReturnType<typeof createClient> | null = null;
   try {
-    const client = await getRedisClient();
+    client = await getRedisClient();
     const data = await client.get(REDIS_KEY);
-    await client.disconnect();
 
     if (data) {
       return Response.json(JSON.parse(data));
@@ -38,6 +38,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
       enabled: true,
       decisionInterval: 1,
     });
+  } finally {
+    if (client) { try { await client.disconnect(); } catch { /* ignore */ } }
   }
 }
 
@@ -46,9 +48,10 @@ export async function action({ request }: ActionFunctionArgs) {
     return Response.json({ error: "Method not allowed" }, { status: 405 });
   }
 
+  let client: ReturnType<typeof createClient> | null = null;
   try {
     const body = await request.json();
-    const client = await getRedisClient();
+    client = await getRedisClient();
 
     // 读取现有配置并合并更新，保留其他字段
     const existing = await client.get(REDIS_KEY);
@@ -64,12 +67,12 @@ export async function action({ request }: ActionFunctionArgs) {
     // 同时发布配置更新事件，让 trader 服务能够实时响应
     await client.publish("trading:config:updated", JSON.stringify(config));
 
-    await client.disconnect();
-
     return Response.json({ success: true, config });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     console.error("Failed to save trading config:", message);
     return Response.json({ error: message }, { status: 500 });
+  } finally {
+    if (client) { try { await client.disconnect(); } catch { /* ignore */ } }
   }
 }

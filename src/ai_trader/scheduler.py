@@ -984,7 +984,7 @@ class Scheduler:
 
         # Start reflection results listener for optimization loop
         if self._optimization_orchestrator and self._redis:
-            asyncio.create_task(self._reflection_results_listener())
+            self._advisory_tasks.append(asyncio.create_task(self._reflection_results_listener()))
 
         while self.running:
             # ── Daily PnL reset ──
