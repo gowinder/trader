@@ -112,7 +112,7 @@ class LLMManager:
             raise ValueError("Provider 'qwen' requires api_key (configure in Dashboard settings)")
         elif name == "qwen-code":
             # qwen-code 使用 OAuth 验证（读取 ~/.qwen/oauth_creds.json）
-            return QwenOAuthProvider(model=model or "coder-model")
+            return QwenOAuthProvider(model=model or "coder-model", timeout=timeout, base_url=base_url)
         elif name == "gemini":
             if api_key:
                 from .providers.gemini import GeminiProvider
@@ -124,7 +124,7 @@ class LLMManager:
                 )
             return GeminiCLIProvider(model=model or "gemini-2.0-flash")
         elif name == "codex":
-            return CodexOAuthProvider(model=model or "gpt-4o")
+            return CodexOAuthProvider(model=model or "gpt-4o", timeout=timeout, base_url=base_url)
         elif name == "openrouter":
             return OpenRouterProvider(
                 api_key=api_key or config.openrouter_api_key or config.llm_api_key,

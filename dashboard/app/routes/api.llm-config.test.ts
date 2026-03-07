@@ -67,7 +67,14 @@ export async function action({ request }: ActionFunctionArgs) {
           } catch { /* ignore JWT parse errors */ }
         }
         if (expiryMs && Date.now() >= expiryMs) {
-          return Response.json({ success: false, latency: 0, message: "Token 已过期，请重新授权登录" });
+          // Check if token can be auto-refreshed (has refresh_token)
+          const hasRefresh = provider.name === "codex"
+            ? !!(tokenData?.tokens?.refresh_token)
+            : !!(tokenData.refresh_token);
+          if (!hasRefresh) {
+            return Response.json({ success: false, latency: 0, message: "Token 已过期，请重新授权登录" });
+          }
+          // Token expired but refreshable — proceed with test, runtime will auto-refresh
         }
       } catch {
         return Response.json({ success: false, latency: 0, message: "Token 文件不存在，请先点击「授权登录」" });
