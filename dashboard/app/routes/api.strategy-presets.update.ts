@@ -85,5 +85,7 @@ export async function action({ request }: { request: Request }) {
     const message = error instanceof Error ? error.message : "Unknown error";
     console.error("Failed to update preset:", message);
     return Response.json({ error: message }, { status: 500 });
+  } finally {
+    await sql.end();
   }
 }

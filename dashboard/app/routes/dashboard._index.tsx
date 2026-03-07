@@ -196,17 +196,20 @@ export async function loader(_args: Route.LoaderArgs) {
 
   // 获取实时账户状态（从 Redis）
   let accountState = null;
-  try {
+  {
     const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
     const client = createClient({ url: redisUrl });
-    await client.connect();
-    const stateJson = await client.get("trading:account_state");
-    await client.disconnect();
-    if (stateJson) {
-      accountState = JSON.parse(stateJson);
+    try {
+      await client.connect();
+      const stateJson = await client.get("trading:account_state");
+      if (stateJson) {
+        accountState = JSON.parse(stateJson);
+      }
+    } catch (e) {
+      console.error("Failed to fetch account state from Redis:", e);
+    } finally {
+      try { await client.disconnect(); } catch { /* ignore */ }
     }
-  } catch (e) {
-    console.error("Failed to fetch account state from Redis:", e);
   }
 
   // 获取收益走势数据（所有 closed 仓位，按 exit_time 排序）

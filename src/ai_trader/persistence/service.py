@@ -909,10 +909,11 @@ class DecisionPersistenceService:
                 COALESCE(SUM(total_tokens), 0) as tokens,
                 COALESCE(SUM(cost_usd), 0) as cost_usd
             FROM llm_usage
-            WHERE created_at >= NOW() - INTERVAL '%s days'
+            WHERE created_at >= NOW() - make_interval(days => $1)
             GROUP BY DATE(created_at), provider
             ORDER BY date
-            """ % days,
+            """,
+            int(days),
         )
 
         return [

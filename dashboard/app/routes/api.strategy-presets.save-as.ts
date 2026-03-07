@@ -78,5 +78,7 @@ export async function action({ request }: { request: Request }) {
     const message = error instanceof Error ? error.message : "Unknown error";
     console.error("Failed to save preset as new:", message);
     return Response.json({ error: message }, { status: 500 });
+  } finally {
+    await sql.end();
   }
 }
