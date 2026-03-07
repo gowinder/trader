@@ -372,10 +372,10 @@ class Scheduler:
                 )
             logger.info(f"EventDetector initialized for {len(config.symbols_list)} symbol(s)")
 
-            # Start config listener in background
-            asyncio.create_task(self._config_listener())
-            asyncio.create_task(self._manual_trigger_listener())
-            asyncio.create_task(self._backtest_task_listener())
+            # Start config listener in background (tracked for graceful shutdown)
+            self._advisory_tasks.append(asyncio.create_task(self._config_listener()))
+            self._advisory_tasks.append(asyncio.create_task(self._manual_trigger_listener()))
+            self._advisory_tasks.append(asyncio.create_task(self._backtest_task_listener()))
         except Exception as e:
             logger.warning(f"Redis not available, using static config: {e}")
             self._redis = None
@@ -445,7 +445,7 @@ class Scheduler:
                 cfg = json.loads(data)
                 self._trading_enabled = cfg.get("enabled", True)
                 # Convert minutes to seconds
-                interval_minutes = cfg.get("decisionInterval", 1)
+                interval_minutes = max(1, cfg.get("decisionInterval", 1))
                 self._decision_interval = interval_minutes * 60
                 # 自动优化开关（Dashboard 优先，其次 env）
                 if "enableAutoOptimization" in cfg:
@@ -520,8 +520,8 @@ class Scheduler:
         if not self._redis:
             return
 
+        pubsub = self._redis.pubsub()
         try:
-            pubsub = self._redis.pubsub()
             await pubsub.subscribe("trading:config:updated", "strategy:preset:updated", "llm:providers:updated", "advisory:config:updated", "advisory:llm_config:updated", "advisory:auto_execute:updated", "llm:config:updated", "notification:config:updated", "notification:test", "trading:event_trigger_config:updated")
 
             async for message in pubsub.listen():
@@ -646,7 +646,7 @@ class Scheduler:
                                 logger.info(f"Optimization config update received: {list(cfg.get('changes', {}).keys())}")
                                 continue
                             self._trading_enabled = cfg.get("enabled", True)
-                            interval_minutes = cfg.get("decisionInterval", 1)
+                            interval_minutes = max(1, cfg.get("decisionInterval", 1))
                             self._decision_interval = interval_minutes * 60
                             # 自动优化开关动态切换
                             if "enableAutoOptimization" in cfg:
@@ -658,22 +658,32 @@ class Scheduler:
                                     logger.info(f"Trading symbols updated: {config.symbols_list}")
                                 for param in ["stop_loss_percent", "take_profit_percent", "leverage_max", "quant_weight", "ai_weight"]:
                                     if param in cfg:
-                                        setattr(config, param, cfg[param])
+                                        val = cfg[param]
+                                        if param == "leverage_max" and (not isinstance(val, (int, float)) or val < 1):
+                                            logger.warning(f"Invalid leverage_max={val}, ignoring")
+                                            continue
+                                        setattr(config, param, val)
                             logger.info(f"Config updated: enabled={self._trading_enabled}, interval={interval_minutes}m")
                     except Exception as e:
                         logger.error(f"Failed to parse config update: {e}")
         except asyncio.CancelledError:
-            pass
+            raise
         except Exception as e:
             logger.error(f"Config listener error: {e}")
+        finally:
+            try:
+                await pubsub.unsubscribe()
+                await pubsub.close()
+            except Exception:
+                pass
 
     async def _manual_trigger_listener(self):
         """监听手动触发事件"""
         if not self._redis:
             return
 
+        pubsub = self._redis.pubsub()
         try:
-            pubsub = self._redis.pubsub()
             await pubsub.subscribe("trading:manual_trigger")
 
             async for message in pubsub.listen():
@@ -684,9 +694,15 @@ class Scheduler:
                     except Exception as e:
                         logger.error(f"Manual trigger cycle error: {e}")
         except asyncio.CancelledError:
-            pass
+            raise
         except Exception as e:
             logger.error(f"Manual trigger listener error: {e}")
+        finally:
+            try:
+                await pubsub.unsubscribe()
+                await pubsub.close()
+            except Exception:
+                pass
 
     async def _backtest_task_listener(self):
         """监听回测任务队列"""
@@ -711,7 +727,7 @@ class Scheduler:
                 except Exception as e:
                     logger.error(f"Backtest task error: {e}")
         except asyncio.CancelledError:
-            pass
+            raise
         except Exception as e:
             logger.error(f"Backtest task listener error: {e}")
 
@@ -739,7 +755,7 @@ class Scheduler:
                 except Exception as e:
                     logger.error(f"Reflection result handling error: {e}")
         except asyncio.CancelledError:
-            pass
+            raise
         except Exception as e:
             logger.error(f"Reflection results listener error: {e}")
 

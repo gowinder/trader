@@ -18,8 +18,14 @@ export async function loader({ request }: LoaderFunctionArgs) {
   if (symbol) conditions.push(eq(eventTriggerLogs.symbol, symbol));
   if (eventType) conditions.push(eq(eventTriggerLogs.eventType, eventType));
   if (severity) conditions.push(eq(eventTriggerLogs.severity, severity));
-  if (from) conditions.push(gte(eventTriggerLogs.triggeredAt, new Date(from)));
-  if (to) conditions.push(lte(eventTriggerLogs.triggeredAt, new Date(to)));
+  if (from) {
+    const fromDate = new Date(from);
+    if (!isNaN(fromDate.getTime())) conditions.push(gte(eventTriggerLogs.triggeredAt, fromDate));
+  }
+  if (to) {
+    const toDate = new Date(to);
+    if (!isNaN(toDate.getTime())) conditions.push(lte(eventTriggerLogs.triggeredAt, toDate));
+  }
 
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 

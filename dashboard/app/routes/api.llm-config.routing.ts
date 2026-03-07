@@ -95,50 +95,51 @@ async function syncRoutingToRedis(scope: string, strategy?: string) {
     .orderBy(llmRoutingConfig.priority);
 
   const client = await getRedisClient();
+  try {
+    if (scope === "main") {
+      const providersMap: Record<string, unknown> = {};
+      const routingList = routing.map((r) => {
+        const apiKey = r.apiKeyEncrypted ? decrypt(r.apiKeyEncrypted) : "";
+        if (!providersMap[r.providerName]) {
+          providersMap[r.providerName] = {
+            api_key: apiKey,
+            base_url: r.baseUrl || "",
+            timeout: r.timeout,
+            provider_type: r.providerType,
+          };
+        }
+        return { provider: r.providerName, model: r.model, priority: r.priority };
+      });
 
-  if (scope === "main") {
-    const providersMap: Record<string, unknown> = {};
-    const routingList = routing.map((r) => {
-      const apiKey = r.apiKeyEncrypted ? decrypt(r.apiKeyEncrypted) : "";
-      if (!providersMap[r.providerName]) {
-        providersMap[r.providerName] = {
-          api_key: apiKey,
-          base_url: r.baseUrl || "",
-          timeout: r.timeout,
-          provider_type: r.providerType,
-        };
-      }
-      return { provider: r.providerName, model: r.model, priority: r.priority };
-    });
-
-    const config = {
-      providers: providersMap,
-      routing: routingList,
-      strategy: strategy || "priority",
-      updatedAt: new Date().toISOString(),
-    };
-
-    await client.set("llm:providers:config", JSON.stringify(config));
-
-    // 兼容旧格式事件
-    const legacyProviders = routingList.map((r) => ({ name: r.provider, model: r.model }));
-    await client.publish("llm:providers:updated", JSON.stringify({ providers: legacyProviders }));
-    // 新格式事件
-    await client.publish("llm:config:updated", JSON.stringify({ type: "routing", scope: "main", config }));
-  } else if (scope === "advisory") {
-    const first = routing[0];
-    if (first) {
-      const advisoryConfig = {
-        provider: first.providerName,
-        model: first.model,
-        api_key: first.apiKeyEncrypted ? decrypt(first.apiKeyEncrypted) : "",
-        base_url: first.baseUrl || "",
-        timeout: first.timeout,
+      const config = {
+        providers: providersMap,
+        routing: routingList,
+        strategy: strategy || "priority",
+        updatedAt: new Date().toISOString(),
       };
-      await client.set("advisory:llm_config", JSON.stringify(advisoryConfig));
-      await client.publish("advisory:llm_config:updated", JSON.stringify(advisoryConfig));
-    }
-  }
 
-  await client.disconnect();
+      await client.set("llm:providers:config", JSON.stringify(config));
+
+      // 兼容旧格式事件
+      const legacyProviders = routingList.map((r) => ({ name: r.provider, model: r.model }));
+      await client.publish("llm:providers:updated", JSON.stringify({ providers: legacyProviders }));
+      // 新格式事件
+      await client.publish("llm:config:updated", JSON.stringify({ type: "routing", scope: "main", config }));
+    } else if (scope === "advisory") {
+      const first = routing[0];
+      if (first) {
+        const advisoryConfig = {
+          provider: first.providerName,
+          model: first.model,
+          api_key: first.apiKeyEncrypted ? decrypt(first.apiKeyEncrypted) : "",
+          base_url: first.baseUrl || "",
+          timeout: first.timeout,
+        };
+        await client.set("advisory:llm_config", JSON.stringify(advisoryConfig));
+        await client.publish("advisory:llm_config:updated", JSON.stringify(advisoryConfig));
+      }
+    }
+  } finally {
+    try { await client.disconnect(); } catch { /* ignore */ }
+  }
 }
