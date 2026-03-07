@@ -135,12 +135,27 @@ class TokenManager:
             access_token = tokens.get("access_token", "")
             refresh_token = tokens.get("refresh_token")
 
-            # Codex token 没有明确的过期时间，但可以从 JWT 解析
-            # 暂时设为 None，依赖刷新机制
+            # Try to load expiry_date: from saved file field, then from JWT
+            expiry_date = None
+            saved_expiry = data.get("expiry_date")
+            if saved_expiry:
+                expiry_date = datetime.fromtimestamp(saved_expiry)
+            elif access_token:
+                try:
+                    import base64
+                    parts = access_token.split(".")
+                    if len(parts) >= 2:
+                        payload = parts[1] + "=" * (4 - len(parts[1]) % 4)
+                        decoded = json.loads(base64.urlsafe_b64decode(payload))
+                        if decoded.get("exp"):
+                            expiry_date = datetime.fromtimestamp(decoded["exp"])
+                except Exception:
+                    pass
+
             return TokenInfo(
                 access_token=access_token,
                 refresh_token=refresh_token,
-                expiry_date=None,
+                expiry_date=expiry_date,
                 token_type="Bearer",
                 extra=data,
             )
@@ -276,9 +291,9 @@ class TokenManager:
                 if new_data.get("refresh_token"):
                     token_info.refresh_token = new_data["refresh_token"]
 
-                # Parse JWT exp to set expiry_date for background refresh
+                # Parse expiry and set as datetime for background refresh
                 if new_data.get("expires_in"):
-                    token_info.expiry_date = time.time() + int(new_data["expires_in"])
+                    token_info.expiry_date = datetime.now() + timedelta(seconds=int(new_data["expires_in"]))
                 else:
                     try:
                         import base64, json as _json
@@ -287,7 +302,7 @@ class TokenManager:
                             payload = parts[1] + "=" * (4 - len(parts[1]) % 4)
                             decoded = _json.loads(base64.urlsafe_b64decode(payload))
                             if decoded.get("exp"):
-                                token_info.expiry_date = float(decoded["exp"])
+                                token_info.expiry_date = datetime.fromtimestamp(decoded["exp"])
                     except Exception:
                         pass
 
@@ -357,6 +372,8 @@ class TokenManager:
             if new_data.get("id_token"):
                 tokens["id_token"] = new_data["id_token"]
             data["last_refresh"] = datetime.now().isoformat()
+            if token_info.expiry_date:
+                data["expiry_date"] = token_info.expiry_date.timestamp()
 
             file_path.parent.mkdir(parents=True, exist_ok=True)
             with open(file_path, "w") as f:
