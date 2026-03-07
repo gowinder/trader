@@ -18,10 +18,13 @@ class CodexOAuthProvider(BaseLLMProvider):
         self,
         model: str = DEFAULT_MODEL,
         timeout: float = 60.0,
+        base_url: str = "",
         **kwargs,
     ):
         self.model = model
         self.timeout = timeout
+        if base_url:
+            self.BASE_URL = base_url.rstrip("/")
         self._client: Optional[httpx.AsyncClient] = None
         self._token_manager = get_token_manager()
 
