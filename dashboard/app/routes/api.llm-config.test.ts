@@ -73,7 +73,10 @@ export async function action({ request }: ActionFunctionArgs) {
         return Response.json({ success: false, latency: 0, message: "Token 文件不存在，请先点击「授权登录」" });
       }
 
-      const baseUrl = (provider.baseUrl || "https://portal.qwen.ai/v1").replace(/\/+$/, "");
+      const defaultBaseUrl = provider.name === "codex"
+        ? "https://api.openai.com/v1"
+        : "https://portal.qwen.ai/v1";
+      const baseUrl = (provider.baseUrl || defaultBaseUrl).replace(/\/+$/, "");
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 15000);
       const startTime = Date.now();

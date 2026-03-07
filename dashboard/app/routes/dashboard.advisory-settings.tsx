@@ -46,6 +46,7 @@ export default function AdvisorySettingsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savingRouting, setSavingRouting] = useState(false);
+  const [savingAutoExec, setSavingAutoExec] = useState(false);
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
 
   const showToast = useCallback((type: "success" | "error", message: string) => {
@@ -205,7 +206,10 @@ export default function AdvisorySettingsPage() {
           </div>
           <button
             type="button"
+            disabled={savingAutoExec}
             onClick={async () => {
+              if (savingAutoExec) return;
+              setSavingAutoExec(true);
               const next = !autoExecute;
               setAutoExecute(next);
               try {
@@ -223,6 +227,8 @@ export default function AdvisorySettingsPage() {
               } catch {
                 setAutoExecute(!next);
                 showToast("error", "保存失败");
+              } finally {
+                setSavingAutoExec(false);
               }
             }}
             className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
