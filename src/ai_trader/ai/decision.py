@@ -145,6 +145,7 @@ class DecisionEngine:
             except Exception:
                 pass
 
+        logger.debug("[LEV_DBG] min={} max={} def={}", config.leverage_min, config.leverage_max, config.default_leverage)
         user_prompt = RISK_USER.format(
             mtf_summary=mtf_summary,
             trend=tech.trend,
@@ -364,6 +365,7 @@ class DecisionEngine:
         # Clamp leverage to config range for opening/adding actions
         if decision.action in ("open_long", "open_short", "add_long", "add_short"):
             decision.leverage = max(config.leverage_min, min(config.leverage_max, decision.leverage))
+            logger.debug("[LEV_DBG] after clamp: lev={} action={}", decision.leverage, decision.action)
 
         # Fill in missing price fields based on current price and ATR
         if decision.action in ["open_long", "open_short", "add_long", "add_short"]:
@@ -586,10 +588,15 @@ class HybridDecisionEngine(DecisionEngine):
                 quant_signal.take_profit, ai_decision.take_profit_price
             )
 
+            # Clamp leverage for opening actions (ai_decision may have unclamped leverage if AI said "hold")
+            fused_leverage = ai_decision.leverage
+            if quant_action in ("open_long", "open_short", "add_long", "add_short"):
+                fused_leverage = max(config.leverage_min, min(config.leverage_max, fused_leverage))
+
             return TradingDecision(
                 action=quant_action,
                 confidence=final_confidence,
-                leverage=ai_decision.leverage,
+                leverage=fused_leverage,
                 position_size_percent=ai_decision.position_size_percent,
                 entry_price=quant_signal.entry_price or ai_decision.entry_price,
                 stop_loss_price=final_stop_loss,
@@ -644,10 +651,15 @@ class HybridDecisionEngine(DecisionEngine):
             final_entry = ai_decision.entry_price
             reason_prefix = f"AI PRIORITY ({ai_score:.0f} vs {quant_score:.0f})"
 
+        # Clamp leverage for opening actions
+        fused_leverage = ai_decision.leverage
+        if final_action in ("open_long", "open_short", "add_long", "add_short"):
+            fused_leverage = max(config.leverage_min, min(config.leverage_max, fused_leverage))
+
         return TradingDecision(
             action=final_action,
             confidence=final_confidence,
-            leverage=ai_decision.leverage,
+            leverage=fused_leverage,
             position_size_percent=ai_decision.position_size_percent,
             entry_price=final_entry,
             stop_loss_price=final_stop_loss,

@@ -77,7 +77,10 @@ export async function action({ request }: ActionFunctionArgs) {
           // Token expired but refreshable — proceed with test, runtime will auto-refresh
         }
       } catch {
-        return Response.json({ success: false, latency: 0, message: "Token 文件不存在，请先点击「授权登录」" });
+        const hint = provider.name === "codex"
+          ? "Token 文件不存在，请在宿主机运行 `codex auth` 完成授权"
+          : "Token 文件不存在，请先点击「授权登录」";
+        return Response.json({ success: false, latency: 0, message: hint });
       }
 
       const defaultBaseUrl = provider.name === "codex"
