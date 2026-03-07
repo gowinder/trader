@@ -27,6 +27,12 @@ def _create_provider(name: str, api_key: str, model: str, base_url: str, timeout
     if name == "glm":
         from ..ai.providers.glm import GLMProvider
         return GLMProvider(api_key=api_key, model=model, base_url=base_url, timeout=timeout)
+    if name == "codex":
+        from ..ai.providers.codex_oauth import CodexOAuthProvider
+        return CodexOAuthProvider(model=model, timeout=timeout)
+    if name == "qwen-code":
+        from ..ai.providers.qwen_oauth import QwenOAuthProvider
+        return QwenOAuthProvider(model=model)
     # openrouter / deepseek / 其他 OpenAI 兼容协议
     return _AdvisoryProvider(api_key=api_key, model=model, base_url=base_url, timeout=timeout, name=name)
 
