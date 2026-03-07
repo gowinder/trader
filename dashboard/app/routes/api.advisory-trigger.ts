@@ -7,9 +7,10 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
+  let client: ReturnType<typeof createClient> | null = null;
 
   try {
-    const client = createClient({ url: redisUrl });
+    client = createClient({ url: redisUrl });
     await client.connect();
 
     const taskId = `advisory-trigger-${Date.now()}`;
@@ -21,8 +22,6 @@ export async function action({ request }: ActionFunctionArgs) {
 
     await client.publish("advisory:manual_trigger", JSON.stringify(task));
 
-    await client.disconnect();
-
     return Response.json({
       success: true,
       message: "AI 建议分析已触发",
@@ -32,5 +31,7 @@ export async function action({ request }: ActionFunctionArgs) {
     const message = error instanceof Error ? error.message : "Unknown error";
     console.error("Failed to trigger advisory analysis:", message);
     return Response.json({ error: message }, { status: 500 });
+  } finally {
+    if (client) { try { await client.disconnect(); } catch { /* ignore */ } }
   }
 }

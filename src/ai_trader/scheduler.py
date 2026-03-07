@@ -1640,6 +1640,7 @@ class Scheduler:
         """监听手动触发 advisory 分析"""
         if not self._redis or not self._advisory_service:
             return
+        pubsub = None
         try:
             pubsub = self._redis.pubsub()
             await pubsub.subscribe("advisory:manual_trigger")
@@ -1655,6 +1656,13 @@ class Scheduler:
             pass
         except Exception as e:
             logger.error(f"Advisory manual trigger listener error: {e}")
+        finally:
+            if pubsub:
+                try:
+                    await pubsub.unsubscribe()
+                    await pubsub.close()
+                except Exception:
+                    pass
 
     async def _strategy_suggest_listener(self):
         """Listen for strategy suggestion requests via Redis list (BLPOP)"""
@@ -1843,10 +1851,20 @@ class Scheduler:
             result["status"] = "completed"
             await self._redis.set(result_key, json.dumps(result, ensure_ascii=False), ex=300)
             logger.info(f"Strategy suggestion completed: task_id={task_id}, preset={result.get('recommended_preset')}")
+        except asyncio.CancelledError:
+            error_result = {"status": "cancelled", "error": "Task was cancelled"}
+            try:
+                await self._redis.set(result_key, json.dumps(error_result, ensure_ascii=False), ex=300)
+            except Exception:
+                pass
+            raise
         except Exception as e:
             logger.error(f"Strategy suggestion failed: {e}")
             error_result = {"status": "error", "error": str(e)}
-            await self._redis.set(result_key, json.dumps(error_result, ensure_ascii=False), ex=300)
+            try:
+                await self._redis.set(result_key, json.dumps(error_result, ensure_ascii=False), ex=300)
+            except Exception:
+                pass
 
     async def _update_strategy_weights(self):
         """定期更新策略权重（基于历史表现）"""

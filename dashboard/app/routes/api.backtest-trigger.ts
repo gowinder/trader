@@ -11,13 +11,13 @@ export async function loader({ request }: LoaderFunctionArgs) {
   }
 
   const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
+  let client: ReturnType<typeof createClient> | null = null;
 
   try {
-    const client = createClient({ url: redisUrl });
+    client = createClient({ url: redisUrl });
     await client.connect();
 
     const status = await client.hGetAll(`backtest:status:${taskId}`);
-    await client.disconnect();
 
     if (!status || Object.keys(status).length === 0) {
       return Response.json({
@@ -34,6 +34,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     return Response.json({ error: message }, { status: 500 });
+  } finally {
+    if (client) { try { await client.disconnect(); } catch { /* ignore */ } }
   }
 }
 
@@ -57,10 +59,11 @@ export async function action({ request }: ActionFunctionArgs) {
   }
 
   const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
+  let client: ReturnType<typeof createClient> | null = null;
 
   try {
     // 通过 Redis 队列发送回测任务
-    const client = createClient({ url: redisUrl });
+    client = createClient({ url: redisUrl });
     await client.connect();
 
     const taskId = `backtest-${Date.now()}`;
@@ -77,7 +80,6 @@ export async function action({ request }: ActionFunctionArgs) {
 
     // 推送到回测任务队列
     await client.lPush("backtest:tasks", JSON.stringify(task));
-    await client.disconnect();
 
     return Response.json({
       success: true,
@@ -88,5 +90,7 @@ export async function action({ request }: ActionFunctionArgs) {
     const message = error instanceof Error ? error.message : "Unknown error";
     console.error("Failed to queue backtest task:", message);
     return Response.json({ error: message }, { status: 500 });
+  } finally {
+    if (client) { try { await client.disconnect(); } catch { /* ignore */ } }
   }
 }

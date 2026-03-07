@@ -67,9 +67,12 @@ async function syncProvidersToRedis() {
   }
 
   const client = await getRedisClient();
-  await client.set("llm:providers:pool", JSON.stringify(providersMap));
-  await client.publish("llm:config:updated", JSON.stringify({ type: "providers", providers: providersMap }));
-  await client.disconnect();
+  try {
+    await client.set("llm:providers:pool", JSON.stringify(providersMap));
+    await client.publish("llm:config:updated", JSON.stringify({ type: "providers", providers: providersMap }));
+  } finally {
+    try { await client.disconnect(); } catch { /* ignore */ }
+  }
 }
 
 export async function loader(_args: LoaderFunctionArgs) {
