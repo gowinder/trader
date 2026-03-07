@@ -78,6 +78,7 @@ export async function action({ request }: ActionFunctionArgs) {
 
       let expired = false;
       let expiresAt: string | null = null;
+      let canRefresh = false;
 
       if (expiryMs) {
         const expiryDate = new Date(expiryMs);
@@ -85,14 +86,25 @@ export async function action({ request }: ActionFunctionArgs) {
         expired = Date.now() >= expiryMs;
       }
 
+      // Check if provider has refresh_token (Codex/Qwen can auto-refresh)
+      if (expired) {
+        const tokens = data.tokens as Record<string, string> | undefined;
+        const refreshToken = tokens?.refresh_token || (data.refresh_token as string) || "";
+        if (refreshToken) {
+          canRefresh = true;
+        }
+      }
+
       return Response.json({
         hasToken,
-        expired,
+        expired: canRefresh ? false : expired, // Refreshable tokens are not truly expired
         expiresAt,
         tokenPath,
         message: hasToken
           ? expired
-            ? "Token 已过期，需要重新登录"
+            ? canRefresh
+              ? `Access token 已过期但可自动刷新${expiresAt ? `（过期: ${new Date(expiresAt).toLocaleString("zh-CN")}）` : ""}`
+              : "Token 已过期，需要重新登录"
             : `Token 有效${expiresAt ? `，过期时间: ${new Date(expiresAt).toLocaleString("zh-CN")}` : ""}`
           : "Token 文件存在但 access_token 为空",
       });
