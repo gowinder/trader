@@ -18,20 +18,20 @@ export async function action({ request }: ActionFunctionArgs) {
     const client = await getRedisClient();
     const taskId = `strategy-suggest-${Date.now()}`;
 
-    // Check if trader consumer is ready (advisory LLM configured)
-    const llmConfig = await client.get("advisory:llm_config");
-    if (!llmConfig) {
+    // Check if trader consumer is actually online (heartbeat flag with TTL)
+    const consumerAlive = await client.get("strategy:suggest:consumer_alive");
+    if (!consumerAlive) {
+      // Also check LLM config for a more specific error message
+      const llmConfig = await client.get("advisory:llm_config");
       await client.disconnect();
+      if (!llmConfig) {
+        return Response.json(
+          { error: "Advisory LLM 未配置，请先在 Advisory Settings 中配置 LLM" },
+          { status: 503 }
+        );
+      }
       return Response.json(
-        { error: "Advisory LLM 未配置，请先在 Advisory Settings 中配置 LLM" },
-        { status: 503 }
-      );
-    }
-    const cfg = JSON.parse(llmConfig);
-    if (!cfg.provider || !cfg.model) {
-      await client.disconnect();
-      return Response.json(
-        { error: "Advisory LLM 配置不完整（缺少 provider 或 model）" },
+        { error: "策略建议服务未就绪，Trader 可能未启动或 Advisory 未初始化" },
         { status: 503 }
       );
     }

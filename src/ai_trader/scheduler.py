@@ -1657,9 +1657,13 @@ class Scheduler:
         if not self._redis or not self._advisory_service:
             return
         try:
+            # Set heartbeat flag so dashboard knows consumer is online
+            await self._redis.set("strategy:suggest:consumer_alive", "1", ex=30)
             logger.info("Strategy suggest listener started (BLPOP queue)")
             while True:
                 try:
+                    # Refresh heartbeat every BLPOP cycle
+                    await self._redis.set("strategy:suggest:consumer_alive", "1", ex=30)
                     result = await self._redis.blpop("strategy:suggest_queue", timeout=5)
                     if result is None:
                         continue
@@ -1679,6 +1683,13 @@ class Scheduler:
             pass
         except Exception as e:
             logger.error(f"Strategy suggest listener error: {e}")
+        finally:
+            # Clear heartbeat on exit
+            try:
+                if self._redis:
+                    await self._redis.delete("strategy:suggest:consumer_alive")
+            except Exception:
+                pass
 
     async def _collect_advisory_data(self) -> dict:
         """Collect market data, positions, config, and account info for advisory/suggestion use."""
