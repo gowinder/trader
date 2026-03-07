@@ -40,7 +40,7 @@ const OAUTH_TOKEN_CONFIGS: Record<string, OAuthTokenConfig> = {
         return null;
       }
     },
-    loginHint: "请点击「授权登录」完成 OAuth 认证",
+    loginHint: "请在宿主机运行 `codex auth` 完成授权",
   },
 };
 

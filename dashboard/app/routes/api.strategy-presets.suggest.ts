@@ -15,8 +15,9 @@ export async function action({ request }: ActionFunctionArgs) {
     return Response.json({ error: "Method not allowed" }, { status: 405 });
   }
 
+  let client: Awaited<ReturnType<typeof getRedisClient>> | null = null;
   try {
-    const client = await getRedisClient();
+    client = await getRedisClient();
     const taskId = `strategy-suggest-${Date.now()}-${randomBytes(4).toString("hex")}`;
 
     // Check if trader consumer is actually online (heartbeat flag with TTL)
@@ -24,7 +25,6 @@ export async function action({ request }: ActionFunctionArgs) {
     if (!consumerAlive) {
       // Also check LLM config for a more specific error message
       const llmConfig = await client.get("advisory:llm_config");
-      await client.disconnect();
       if (!llmConfig) {
         return Response.json(
           { error: "Advisory LLM 未配置，请先在 Advisory Settings 中配置 LLM" },
@@ -43,13 +43,13 @@ export async function action({ request }: ActionFunctionArgs) {
       JSON.stringify({ task_id: taskId })
     );
 
-    await client.disconnect();
-
     return Response.json({ taskId });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     console.error("Failed to trigger strategy suggestion:", message);
     return Response.json({ error: message }, { status: 500 });
+  } finally {
+    if (client) { try { await client.disconnect(); } catch { /* ignore */ } }
   }
 }
 
@@ -62,11 +62,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
     return Response.json({ error: "taskId is required" }, { status: 400 });
   }
 
+  let client: Awaited<ReturnType<typeof getRedisClient>> | null = null;
   try {
-    const client = await getRedisClient();
+    client = await getRedisClient();
     const resultKey = `strategy:suggest:result:${taskId}`;
     const raw = await client.get(resultKey);
-    await client.disconnect();
 
     if (!raw) {
       return Response.json({ status: "pending" });
@@ -78,5 +78,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     const message = error instanceof Error ? error.message : "Unknown error";
     console.error("Failed to get strategy suggestion result:", message);
     return Response.json({ error: message }, { status: 500 });
+  } finally {
+    if (client) { try { await client.disconnect(); } catch { /* ignore */ } }
   }
 }
