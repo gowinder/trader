@@ -64,6 +64,52 @@ ADVISORY_USER = """## 触发原因
 
 请综合分析以上信息，给出交易建议。如果一切正常无需调整，suggestions 可以为空。"""
 
+STRATEGY_SUGGEST_SYSTEM = """You are a senior AI trading advisor specializing in strategy selection.
+Your task is to analyze current market conditions and recommend the most suitable strategy preset.
+
+## Available Strategy Presets
+{presets_description}
+
+## Output Rules
+- Output valid JSON matching the schema exactly
+- recommended_preset: Must be one of the preset names listed above
+- reason: Must be in Chinese (中文), 200 characters or less, explain why this preset fits current conditions
+- market_state: Your assessment of current market state (e.g., STRONG_TREND, WEAK_TREND, RANGE_BOUND, SIDEWAYS, BREAKOUT)
+- current_strategy_analysis: Must be in Chinese (中文), 150 characters or less, evaluate how well the current active strategy fits the current market
+- current_strategy_score: 1-10 integer, how well the current strategy matches market conditions (10=perfect fit)
+- Be specific about which market signals led to your recommendation"""
+
+STRATEGY_SUGGEST_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "recommended_preset": {
+            "type": "string",
+            "description": "Recommended preset name (e.g., steady_trend, aggressive_trend, etc.)",
+        },
+        "reason": {
+            "type": "string",
+            "description": "Recommendation reason in Chinese, 200 chars or less",
+        },
+        "market_state": {
+            "type": "string",
+            "enum": ["STRONG_TREND", "WEAK_TREND", "RANGE_BOUND", "SIDEWAYS", "BREAKOUT"],
+            "description": "Current market state assessment",
+        },
+        "current_strategy_analysis": {
+            "type": "string",
+            "description": "Analysis of how well the current active strategy fits market conditions, in Chinese, 150 chars or less",
+        },
+        "current_strategy_score": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 10,
+            "description": "Current strategy fit score (1=poor fit, 10=perfect fit)",
+        },
+    },
+    "required": ["recommended_preset", "reason", "market_state", "current_strategy_analysis", "current_strategy_score"],
+    "additionalProperties": False,
+}
+
 ADVISORY_SCHEMA = {
     "type": "object",
     "properties": {
