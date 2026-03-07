@@ -18,6 +18,24 @@ export async function action({ request }: ActionFunctionArgs) {
     const client = await getRedisClient();
     const taskId = `strategy-suggest-${Date.now()}`;
 
+    // Check if trader consumer is ready (advisory LLM configured)
+    const llmConfig = await client.get("advisory:llm_config");
+    if (!llmConfig) {
+      await client.disconnect();
+      return Response.json(
+        { error: "Advisory LLM 未配置，请先在 Advisory Settings 中配置 LLM" },
+        { status: 503 }
+      );
+    }
+    const cfg = JSON.parse(llmConfig);
+    if (!cfg.provider || !cfg.model) {
+      await client.disconnect();
+      return Response.json(
+        { error: "Advisory LLM 配置不完整（缺少 provider 或 model）" },
+        { status: 503 }
+      );
+    }
+
     // Push request to Redis list (persistent queue, won't lose messages)
     await client.rPush(
       "strategy:suggest_queue",
