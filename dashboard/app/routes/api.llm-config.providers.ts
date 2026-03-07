@@ -23,14 +23,8 @@ async function ensureBuiltinProviders() {
 
   for (const bp of BUILTIN_PROVIDERS) {
     if (existingCustomNames.has(bp.name)) {
-      // Upgrade existing custom provider to builtin, sync fields
-      await db.update(llmProviders).set({
-        isBuiltin: true,
-        displayName: bp.displayName,
-        providerType: bp.providerType,
-        baseUrl: bp.baseUrl,
-        models: bp.models,
-      }).where(eq(llmProviders.name, bp.name));
+      // Skip: user has a custom provider with the same name, don't overwrite
+      continue;
     } else if (!existingBuiltinNames.has(bp.name)) {
       await db.insert(llmProviders).values({
         name: bp.name,

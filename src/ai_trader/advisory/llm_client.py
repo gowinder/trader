@@ -32,7 +32,7 @@ def _create_provider(name: str, api_key: str, model: str, base_url: str, timeout
         return CodexOAuthProvider(model=model, timeout=timeout)
     if name == "qwen-code":
         from ..ai.providers.qwen_oauth import QwenOAuthProvider
-        return QwenOAuthProvider(model=model)
+        return QwenOAuthProvider(model=model, timeout=timeout)
     # openrouter / deepseek / 其他 OpenAI 兼容协议
     return _AdvisoryProvider(api_key=api_key, model=model, base_url=base_url, timeout=timeout, name=name)
 
