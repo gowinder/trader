@@ -12,14 +12,26 @@ const BUILTIN_PROVIDERS = [
   { name: "glm", displayName: "智谱 GLM", providerType: "anthropic_compatible", baseUrl: "https://open.bigmodel.cn/api/anthropic", models: ["glm-4.7", "glm-4.7-flash", "glm-4-plus", "glm-4-flash"] },
   { name: "qwen", displayName: "通义千问 (Dashscope)", providerType: "openai_compatible", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", models: ["qwen-max", "qwen-plus", "qwen-turbo"] },
   { name: "qwen-code", displayName: "通义千问 (OAuth)", providerType: "oauth", baseUrl: "https://portal.qwen.ai/v1", models: ["coder-model", "qwen3-coder-plus", "qwen3-max"] },
+  { name: "codex", displayName: "Codex (OAuth)", providerType: "oauth", baseUrl: "https://api.openai.com/v1", models: ["gpt-4o", "gpt-4o-mini"] },
 ];
 
 async function ensureBuiltinProviders() {
-  const existing = await db.select({ name: llmProviders.name }).from(llmProviders).where(eq(llmProviders.isBuiltin, true));
-  const existingNames = new Set(existing.map((e) => e.name));
+  // Check ALL existing providers (builtin + custom) to avoid name conflicts
+  const allExisting = await db.select({ name: llmProviders.name, isBuiltin: llmProviders.isBuiltin }).from(llmProviders);
+  const existingBuiltinNames = new Set(allExisting.filter((e) => e.isBuiltin).map((e) => e.name));
+  const existingCustomNames = new Set(allExisting.filter((e) => !e.isBuiltin).map((e) => e.name));
 
   for (const bp of BUILTIN_PROVIDERS) {
-    if (!existingNames.has(bp.name)) {
+    if (existingCustomNames.has(bp.name)) {
+      // Upgrade existing custom provider to builtin, sync fields
+      await db.update(llmProviders).set({
+        isBuiltin: true,
+        displayName: bp.displayName,
+        providerType: bp.providerType,
+        baseUrl: bp.baseUrl,
+        models: bp.models,
+      }).where(eq(llmProviders.name, bp.name));
+    } else if (!existingBuiltinNames.has(bp.name)) {
       await db.insert(llmProviders).values({
         name: bp.name,
         displayName: bp.displayName,

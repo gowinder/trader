@@ -30,7 +30,7 @@ export async function loader(_args: LoaderFunctionArgs) {
     return Response.json({
       triggerConfig: triggerConfig ? JSON.parse(triggerConfig) : null,
       llmConfig: parsedLlmConfig,
-      autoExecute: autoExecute !== null ? JSON.parse(autoExecute) : (process.env.ADVISORY_AUTO_EXECUTE === "true"),
+      autoExecute: autoExecute !== null ? JSON.parse(autoExecute) : false,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
