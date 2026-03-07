@@ -3,6 +3,7 @@ import { createClient } from "redis";
 
 const TRIGGER_CONFIG_KEY = "advisory:trigger_config";
 const LLM_CONFIG_KEY = "advisory:llm_config";
+const AUTO_EXECUTE_KEY = "advisory:auto_execute";
 
 async function getRedisClient() {
   const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
@@ -11,12 +12,13 @@ async function getRedisClient() {
   return client;
 }
 
-export async function loader({ request }: LoaderFunctionArgs) {
+export async function loader(_args: LoaderFunctionArgs) {
   let client: Awaited<ReturnType<typeof getRedisClient>> | null = null;
   try {
     client = await getRedisClient();
     const triggerConfig = await client.get(TRIGGER_CONFIG_KEY);
     const llmConfig = await client.get(LLM_CONFIG_KEY);
+    const autoExecute = await client.get(AUTO_EXECUTE_KEY);
 
     // 返回 Redis 中的配置，null 表示尚未配置（前端用自身默认值展示）
     let parsedLlmConfig = null;
@@ -28,6 +30,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
     return Response.json({
       triggerConfig: triggerConfig ? JSON.parse(triggerConfig) : null,
       llmConfig: parsedLlmConfig,
+      autoExecute: autoExecute !== null ? JSON.parse(autoExecute) : (process.env.ADVISORY_AUTO_EXECUTE === "true"),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
@@ -58,6 +61,10 @@ export async function action({ request }: ActionFunctionArgs) {
       const merged = { ...existing, ...body.llmConfig };
       await client.set(LLM_CONFIG_KEY, JSON.stringify(merged));
       await client.publish("advisory:llm_config:updated", JSON.stringify(merged));
+    }
+    if (body.autoExecute !== undefined) {
+      await client.set(AUTO_EXECUTE_KEY, JSON.stringify(body.autoExecute));
+      await client.publish("advisory:auto_execute:updated", JSON.stringify(body.autoExecute));
     }
 
     return Response.json({ success: true });
