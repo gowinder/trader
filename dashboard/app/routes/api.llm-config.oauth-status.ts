@@ -13,13 +13,16 @@ interface OAuthTokenConfig {
   loginHint: string;
 }
 
+const QWEN_OAUTH_CONFIG: OAuthTokenConfig = {
+  path: ".qwen/oauth_creds.json",
+  extractToken: (data) => (data.access_token as string) || "",
+  extractExpiry: (data) => (data.expiry_date as number) || null,
+  loginHint: "请点击「授权登录」完成 OAuth 认证",
+};
+
 const OAUTH_TOKEN_CONFIGS: Record<string, OAuthTokenConfig> = {
-  "qwen-code": {
-    path: ".qwen/oauth_creds.json",
-    extractToken: (data) => (data.access_token as string) || "",
-    extractExpiry: (data) => (data.expiry_date as number) || null,
-    loginHint: "请点击「授权登录」完成 OAuth 认证",
-  },
+  "qwen-code": QWEN_OAUTH_CONFIG,
+  qwen: QWEN_OAUTH_CONFIG, // legacy alias
   codex: {
     path: ".codex/auth.json",
     extractToken: (data) => {
