@@ -1653,22 +1653,28 @@ class Scheduler:
             logger.error(f"Advisory manual trigger listener error: {e}")
 
     async def _strategy_suggest_listener(self):
-        """Listen for strategy suggestion requests via Redis pub/sub"""
+        """Listen for strategy suggestion requests via Redis list (BLPOP)"""
         if not self._redis or not self._advisory_service:
             return
         try:
-            pubsub = self._redis.pubsub()
-            await pubsub.subscribe("strategy:suggest_request")
-            logger.info("Strategy suggest listener started")
-            async for message in pubsub.listen():
-                if message["type"] == "message":
-                    try:
-                        data = json.loads(message["data"])
-                        task_id = data.get("task_id", "")
-                        if task_id:
-                            asyncio.create_task(self._run_strategy_suggest(task_id))
-                    except Exception as e:
-                        logger.error(f"Strategy suggest listener error: {e}")
+            logger.info("Strategy suggest listener started (BLPOP queue)")
+            while True:
+                try:
+                    result = await self._redis.blpop("strategy:suggest_queue", timeout=5)
+                    if result is None:
+                        continue
+                    _, raw = result
+                    data = json.loads(raw)
+                    task_id = data.get("task_id", "")
+                    if task_id:
+                        task = asyncio.create_task(self._run_strategy_suggest(task_id))
+                        self._advisory_tasks.append(task)
+                        self._advisory_tasks = [t for t in self._advisory_tasks if not t.done()]
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.error(f"Strategy suggest listener error: {e}")
+                    await asyncio.sleep(1)
         except asyncio.CancelledError:
             pass
         except Exception as e:

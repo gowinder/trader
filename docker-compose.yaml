@@ -28,6 +28,7 @@ services:
       - ./data:/app/data
       - ./logs:/app/logs
       - oauth-tokens:/root/.qwen
+      - ~/.codex:/root/.codex:ro
     networks:
       - trader-network
     depends_on:
@@ -65,6 +66,7 @@ services:
       - ./data:/data:ro
       - ./logs:/logs:ro
       - oauth-tokens:/root/.qwen
+      - ~/.codex:/root/.codex:ro
     depends_on:
       db-migrate:
         condition: service_completed_successfully

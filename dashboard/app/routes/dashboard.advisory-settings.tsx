@@ -42,6 +42,7 @@ export default function AdvisorySettingsPage() {
   const [triggerConfig, setTriggerConfig] = useState<TriggerConfig>(DEFAULT_TRIGGER);
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   const [advisoryRouting, setAdvisoryRouting] = useState<LlmRoutingItem[]>([]);
+  const [autoExecute, setAutoExecute] = useState(false);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savingRouting, setSavingRouting] = useState(false);
@@ -66,6 +67,7 @@ export default function AdvisorySettingsPage() {
     ])
       .then(([settingsData, provData, routingData]) => {
         if (settingsData.triggerConfig) setTriggerConfig(settingsData.triggerConfig);
+        if (settingsData.autoExecute !== undefined) setAutoExecute(settingsData.autoExecute);
         if (provData.providers) {
           setProviders(
             provData.providers.map((p: ProviderInfo) => ({
@@ -191,6 +193,50 @@ export default function AdvisorySettingsPage() {
           {toast.message}
         </div>
       )}
+
+      {/* Auto Execute */}
+      <div className="rounded-lg border border-border bg-card p-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-lg font-semibold">自动执行建议</h2>
+            <p className="text-sm text-muted-foreground mt-1">
+              开启后，AI 生成的交易建议将自动执行，无需手动确认。请谨慎使用。
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={async () => {
+              const next = !autoExecute;
+              setAutoExecute(next);
+              try {
+                const res = await fetch("/api/advisory-settings", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ autoExecute: next }),
+                });
+                if (res.ok) {
+                  showToast("success", next ? "自动执行已开启" : "自动执行已关闭");
+                } else {
+                  setAutoExecute(!next);
+                  showToast("error", "保存失败");
+                }
+              } catch {
+                setAutoExecute(!next);
+                showToast("error", "保存失败");
+              }
+            }}
+            className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+              autoExecute ? "bg-primary" : "bg-muted"
+            }`}
+          >
+            <span
+              className={`inline-block h-4 w-4 rounded-full bg-white transition-transform ${
+                autoExecute ? "translate-x-6" : "translate-x-1"
+              }`}
+            />
+          </button>
+        </div>
+      </div>
 
       {/* Trigger Configuration */}
       <div className="rounded-lg border border-border bg-card p-6">

@@ -6,8 +6,12 @@ from uuid import UUID
 from .llm_client import AdvisoryLLMClient
 from .persistence import AdvisoryPersistenceService
 from .context import AdvisoryContextBuilder
-from .prompts import ADVISORY_SYSTEM, ADVISORY_SCHEMA
+from .prompts import (
+    ADVISORY_SYSTEM, ADVISORY_SCHEMA,
+    STRATEGY_SUGGEST_SYSTEM, STRATEGY_SUGGEST_SCHEMA,
+)
 from ..models.advisory import AdvisoryResult, Suggestion, TriggerType, SuggestionType, Urgency
+from ..strategies.presets import SYSTEM_PRESETS
 from ..utils.logger import logger
 
 
@@ -106,6 +110,104 @@ class AdvisoryEngine:
                 except Exception:
                     pass
             return None
+
+    async def suggest_strategy(
+        self,
+        symbols: List[str],
+        positions: List[Dict],
+        market_data: Dict[str, Dict],
+        sentiment: Optional[Dict],
+        current_config: Dict[str, Any],
+        account_summary: Optional[Dict] = None,
+    ) -> Dict[str, Any]:
+        """Generate strategy preset recommendation without saving or executing."""
+        # Build context using the same context builder
+        trigger_reason = "manual_strategy_suggestion"
+        context = await self.context_builder.build(
+            symbols=symbols,
+            positions=positions,
+            market_data=market_data,
+            sentiment=sentiment,
+            trigger_reason=trigger_reason,
+            current_config=current_config,
+            account_summary=account_summary,
+            strategy_preset_info=current_config.get("_strategy_preset_info"),
+            market_classifications=current_config.get("_market_classifications"),
+        )
+
+        # Build presets description for system prompt (include custom presets from DB)
+        presets_desc_lines = []
+        all_presets_info = current_config.get("_strategy_preset_info", {})
+        all_presets_list = all_presets_info.get("all_presets", []) if all_presets_info else []
+
+        if all_presets_list:
+            # Use presets from DB (includes both system and custom presets)
+            for p in all_presets_list:
+                presets_desc_lines.append(
+                    f"- **{p['name']}** ({p.get('display_name', p['name'])}): "
+                    f"{p.get('description', '')} | "
+                    f"category: {p.get('category', '')}, risk: {p.get('risk_level', '')}"
+                )
+        else:
+            # Fallback to hardcoded system presets
+            for p in SYSTEM_PRESETS:
+                presets_desc_lines.append(
+                    f"- **{p.name}** ({p.display_name}): {p.description} | "
+                    f"category: {p.category}, risk: {p.risk_level}, "
+                    f"strategies: {p.config.enabled_strategies}, "
+                    f"AI/Quant: {p.config.ai_weight}/{p.config.quant_weight}, "
+                    f"timeframes: {p.config.timeframes}"
+                )
+        presets_description = "\n".join(presets_desc_lines)
+
+        system_prompt = STRATEGY_SUGGEST_SYSTEM.format(presets_description=presets_description)
+
+        # Extract context sections from the built context for the user prompt
+        # The context builder returns a formatted string; we use it directly
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": context},
+        ]
+
+        try:
+            raw_result = await self.llm.chat(
+                messages=messages,
+                schema=STRATEGY_SUGGEST_SCHEMA,
+                max_tokens=1000,
+                temperature=0.3,
+                usage_type="advisory",
+            )
+            logger.info(f"Strategy suggestion result: {raw_result}")
+
+            recommended = raw_result.get("recommended_preset", "")
+            # Validate against all known presets (system + custom from DB)
+            valid_names = [p["name"] for p in all_presets_list] if all_presets_list else [p.name for p in SYSTEM_PRESETS]
+            if recommended not in valid_names:
+                logger.warning(f"LLM recommended unknown preset: {recommended}, falling back")
+                recommended = valid_names[0] if valid_names else ""
+
+            # Look up display name from DB presets first, then system presets
+            display_name = recommended
+            if all_presets_list:
+                match = next((p for p in all_presets_list if p["name"] == recommended), None)
+                if match:
+                    display_name = match.get("display_name", recommended)
+            else:
+                preset = next((p for p in SYSTEM_PRESETS if p.name == recommended), None)
+                if preset:
+                    display_name = preset.display_name
+
+            return {
+                "recommended_preset": recommended,
+                "recommended_display_name": display_name,
+                "reason": raw_result.get("reason", ""),
+                "market_state": raw_result.get("market_state", ""),
+                "current_strategy_analysis": raw_result.get("current_strategy_analysis", ""),
+                "current_strategy_score": raw_result.get("current_strategy_score", 0),
+            }
+        except Exception as e:
+            logger.error(f"Failed to generate strategy suggestion: {type(e).__name__}: {e}")
+            raise
 
     @property
     def last_result(self) -> Optional[AdvisoryResult]:
