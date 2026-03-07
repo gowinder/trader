@@ -5,7 +5,7 @@ from typing import Optional
 from datetime import datetime, timezone
 
 from .database import DatabaseManager
-from ..strategies.presets import SYSTEM_PRESETS, DEFAULT_PRESET_NAME
+from ..strategies.presets import SYSTEM_PRESETS, DEFAULT_PRESET_NAME, get_all_system_defaults
 from ..utils.logger import logger
 
 
@@ -37,18 +37,37 @@ class StrategyPresetService:
                 )
                 logger.info(f"Initialized system preset: {preset.name}")
             else:
-                await self.db.execute(
-                    """UPDATE strategy_presets
-                    SET display_name=$2, description=$3, category=$4, risk_level=$5,
-                        config_json=$6, updated_at=NOW()
-                    WHERE name=$1 AND is_system=TRUE""",
+                # Skip config update if user has modified this preset
+                is_modified = await self.db.fetchval(
+                    "SELECT is_modified FROM strategy_presets WHERE name = $1",
                     preset.name,
-                    preset.display_name,
-                    preset.description,
-                    preset.category,
-                    preset.risk_level,
-                    json.dumps(preset.config.model_dump()),
                 )
+                if is_modified:
+                    # Only update metadata, keep user's config
+                    await self.db.execute(
+                        """UPDATE strategy_presets
+                        SET display_name=$2, description=$3, category=$4, risk_level=$5,
+                            updated_at=NOW()
+                        WHERE name=$1 AND is_system=TRUE""",
+                        preset.name,
+                        preset.display_name,
+                        preset.description,
+                        preset.category,
+                        preset.risk_level,
+                    )
+                else:
+                    await self.db.execute(
+                        """UPDATE strategy_presets
+                        SET display_name=$2, description=$3, category=$4, risk_level=$5,
+                            config_json=$6, updated_at=NOW()
+                        WHERE name=$1 AND is_system=TRUE""",
+                        preset.name,
+                        preset.display_name,
+                        preset.description,
+                        preset.category,
+                        preset.risk_level,
+                        json.dumps(preset.config.model_dump()),
+                    )
 
     async def get_all_presets(self) -> list[dict]:
         """获取所有预设模板"""
@@ -163,6 +182,115 @@ class StrategyPresetService:
             "total_pnl": round(total_pnl, 2),
             "win_rate": round(win_rate, 1),
         }
+
+    async def update_preset_config(self, preset_id: int, config: dict) -> bool:
+        """Update a preset's config. Marks system presets as modified."""
+        preset = await self.get_preset_by_id(preset_id)
+        if not preset:
+            return False
+
+        if preset["is_system"]:
+            await self.db.execute(
+                """UPDATE strategy_presets
+                SET config_json=$2, is_modified=TRUE, updated_at=NOW()
+                WHERE id=$1""",
+                preset_id,
+                json.dumps(config),
+            )
+        else:
+            await self.db.execute(
+                """UPDATE strategy_presets
+                SET config_json=$2, updated_at=NOW()
+                WHERE id=$1""",
+                preset_id,
+                json.dumps(config),
+            )
+        logger.info(f"Updated preset config: id={preset_id}")
+        return True
+
+    async def save_as_new_preset(
+        self,
+        source_preset_id: int,
+        config: dict,
+        name: str,
+        display_name: str,
+        description: str,
+        category: str,
+        risk_level: str,
+    ) -> Optional[int]:
+        """Create a new custom preset based on a source preset."""
+        new_id = await self.db.fetchval(
+            """INSERT INTO strategy_presets
+            (name, display_name, description, category, risk_level,
+             config_json, is_system, source_preset_id)
+            VALUES ($1, $2, $3, $4, $5, $6, FALSE, $7)
+            RETURNING id""",
+            name,
+            display_name,
+            description,
+            category,
+            risk_level,
+            json.dumps(config),
+            source_preset_id,
+        )
+        logger.info(f"Created custom preset: {name} (id={new_id})")
+        return new_id
+
+    async def reset_preset(self, preset_id: int) -> bool:
+        """Reset a modified system preset to its default config."""
+        preset = await self.get_preset_by_id(preset_id)
+        if not preset or not preset["is_system"] or not preset.get("is_modified"):
+            return False
+
+        defaults = get_all_system_defaults()
+        default_config = defaults.get(preset["name"])
+        if not default_config:
+            return False
+
+        await self.db.execute(
+            """UPDATE strategy_presets
+            SET config_json=$2, is_modified=FALSE, updated_at=NOW()
+            WHERE id=$1""",
+            preset_id,
+            json.dumps(default_config),
+        )
+        logger.info(f"Reset preset to default: {preset['name']}")
+        return True
+
+    async def delete_preset(self, preset_id: int) -> bool:
+        """Delete a custom (non-system) preset."""
+        preset = await self.get_preset_by_id(preset_id)
+        if not preset or preset["is_system"]:
+            return False
+
+        # Check if currently active
+        active = await self.get_active_preset()
+        if active and active["id"] == preset_id:
+            return False
+
+        # Clear source_preset_id references from child presets
+        await self.db.execute(
+            "UPDATE strategy_presets SET source_preset_id=NULL WHERE source_preset_id=$1",
+            preset_id,
+        )
+
+        await self.db.execute(
+            "DELETE FROM strategy_presets WHERE id=$1 AND is_system=FALSE",
+            preset_id,
+        )
+        logger.info(f"Deleted custom preset: {preset['name']} (id={preset_id})")
+        return True
+
+    def get_system_defaults(self) -> dict[str, dict]:
+        """Return all system preset default configs."""
+        return get_all_system_defaults()
+
+    async def check_name_exists(self, name: str) -> bool:
+        """Check if a preset name already exists."""
+        existing = await self.db.fetchval(
+            "SELECT id FROM strategy_presets WHERE name = $1", name
+        )
+        return existing is not None
 
     async def ensure_default_active(self):
         """确保有活跃策略，没有则激活默认"""

@@ -1,0 +1,2 @@
+ALTER TABLE strategy_presets ADD COLUMN IF NOT EXISTS source_preset_id INTEGER REFERENCES strategy_presets(id) ON DELETE SET NULL;
+ALTER TABLE strategy_presets ADD COLUMN IF NOT EXISTS is_modified BOOLEAN DEFAULT FALSE NOT NULL;
