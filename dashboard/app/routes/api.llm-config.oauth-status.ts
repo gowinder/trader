@@ -6,9 +6,42 @@ import { readFile } from "fs/promises";
 import { homedir } from "os";
 import { join } from "path";
 
-const OAUTH_TOKEN_PATHS: Record<string, string> = {
-  qwen: ".qwen/oauth_creds.json",
-  "qwen-code": ".qwen/oauth_creds.json",
+interface OAuthTokenConfig {
+  path: string;
+  extractToken: (data: Record<string, unknown>) => string;
+  extractExpiry: (data: Record<string, unknown>) => number | null;
+  loginHint: string;
+}
+
+const OAUTH_TOKEN_CONFIGS: Record<string, OAuthTokenConfig> = {
+  "qwen-code": {
+    path: ".qwen/oauth_creds.json",
+    extractToken: (data) => (data.access_token as string) || "",
+    extractExpiry: (data) => (data.expiry_date as number) || null,
+    loginHint: "请点击「授权登录」完成 OAuth 认证",
+  },
+  codex: {
+    path: ".codex/auth.json",
+    extractToken: (data) => {
+      const tokens = data.tokens as Record<string, string> | undefined;
+      return tokens?.access_token || "";
+    },
+    extractExpiry: (data) => {
+      // Parse JWT exp claim from access_token
+      const tokens = data.tokens as Record<string, string> | undefined;
+      const accessToken = tokens?.access_token || "";
+      if (!accessToken) return null;
+      try {
+        const parts = accessToken.split(".");
+        if (parts.length < 2) return null;
+        const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString());
+        return payload.exp ? payload.exp * 1000 : null; // convert to ms
+      } catch {
+        return null;
+      }
+    },
+    loginHint: "请点击「授权登录」完成 OAuth 认证",
+  },
 };
 
 export async function action({ request }: ActionFunctionArgs) {
@@ -25,19 +58,19 @@ export async function action({ request }: ActionFunctionArgs) {
       return Response.json({ error: "Provider 不存在" }, { status: 404 });
     }
 
-    const tokenRelPath = OAUTH_TOKEN_PATHS[provider.name];
-    if (!tokenRelPath) {
+    const tokenConfig = OAUTH_TOKEN_CONFIGS[provider.name];
+    if (!tokenConfig) {
       return Response.json({ hasToken: false, message: "该 Provider 不支持 OAuth" });
     }
 
-    const tokenPath = join(homedir(), tokenRelPath);
+    const tokenPath = join(homedir(), tokenConfig.path);
 
     try {
       const raw = await readFile(tokenPath, "utf-8");
       const data = JSON.parse(raw);
 
-      const accessToken = data.access_token || "";
-      const expiryMs = data.expiry_date;
+      const accessToken = tokenConfig.extractToken(data);
+      const expiryMs = tokenConfig.extractExpiry(data);
       const hasToken = !!accessToken;
 
       let expired = false;
@@ -66,7 +99,7 @@ export async function action({ request }: ActionFunctionArgs) {
         expired: true,
         expiresAt: null,
         tokenPath,
-        message: `Token 文件不存在: ${tokenPath}，请先运行 qwen auth login`,
+        message: `Token 文件不存在: ${tokenPath}，${tokenConfig.loginHint}`,
       });
     }
   } catch (e: unknown) {

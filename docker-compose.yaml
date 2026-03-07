@@ -28,7 +28,7 @@ services:
       - ./data:/app/data
       - ./logs:/app/logs
       - oauth-tokens:/root/.qwen
-      - ~/.codex:/root/.codex:ro
+      - ~/.codex:/root/.codex
     networks:
       - trader-network
     depends_on:
