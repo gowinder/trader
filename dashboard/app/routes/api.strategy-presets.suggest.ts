@@ -1,5 +1,6 @@
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { createClient } from "redis";
+import { randomBytes } from "crypto";
 
 async function getRedisClient() {
   const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
@@ -16,7 +17,7 @@ export async function action({ request }: ActionFunctionArgs) {
 
   try {
     const client = await getRedisClient();
-    const taskId = `strategy-suggest-${Date.now()}`;
+    const taskId = `strategy-suggest-${Date.now()}-${randomBytes(4).toString("hex")}`;
 
     // Check if trader consumer is actually online (heartbeat flag with TTL)
     const consumerAlive = await client.get("strategy:suggest:consumer_alive");
