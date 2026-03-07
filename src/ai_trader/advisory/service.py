@@ -39,7 +39,8 @@ class AdvisoryService:
         consecutive_losses: int = 0,
         price_context: Optional[Dict[str, Dict]] = None,
         account_summary: Optional[Dict] = None,
-    ):
+    ) -> Optional[str]:
+        """返回 advisory_id（字符串），无建议时返回 None"""
         triggered = []
 
         # 1. Scheduled
@@ -83,7 +84,7 @@ class AdvisoryService:
                 triggered.append((TriggerType.SENTIMENT_SHIFT, result))
 
         if not triggered:
-            return
+            return None
 
         trigger_type = triggered[0][0]
         trigger_detail = triggered[0][1]
@@ -100,7 +101,7 @@ class AdvisoryService:
         )
 
         if advisory_id is None:
-            return
+            return None
 
         # Send notification
         if self.notifier and self.notifier.enabled and self.engine.last_result:
@@ -110,6 +111,7 @@ class AdvisoryService:
                 logger.error(f"Failed to send notification: {e}")
 
         logger.info(f"Advisory check complete: {len(triggered)} trigger(s), advisory_id={advisory_id}")
+        return str(advisory_id)
 
     async def force_run(
         self,
@@ -119,8 +121,8 @@ class AdvisoryService:
         sentiment: Optional[Dict],
         current_config: Dict[str, Any],
         account_summary: Optional[Dict] = None,
-    ):
-        """手动触发 advisory 分析，绕过所有触发器检查"""
+    ) -> Optional[str]:
+        """手动触发 advisory 分析，绕过所有触发器检查。返回 advisory_id"""
         logger.info("Force running advisory analysis (manual trigger)")
         advisory_id = await self.engine.generate_advisory(
             trigger_type=TriggerType.SCHEDULED,
@@ -130,7 +132,7 @@ class AdvisoryService:
             current_config=current_config, account_summary=account_summary,
         )
         if advisory_id is None:
-            return
+            return None
 
         if self.notifier and self.notifier.enabled and self.engine.last_result:
             try:
@@ -139,6 +141,7 @@ class AdvisoryService:
                 logger.error(f"Failed to send notification: {e}")
 
         logger.info(f"Force advisory complete: advisory_id={advisory_id}")
+        return str(advisory_id)
 
     async def check_decision_conflict(self, suggestion: Dict, symbol: str) -> bool:
         """检查 advisory 建议是否与主循环最近决策冲突
