@@ -118,13 +118,19 @@ class HybridDecisionEngine(DecisionEngine):
             return
 
         try:
-            self.db_manager = DatabaseManager(config.dashboard_database_url)
-            await self.db_manager.connect()
-            self.persistence_service = DecisionPersistenceService(self.db_manager)
+            db_mgr = DatabaseManager(config.dashboard_database_url)
+            await db_mgr.connect()
+            self.persistence_service = DecisionPersistenceService(db_mgr)
+            self.db_manager = db_mgr
             self._persistence_initialized = True
             logger.info("Decision persistence service initialized")
         except Exception as e:
             logger.error(f"Failed to initialize persistence service: {e}")
+            if 'db_mgr' in locals() and db_mgr:
+                try:
+                    await db_mgr.close()
+                except Exception:
+                    pass
             self.db_manager = None
             self.persistence_service = None
 
@@ -494,6 +500,11 @@ class HybridDecisionEngine(DecisionEngine):
             decision._llm_raw_output = raw_output
         decision.action = action
         decision.confidence = final_confidence * 100.0  # Convert back to 0-100 for TradingDecision model
+
+        # Clamp leverage when hybrid fusion changes action to open/add
+        # (base_decision may have unclamped leverage=1 if AI said "hold")
+        if action in ["open_long", "open_short", "add_long", "add_short"]:
+            decision.leverage = max(config.leverage_min, min(config.leverage_max, decision.leverage))
 
         # Fill missing price fields when hybrid fusion results in open/add action
         if action in ["open_long", "open_short", "add_long", "add_short"]:

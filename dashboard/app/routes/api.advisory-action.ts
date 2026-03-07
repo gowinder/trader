@@ -29,7 +29,6 @@ export async function action({ request }: ActionFunctionArgs) {
         WHERE advisory_id = ${advisoryId} AND status = 'pending'
         RETURNING id
       `;
-      await sql.end();
       return Response.json({ success: true, count: updated.length });
     }
 
@@ -86,13 +85,11 @@ export async function action({ request }: ActionFunctionArgs) {
         `;
       }
 
-      await sql.end();
       return Response.json({ success: true, count: updated.length });
     }
 
     // ====== 单条操作 ======
     if (!suggestionId) {
-      await sql.end();
       return Response.json({ error: "Missing suggestionId for single action" }, { status: 400 });
     }
 
@@ -104,7 +101,6 @@ export async function action({ request }: ActionFunctionArgs) {
         RETURNING id
       `;
       if (acceptResult.length === 0) {
-        await sql.end();
         return Response.json({ error: "Suggestion not found or not in pending state" }, { status: 409 });
       }
     } else if (userAction === "reject") {
@@ -115,7 +111,6 @@ export async function action({ request }: ActionFunctionArgs) {
         RETURNING id
       `;
       if (rejectResult.length === 0) {
-        await sql.end();
         return Response.json({ error: "Suggestion not found or not in valid state" }, { status: 409 });
       }
     } else if (userAction === "cancel") {
@@ -127,11 +122,9 @@ export async function action({ request }: ActionFunctionArgs) {
         RETURNING id
       `;
       if (cancelResult.length === 0) {
-        await sql.end();
         return Response.json({ error: "Suggestion not found or not in accepted state" }, { status: 409 });
       }
     } else if (userAction !== "confirm") {
-      await sql.end();
       return Response.json({ error: `Unsupported action: ${userAction}` }, { status: 400 });
     } else {
       // 原子更新状态：仅 accepted → confirmed，防止重复执行
@@ -177,7 +170,6 @@ export async function action({ request }: ActionFunctionArgs) {
       SELECT advisory_id FROM advisory_suggestions WHERE id = ${suggestionId}
     `;
     if (suggestionRow.length === 0) {
-      await sql.end();
       return Response.json({ error: "Suggestion not found" }, { status: 404 });
     }
     const resolveAdvisoryId = suggestionRow[0].advisory_id;
@@ -194,11 +186,11 @@ export async function action({ request }: ActionFunctionArgs) {
       `;
     }
 
-    await sql.end();
     return Response.json({ success: true });
   } catch (error) {
-    await sql.end();
     const message = error instanceof Error ? error.message : "Unknown error";
     return Response.json({ error: message }, { status: 500 });
+  } finally {
+    await sql.end();
   }
 }
