@@ -463,6 +463,8 @@ export const strategyPresets = pgTable(
     riskLevel: varchar("risk_level", { length: 20 }).notNull(),
     configJson: jsonb("config_json").notNull(),
     isSystem: boolean("is_system").default(true).notNull(),
+    sourcePresetId: integer("source_preset_id"),
+    isModified: boolean("is_modified").default(false).notNull(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
   },

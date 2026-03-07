@@ -175,11 +175,16 @@ SYSTEM_PRESETS: list[StrategyPreset] = [
 
 
 def get_preset_by_name(name: str) -> StrategyPreset | None:
-    """按名称获取预设模板"""
+    """Get a system preset by name."""
     for preset in SYSTEM_PRESETS:
         if preset.name == name:
             return preset
     return None
+
+
+def get_all_system_defaults() -> dict[str, dict]:
+    """Return all system preset default configs keyed by name."""
+    return {p.name: p.config.model_dump() for p in SYSTEM_PRESETS}
 
 
 DEFAULT_PRESET_NAME = "steady_trend"

@@ -171,7 +171,8 @@ export async function loader() {
 
     // 获取所有预设
     const presets = await sql`
-      SELECT id, name, display_name, description, category, risk_level, config_json, is_system
+      SELECT id, name, display_name, description, category, risk_level, config_json,
+             is_system, COALESCE(is_modified, false) as is_modified, source_preset_id
       FROM strategy_presets
       ORDER BY id
     `;
@@ -237,6 +238,8 @@ export async function loader() {
           riskLevel: p.risk_level,
           configJson: typeof p.config_json === "string" ? JSON.parse(p.config_json) : p.config_json,
           isSystem: p.is_system,
+          isModified: p.is_modified === true,
+          sourcePresetId: p.source_preset_id ? Number(p.source_preset_id) : null,
           stats: {
             totalTrades,
             totalPnl: Math.round(totalPnl * 100) / 100,
