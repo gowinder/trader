@@ -51,7 +51,7 @@ class TokenManager:
     # CLI 刷新命令
     CLI_REFRESH_COMMANDS = {
         "gemini": ["gemini", "auth", "login"],
-        "codex": ["codex", "auth"],
+        "codex": ["codex", "login"],
         "qwen": ["qwen", "auth", "login"],
     }
 

@@ -38,7 +38,7 @@ const OAUTH_CONFIGS: Record<string, OAuthProviderConfig> = {
     }),
   },
   // 注意: Codex 使用 Authorization Code + 本地回调服务器流程，不支持 Device Flow
-  // 用户需在宿主机运行 `codex auth` 完成授权，token 通过卷挂载共享到容器
+  // 用户需在宿主机运行 `codex login` 完成授权，token 通过卷挂载共享到容器
 };
 
 // 进行中的授权会话（内存存储）
@@ -84,7 +84,7 @@ export async function action({ request }: ActionFunctionArgs) {
     if (!oauthConfig) {
       if (provider.name === "codex") {
         return Response.json({
-          error: "Codex 不支持 Dashboard 授权，请在宿主机运行 `codex auth` 完成授权",
+          error: "Codex 不支持 Dashboard 授权，请在宿主机运行 `codex login` 完成授权",
         }, { status: 400 });
       }
       return Response.json({ error: `Provider '${provider.name}' 无 OAuth 配置` }, { status: 400 });
