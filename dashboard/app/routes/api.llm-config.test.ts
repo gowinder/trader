@@ -9,6 +9,7 @@ import { join } from "path";
 
 const OAUTH_TOKEN_PATHS: Record<string, string> = {
   "qwen-code": ".qwen/oauth_creds.json",
+  codex: ".codex/auth.json",
 };
 
 export async function action({ request }: ActionFunctionArgs) {
@@ -45,16 +46,31 @@ export async function action({ request }: ActionFunctionArgs) {
         const tokenPath = join(homedir(), tokenRelPath);
         const raw = await readFile(tokenPath, "utf-8");
         const tokenData = JSON.parse(raw);
-        oauthToken = tokenData.access_token || "";
+        // Codex: tokens.access_token; Qwen: access_token
+        if (provider.name === "codex") {
+          oauthToken = tokenData?.tokens?.access_token || "";
+        } else {
+          oauthToken = tokenData.access_token || "";
+        }
         if (!oauthToken) {
           return Response.json({ success: false, latency: 0, message: "Token 文件中 access_token 为空" });
         }
-        const expiryMs = tokenData.expiry_date;
+        // Check token expiry: Qwen uses expiry_date field, Codex uses JWT exp claim
+        let expiryMs: number | null = tokenData.expiry_date || null;
+        if (!expiryMs && provider.name === "codex") {
+          try {
+            const parts = oauthToken.split(".");
+            if (parts.length >= 2) {
+              const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString());
+              if (payload.exp) expiryMs = payload.exp * 1000;
+            }
+          } catch { /* ignore JWT parse errors */ }
+        }
         if (expiryMs && Date.now() >= expiryMs) {
-          return Response.json({ success: false, latency: 0, message: "Token 已过期，请先运行 qwen auth login 重新登录" });
+          return Response.json({ success: false, latency: 0, message: "Token 已过期，请重新授权登录" });
         }
       } catch {
-        return Response.json({ success: false, latency: 0, message: "Token 文件不存在，请先运行 qwen auth login" });
+        return Response.json({ success: false, latency: 0, message: "Token 文件不存在，请先点击「授权登录」" });
       }
 
       const baseUrl = (provider.baseUrl || "https://portal.qwen.ai/v1").replace(/\/+$/, "");
