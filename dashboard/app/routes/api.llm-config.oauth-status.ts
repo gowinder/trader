@@ -43,7 +43,7 @@ const OAUTH_TOKEN_CONFIGS: Record<string, OAuthTokenConfig> = {
         return null;
       }
     },
-    loginHint: "请在宿主机运行 `codex auth` 完成授权",
+    loginHint: "请在宿主机运行 `codex login` 完成授权",
   },
 };
 

@@ -761,14 +761,26 @@ export default function SettingsPage() {
                           </div>
                         ) : (
                           <div className="rounded-md px-3 py-2 text-sm bg-secondary text-muted-foreground">
-                            点击「检查状态」查看 Token，或点击下方「授权登录」完成 OAuth。
+                            点击「检查状态」查看 Token 情况。
                           </div>
                         )}
                       </div>
 
-                      {/* 授权操作 */}
+                      {/* 授权操作 — 仅 Device Flow 支持的 provider 显示授权按钮 */}
                       <div>
                         {(() => {
+                          // 支持 Dashboard 内 Device Flow 授权的 provider
+                          const DEVICE_FLOW_PROVIDERS = ["qwen-code"];
+                          const supportsDeviceFlow = DEVICE_FLOW_PROVIDERS.includes(p.name);
+
+                          if (!supportsDeviceFlow) {
+                            return (
+                              <div className="rounded-md px-3 py-2 text-sm bg-secondary text-muted-foreground">
+                                该 Provider 需在宿主机通过 CLI 完成授权（如 <code className="bg-background px-1 rounded">codex login</code>），Token 通过卷挂载共享。
+                              </div>
+                            );
+                          }
+
                           const authState = oauthAuthState[p.id];
                           const phase = authState?.phase || "idle";
 
