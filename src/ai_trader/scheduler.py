@@ -323,6 +323,7 @@ class Scheduler:
             # 启动手动触发监听
             if self._redis:
                 self._advisory_tasks.append(asyncio.create_task(self._advisory_manual_trigger_listener()))
+                self._advisory_tasks.append(asyncio.create_task(self._strategy_suggest_listener()))
             logger.info("Advisory system initialized")
         except Exception as e:
             logger.error(f"Failed to initialize advisory system: {e}")
@@ -1651,6 +1652,181 @@ class Scheduler:
         except Exception as e:
             logger.error(f"Advisory manual trigger listener error: {e}")
 
+    async def _strategy_suggest_listener(self):
+        """Listen for strategy suggestion requests via Redis pub/sub"""
+        if not self._redis or not self._advisory_service:
+            return
+        try:
+            pubsub = self._redis.pubsub()
+            await pubsub.subscribe("strategy:suggest_request")
+            logger.info("Strategy suggest listener started")
+            async for message in pubsub.listen():
+                if message["type"] == "message":
+                    try:
+                        data = json.loads(message["data"])
+                        task_id = data.get("task_id", "")
+                        if task_id:
+                            asyncio.create_task(self._run_strategy_suggest(task_id))
+                    except Exception as e:
+                        logger.error(f"Strategy suggest listener error: {e}")
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"Strategy suggest listener error: {e}")
+
+    async def _collect_advisory_data(self) -> dict:
+        """Collect market data, positions, config, and account info for advisory/suggestion use."""
+        symbols = config.symbols_list
+        positions = []
+        market_data = {}
+        price_context = {}
+        is_testnet = config.trading_mode == "testnet"
+
+        for symbol in symbols:
+            try:
+                ticker = await self.exchange.get_ticker(symbol)
+                current_price = ticker.last_price if ticker else 0
+                market_data[symbol] = {
+                    "current_price": current_price,
+                    "change_24h": ticker.change_24h if ticker else 0,
+                }
+                previous = self._price_history.get(symbol)
+                if previous:
+                    price_context[symbol] = {"current": current_price, "previous": previous}
+
+                pos = (
+                    await self._load_testnet_virtual_position(symbol, current_price)
+                    if is_testnet
+                    else await self.position_mgr.get_position(symbol)
+                )
+                if pos and pos.size > 0:
+                    positions.append({
+                        "symbol": pos.symbol, "side": pos.side,
+                        "size": pos.size, "entry_price": pos.entry_price,
+                        "unrealized_pnl": pos.unrealized_pnl,
+                        "roi": pos.roi, "leverage": pos.leverage,
+                    })
+            except Exception as e:
+                logger.debug(f"Advisory data collection error for {symbol}: {e}")
+
+        current_config = {
+            "stop_loss_percent": config.stop_loss_percent,
+            "take_profit_percent": config.take_profit_percent,
+            "leverage_max": config.leverage_max,
+            "quant_weight": config.quant_weight,
+            "ai_weight": config.ai_weight,
+        }
+
+        # Inject strategy preset info
+        if self._strategy_preset_service:
+            try:
+                active_preset = await self._strategy_preset_service.get_active_preset()
+                all_presets = await self._strategy_preset_service.get_all_presets()
+                current_config["_strategy_preset_info"] = {
+                    "active_preset": {
+                        "name": active_preset["name"],
+                        "display_name": active_preset["display_name"],
+                        "description": active_preset.get("description", ""),
+                        "risk_level": active_preset.get("risk_level", ""),
+                    } if active_preset else None,
+                    "all_presets": [
+                        {
+                            "name": p["name"],
+                            "display_name": p["display_name"],
+                            "description": p.get("description", ""),
+                            "risk_level": p.get("risk_level", ""),
+                            "category": p.get("category", ""),
+                        }
+                        for p in all_presets
+                    ],
+                }
+            except Exception as e:
+                logger.debug(f"Failed to collect strategy preset info: {e}")
+
+        # Inject market classifications
+        try:
+            from .strategies.market_classifier import MarketClassifier
+            classifier = MarketClassifier()
+            market_classifications = {}
+            for symbol in symbols:
+                try:
+                    klines = await self.exchange.get_klines(symbol, interval="1h", limit=100)
+                    if klines:
+                        import pandas as pd
+                        df = pd.DataFrame([k.model_dump() for k in klines])
+                        cls_result = classifier.classify(df)
+                        market_classifications[symbol] = {
+                            "state": cls_result.state.value,
+                            "confidence": cls_result.confidence,
+                            "adx_value": cls_result.adx_value,
+                            "volatility": cls_result.volatility,
+                            "trend_direction": cls_result.trend_direction,
+                        }
+                except Exception as e:
+                    logger.debug(f"Failed to classify market for {symbol}: {e}")
+            if market_classifications:
+                current_config["_market_classifications"] = market_classifications
+        except Exception as e:
+            logger.debug(f"Failed to collect market classifications: {e}")
+
+        # Account summary
+        account_summary = None
+        try:
+            if is_testnet:
+                total_margin = sum(
+                    (p.get("entry_price", 0) * p.get("size", 0)) / (p.get("leverage", 1) or 1)
+                    for p in positions
+                )
+                total_upnl = sum(p.get("unrealized_pnl", 0) or 0 for p in positions)
+                base_equity = 10000.0
+                account_summary = {
+                    "total_equity": base_equity + total_upnl,
+                    "available_balance": max(base_equity + total_upnl - total_margin, 0),
+                    "margin_used": total_margin,
+                }
+            else:
+                account = await self.exchange.get_account()
+                if account:
+                    account_summary = {
+                        "total_equity": account.total_equity,
+                        "available_balance": account.available_balance,
+                        "margin_used": getattr(account, 'margin_used', None),
+                    }
+        except Exception:
+            pass
+
+        return {
+            "symbols": symbols,
+            "positions": positions,
+            "market_data": market_data,
+            "price_context": price_context,
+            "current_config": current_config,
+            "account_summary": account_summary,
+        }
+
+    async def _run_strategy_suggest(self, task_id: str):
+        """Run strategy suggestion and store result in Redis"""
+        if not self._redis or not self._advisory_service:
+            return
+        result_key = f"strategy:suggest:result:{task_id}"
+        try:
+            ctx = await self._collect_advisory_data()
+            result = await self._advisory_service.engine.suggest_strategy(
+                symbols=ctx["symbols"],
+                positions=ctx["positions"],
+                market_data=ctx["market_data"],
+                sentiment=None,
+                current_config=ctx["current_config"],
+                account_summary=ctx["account_summary"],
+            )
+            result["status"] = "completed"
+            await self._redis.set(result_key, json.dumps(result, ensure_ascii=False), ex=300)
+            logger.info(f"Strategy suggestion completed: task_id={task_id}, preset={result.get('recommended_preset')}")
+        except Exception as e:
+            logger.error(f"Strategy suggestion failed: {e}")
+            error_result = {"status": "error", "error": str(e)}
+            await self._redis.set(result_key, json.dumps(error_result, ensure_ascii=False), ex=300)
+
     async def _update_strategy_weights(self):
         """定期更新策略权重（基于历史表现）"""
         if not self._weight_optimizer or not self.decision_engine.strategy_selector:
@@ -1671,130 +1847,18 @@ class Scheduler:
         if not self._advisory_service:
             return
         try:
-            symbols = config.symbols_list
-            positions = []
-            market_data = {}
-            price_context = {}
+            ctx = await self._collect_advisory_data()
+            symbols = ctx["symbols"]
+            positions = ctx["positions"]
+            market_data = ctx["market_data"]
+            price_context = ctx["price_context"]
+            current_config = ctx["current_config"]
+            account_summary = ctx["account_summary"]
 
-            is_testnet = config.trading_mode == "testnet"
-
+            # Update price history for volatility trigger
             for symbol in symbols:
-                try:
-                    ticker = await self.exchange.get_ticker(symbol)
-                    current_price = ticker.last_price if ticker else 0
-                    market_data[symbol] = {
-                        "current_price": current_price,
-                        "change_24h": ticker.change_24h if ticker else 0,
-                    }
-                    previous = self._price_history.get(symbol)
-                    if previous:
-                        price_context[symbol] = {"current": current_price, "previous": previous}
-                    self._price_history[symbol] = current_price
-
-                    # testnet 用虚拟仓位，live 用交易所仓位
-                    if is_testnet:
-                        pos = await self._load_testnet_virtual_position(symbol, current_price)
-                    else:
-                        pos = await self.position_mgr.get_position(symbol)
-                    if pos and pos.size > 0:
-                        positions.append({
-                            "symbol": pos.symbol, "side": pos.side,
-                            "size": pos.size, "entry_price": pos.entry_price,
-                            "unrealized_pnl": pos.unrealized_pnl,
-                            "roi": pos.roi, "leverage": pos.leverage,
-                        })
-                except Exception as e:
-                    logger.debug(f"Advisory data collection error for {symbol}: {e}")
-
-            current_config = {
-                "stop_loss_percent": config.stop_loss_percent,
-                "take_profit_percent": config.take_profit_percent,
-                "leverage_max": config.leverage_max,
-                "quant_weight": config.quant_weight,
-                "ai_weight": config.ai_weight,
-            }
-
-            # 注入策略预设信息
-            if self._strategy_preset_service:
-                try:
-                    active_preset = await self._strategy_preset_service.get_active_preset()
-                    all_presets = await self._strategy_preset_service.get_all_presets()
-                    current_config["_strategy_preset_info"] = {
-                        "active_preset": {
-                            "name": active_preset["name"],
-                            "display_name": active_preset["display_name"],
-                            "description": active_preset.get("description", ""),
-                            "risk_level": active_preset.get("risk_level", ""),
-                        } if active_preset else None,
-                        "all_presets": [
-                            {
-                                "name": p["name"],
-                                "display_name": p["display_name"],
-                                "description": p.get("description", ""),
-                                "risk_level": p.get("risk_level", ""),
-                                "category": p.get("category", ""),
-                            }
-                            for p in all_presets
-                        ],
-                    }
-                except Exception as e:
-                    logger.debug(f"Failed to collect strategy preset info for advisory: {e}")
-
-            # 注入市场分类信息
-            try:
-                from .strategies.market_classifier import MarketClassifier
-                classifier = MarketClassifier()
-                market_classifications = {}
-                for symbol in symbols:
-                    try:
-                        klines = await self.exchange.get_klines(symbol, interval="1h", limit=100)
-                        if klines:
-                            import pandas as pd
-                            df = pd.DataFrame([k.model_dump() for k in klines])
-                            cls_result = classifier.classify(df)
-                            market_classifications[symbol] = {
-                                "state": cls_result.state.value,
-                                "confidence": cls_result.confidence,
-                                "adx_value": cls_result.adx_value,
-                                "volatility": cls_result.volatility,
-                                "trend_direction": cls_result.trend_direction,
-                            }
-                    except Exception as e:
-                        logger.debug(f"Failed to classify market for {symbol}: {e}")
-                if market_classifications:
-                    current_config["_market_classifications"] = market_classifications
-            except Exception as e:
-                logger.debug(f"Failed to collect market classifications for advisory: {e}")
-
-            # 收集账户信息
-            account_summary = None
-            try:
-                if is_testnet:
-                    # testnet 构建虚拟账户（汇总所有 symbol 的仓位信息）
-                    total_margin = 0.0
-                    total_upnl = 0.0
-                    for p in positions:
-                        entry = p.get("entry_price", 0)
-                        size = p.get("size", 0)
-                        lev = p.get("leverage", 1) or 1
-                        total_margin += (entry * size) / lev
-                        total_upnl += p.get("unrealized_pnl", 0) or 0
-                    base_equity = 10000.0
-                    account_summary = {
-                        "total_equity": base_equity + total_upnl,
-                        "available_balance": max(base_equity + total_upnl - total_margin, 0),
-                        "margin_used": total_margin,
-                    }
-                else:
-                    account = await self.exchange.get_account()
-                    if account:
-                        account_summary = {
-                            "total_equity": account.total_equity,
-                            "available_balance": account.available_balance,
-                            "margin_used": getattr(account, 'margin_used', None),
-                        }
-            except Exception:
-                pass
+                if symbol in market_data:
+                    self._price_history[symbol] = market_data[symbol].get("current_price", 0)
 
             if force:
                 advisory_id = await self._advisory_service.force_run(
@@ -2093,6 +2157,9 @@ class Scheduler:
             f"Account data: equity={equity}, balance={balance}, "
             f"margin_used={account.margin_used}, unrealized_pnl={account.unrealized_pnl}"
         )
+
+        # 尽早发布账户状态到 Redis，确保 Dashboard 能显示权益（即使后续流程 return）
+        await self._publish_account_state(symbol, account, position, market_data.current_price)
 
         if balance <= 0 or equity <= 0:
             logger.warning(
