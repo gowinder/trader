@@ -307,14 +307,18 @@ class Scheduler:
                 notifier=notifier, persistence=persistence,
                 db=self.db_manager,
             )
-            # 读取自动执行配置
+            # 读取自动执行配置（Redis 优先，否则用 config 默认值并同步到 Redis）
             if self._redis:
                 try:
                     auto_exec = await self._redis.get("advisory:auto_execute")
                     if auto_exec is not None:
                         self._advisory_auto_execute = json.loads(auto_exec)
                         config.advisory_auto_execute = self._advisory_auto_execute
-                        logger.info(f"Advisory auto-execute: {self._advisory_auto_execute}")
+                    else:
+                        # 首次启动：将 config 默认值同步到 Redis，保持 Dashboard 一致
+                        self._advisory_auto_execute = config.advisory_auto_execute
+                        await self._redis.set("advisory:auto_execute", json.dumps(self._advisory_auto_execute))
+                    logger.info(f"Advisory auto-execute: {self._advisory_auto_execute}")
                 except Exception:
                     pass
             # 在 advisory_service 就绪后启动执行队列监听
@@ -1795,7 +1799,7 @@ class Scheduler:
                     for p in positions
                 )
                 total_upnl = sum(p.get("unrealized_pnl", 0) or 0 for p in positions)
-                base_equity = 10000.0
+                base_equity = config.testnet_initial_equity
                 account_summary = {
                     "total_equity": base_equity + total_upnl,
                     "available_balance": max(base_equity + total_upnl - total_margin, 0),
