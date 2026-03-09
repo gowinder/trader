@@ -262,6 +262,25 @@ class CCXTAdapter(BaseExchange):
             logger.error(f"CCXT cancel order failed: {e}")
             return False
 
+    async def get_available_symbols(self) -> List[str]:
+        """Get all available USDT perpetual contract symbols."""
+        try:
+            markets = await self._exchange.load_markets()
+            symbols = []
+            for symbol, market in markets.items():
+                if (
+                    market.get("swap", False)
+                    and market.get("active", True)
+                    and market.get("quote") == "USDT"
+                    and market.get("settle") == "USDT"
+                ):
+                    symbols.append(symbol)
+            symbols.sort()
+            return symbols
+        except ccxt.BaseError as e:
+            logger.error(f"CCXT get available symbols failed: {e}")
+            return []
+
     async def close(self):
         """Close connection and cleanup resources"""
         await self._exchange.close()
