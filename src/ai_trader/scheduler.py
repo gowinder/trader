@@ -1140,7 +1140,10 @@ class Scheduler:
         logger.info("Scheduler stopped")
 
     async def _publish_account_state(self, symbol: str, account, position, current_price: float):
-        """发布账户和持仓状态到 Redis（供 Dashboard 获取）"""
+        """发布账户和持仓状态到 Redis（供 Dashboard 获取）
+
+        使用增量合并：读取现有状态，更新当前 symbol 的持仓数据，保留其他 symbol 的数据。
+        """
         if not self._redis:
             return
 
@@ -1148,10 +1151,21 @@ class Scheduler:
             import datetime
             now = datetime.datetime.now(datetime.timezone.utc).isoformat()
 
-            # 构建持仓数据
-            position_data = None
+            # 读取现有状态，合并持仓数据（避免多 symbol 互相覆盖）
+            existing_positions = {}
+            existing_prices = {}
+            try:
+                existing_json = await self._redis.get("trading:account_state")
+                if existing_json:
+                    existing_state = json.loads(existing_json)
+                    existing_positions = existing_state.get("positions", {})
+                    existing_prices = existing_state.get("current_prices", {})
+            except Exception:
+                pass
+
+            # 构建当前 symbol 的持仓数据
             if position and position.size > 0:
-                position_data = {
+                existing_positions[symbol] = {
                     "symbol": position.symbol,
                     "side": position.side,
                     "size": position.size,
@@ -1163,6 +1177,11 @@ class Scheduler:
                     "unrealized_pnl": position.unrealized_pnl,
                     "roi": position.roi,
                 }
+            else:
+                # 无持仓时移除该 symbol
+                existing_positions.pop(symbol, None)
+
+            existing_prices[symbol] = current_price
 
             # 构建账户状态
             state = {
@@ -1173,11 +1192,11 @@ class Scheduler:
                     "margin_used": account.margin_used,
                     "unrealized_pnl": account.unrealized_pnl,
                 },
-                "positions": {symbol: position_data} if position_data else {},
-                "current_prices": {symbol: current_price},
+                "positions": existing_positions,
+                "current_prices": existing_prices,
             }
 
-            # 存储到 Redis（Hash 结构便于单独更新）
+            # 存储到 Redis
             await self._redis.set("trading:account_state", json.dumps(state))
             # 设置 5 分钟过期（如果 trader 停止，状态会自动过期）
             await self._redis.expire("trading:account_state", 300)

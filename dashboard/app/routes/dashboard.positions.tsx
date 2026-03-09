@@ -19,6 +19,7 @@ import {
 import { db } from "db";
 import { positionHistory, decisions as decisionsTable } from "db/schema";
 import { desc, eq, and, gte, lte, or, sql, inArray } from "drizzle-orm";
+import { createClient } from "redis";
 
 interface DecisionSummary {
   id: string;
@@ -146,17 +147,40 @@ export async function loader(_args: Route.LoaderArgs) {
     positionDecisionsMap[p.id] = matched;
   }
 
-  const serializePosition = (p: typeof allPositions[0]) => ({
-    ...p,
-    entryTime: p.entryTime.toISOString(),
-    exitTime: p.exitTime?.toISOString(),
-    entryPrice: Number(p.entryPrice),
-    exitPrice: p.exitPrice ? Number(p.exitPrice) : null,
-    entrySize: Number(p.entrySize),
-    leverage: p.leverage ? Number(p.leverage) : null,
-    realizedPnl: p.realizedPnl ? Number(p.realizedPnl) : null,
-    pnlPercent: p.pnlPercent ? Number(p.pnlPercent) : null,
-  });
+  // 从 Redis 获取实时持仓数据（标记价、未实现盈亏等）
+  let realtimePositions: Record<string, any> = {};
+  try {
+    const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
+    const redisClient = createClient({ url: redisUrl });
+    await redisClient.connect();
+    const stateJson = await redisClient.get("trading:account_state");
+    if (stateJson) {
+      const state = JSON.parse(stateJson);
+      realtimePositions = state.positions || {};
+    }
+    await redisClient.disconnect();
+  } catch {
+    // Redis 不可用时跳过
+  }
+
+  const serializePosition = (p: typeof allPositions[0]) => {
+    const rt = realtimePositions[p.symbol] || null;
+    return {
+      ...p,
+      entryTime: p.entryTime.toISOString(),
+      exitTime: p.exitTime?.toISOString(),
+      entryPrice: Number(p.entryPrice),
+      exitPrice: p.exitPrice ? Number(p.exitPrice) : null,
+      entrySize: Number(p.entrySize),
+      leverage: p.leverage ? Number(p.leverage) : null,
+      realizedPnl: p.realizedPnl ? Number(p.realizedPnl) : null,
+      pnlPercent: p.pnlPercent ? Number(p.pnlPercent) : null,
+      // 实时数据
+      markPrice: rt?.mark_price ?? null,
+      unrealizedPnl: rt?.unrealized_pnl ?? null,
+      roi: rt?.roi ?? null,
+    };
+  };
 
   return {
     openPositions: openPositions.map(serializePosition),
@@ -237,6 +261,9 @@ export default function PositionsPage({ loaderData }: Route.ComponentProps) {
                     <th className="pb-3 font-medium text-right">入场价</th>
                     <th className="pb-3 font-medium text-right">数量</th>
                     <th className="pb-3 font-medium text-right">杠杆</th>
+                    <th className="pb-3 font-medium text-right">标记价</th>
+                    <th className="pb-3 font-medium text-right">未实现盈亏</th>
+                    <th className="pb-3 font-medium text-right">收益率</th>
                     <th className="pb-3 font-medium text-right">入场时间</th>
                   </tr>
                 </thead>
@@ -329,7 +356,7 @@ function PositionRow({
   onToggle: () => void;
   columns: "open" | "closed";
 }) {
-  const colSpan = columns === "open" ? 7 : 8;
+  const colSpan = columns === "open" ? 10 : 8;
 
   return (
     <>
@@ -377,6 +404,35 @@ function PositionRow({
             </td>
             <td className="py-3 text-right tabular-nums">
               {position.leverage ? `${position.leverage}x` : "-"}
+            </td>
+            <td className="py-3 text-right tabular-nums">
+              {position.markPrice ? formatUSD(position.markPrice) : "-"}
+            </td>
+            <td
+              className={cn(
+                "py-3 text-right tabular-nums font-medium",
+                position.unrealizedPnl != null && position.unrealizedPnl > 0
+                  ? "text-profit"
+                  : position.unrealizedPnl != null && position.unrealizedPnl < 0
+                    ? "text-loss"
+                    : ""
+              )}
+            >
+              {position.unrealizedPnl != null
+                ? formatUSD(position.unrealizedPnl)
+                : "-"}
+            </td>
+            <td
+              className={cn(
+                "py-3 text-right tabular-nums",
+                position.roi != null && position.roi > 0
+                  ? "text-profit"
+                  : position.roi != null && position.roi < 0
+                    ? "text-loss"
+                    : ""
+              )}
+            >
+              {position.roi != null ? formatPercent(position.roi) : "-"}
             </td>
             <td className="py-3 text-right text-muted-foreground">
               {formatDateTime(position.entryTime)}
