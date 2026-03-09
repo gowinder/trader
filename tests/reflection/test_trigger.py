@@ -7,6 +7,10 @@ from unittest.mock import AsyncMock, MagicMock
 from ai_trader.reflection.trigger import ReflectionTrigger
 
 
+async def _slow_reflection(x):
+    await asyncio.sleep(0.1)
+
+
 class TestReflectionTrigger:
     @pytest.fixture
     def mock_collector(self):
@@ -80,7 +84,7 @@ class TestReflectionTrigger:
         mock_collector.get_recent = AsyncMock(return_value=[MagicMock()] * 10)
         # 让 engine 执行慢一点
         mock_engine.run_reflection = AsyncMock(
-            side_effect=lambda x: asyncio.sleep(0.1)
+            side_effect=_slow_reflection
         )
 
         # 第一次触发
@@ -102,7 +106,7 @@ class TestReflectionTrigger:
         mock_collector.get_count_since_last_reflection = AsyncMock(return_value=10)
         mock_collector.get_recent = AsyncMock(return_value=[MagicMock()] * 10)
         mock_engine.run_reflection = AsyncMock(
-            side_effect=lambda x: asyncio.sleep(0.1)
+            side_effect=_slow_reflection
         )
 
         await trigger.check_and_run()
