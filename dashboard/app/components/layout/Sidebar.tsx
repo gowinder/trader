@@ -19,6 +19,7 @@ import {
   SlidersVertical,
   MessageSquare,
   Zap,
+  Coins,
 } from "lucide-react";
 
 const navItems = [
@@ -32,6 +33,7 @@ const navItems = [
   { to: "/dashboard/backtest", icon: FlaskConical, label: "回测" },
   { to: "/dashboard/backtest-settings", icon: SlidersHorizontal, label: "回测设置" },
   { to: "/dashboard/strategy", icon: Layers, label: "策略" },
+  { to: "/dashboard/symbols", icon: Coins, label: "交易对" },
 ];
 
 const advisoryItems = [

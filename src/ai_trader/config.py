@@ -82,7 +82,7 @@ class TradingConfig(BaseSettings):
     # 交易对 (支持多个，逗号分隔)
     trading_symbol: str = Field(default="cmt_btcusdt")
     trading_symbols: str = Field(
-        default="",
+        default="BTC/USDT:USDT,ETH/USDT:USDT,SOL/USDT:USDT",
         validation_alias="TRADING_SYMBOLS",
         description="多交易对配置，逗号分隔，如 'BTC/USDT:USDT,ETH/USDT:USDT'"
     )
