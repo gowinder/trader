@@ -29,7 +29,7 @@ def test_config_defaults():
     config = TradingConfig(_env_file=None)
 
     assert config.weex_api_url == "https://api-contract.weex.com"
-    assert config.ai_model == "deepseek/deepseek-chat"
+    assert config.ai_model == "deepseek/deepseek-v3.2"
     assert config.stop_loss_percent == 5.0
 
 
