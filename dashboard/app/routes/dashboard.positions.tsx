@@ -148,7 +148,7 @@ export async function loader(_args: Route.LoaderArgs) {
   }
 
   // 从 Redis 获取实时持仓数据和当前价格
-  let realtimePositions: Record<string, { mark_price: number; unrealized_pnl: number; roi: number }> = {};
+  let realtimePositions: Record<string, any> = {};
   {
     const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
     const client = createClient({ url: redisUrl });
@@ -197,17 +197,24 @@ export async function loader(_args: Route.LoaderArgs) {
     }
   }
 
-  const serializePosition = (p: typeof allPositions[0]) => ({
-    ...p,
-    entryTime: p.entryTime.toISOString(),
-    exitTime: p.exitTime?.toISOString(),
-    entryPrice: Number(p.entryPrice),
-    exitPrice: p.exitPrice ? Number(p.exitPrice) : null,
-    entrySize: Number(p.entrySize),
-    leverage: p.leverage ? Number(p.leverage) : null,
-    realizedPnl: p.realizedPnl ? Number(p.realizedPnl) : null,
-    pnlPercent: p.pnlPercent ? Number(p.pnlPercent) : null,
-  });
+  const serializePosition = (p: typeof allPositions[0]) => {
+    const rt = realtimePositions[p.symbol] || null;
+    return {
+      ...p,
+      entryTime: p.entryTime.toISOString(),
+      exitTime: p.exitTime?.toISOString(),
+      entryPrice: Number(p.entryPrice),
+      exitPrice: p.exitPrice ? Number(p.exitPrice) : null,
+      entrySize: Number(p.entrySize),
+      leverage: p.leverage ? Number(p.leverage) : null,
+      realizedPnl: p.realizedPnl ? Number(p.realizedPnl) : null,
+      pnlPercent: p.pnlPercent ? Number(p.pnlPercent) : null,
+      // 实时数据
+      markPrice: rt?.mark_price ?? null,
+      unrealizedPnl: rt?.unrealized_pnl ?? null,
+      roi: rt?.roi ?? null,
+    };
+  };
 
   return {
     openPositions: openPositions.map(serializePosition),
@@ -438,31 +445,33 @@ function PositionRow({
               {position.leverage ? `${position.leverage}x` : "-"}
             </td>
             <td className="py-3 text-right tabular-nums">
-              {realtime ? formatUSD(realtime.mark_price) : "-"}
+              {position.markPrice ? formatUSD(position.markPrice) : "-"}
             </td>
             <td
               className={cn(
                 "py-3 text-right tabular-nums font-medium",
-                realtime && realtime.unrealized_pnl > 0
+                position.unrealizedPnl != null && position.unrealizedPnl > 0
                   ? "text-profit"
-                  : realtime && realtime.unrealized_pnl < 0
+                  : position.unrealizedPnl != null && position.unrealizedPnl < 0
                     ? "text-loss"
                     : ""
               )}
             >
-              {realtime ? formatUSD(realtime.unrealized_pnl) : "-"}
+              {position.unrealizedPnl != null
+                ? formatUSD(position.unrealizedPnl)
+                : "-"}
             </td>
             <td
               className={cn(
                 "py-3 text-right tabular-nums",
-                realtime && realtime.roi > 0
+                position.roi != null && position.roi > 0
                   ? "text-profit"
-                  : realtime && realtime.roi < 0
+                  : position.roi != null && position.roi < 0
                     ? "text-loss"
                     : ""
               )}
             >
-              {realtime ? formatPercent(realtime.roi) : "-"}
+              {position.roi != null ? formatPercent(position.roi) : "-"}
             </td>
             <td className="py-3 text-right text-muted-foreground">
               {formatDateTime(position.entryTime)}
