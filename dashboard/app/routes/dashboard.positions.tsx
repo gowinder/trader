@@ -147,7 +147,7 @@ export async function loader(_args: Route.LoaderArgs) {
     positionDecisionsMap[p.id] = matched;
   }
 
-  // 从 Redis 获取实时持仓数据（mark_price, unrealized_pnl, roi）
+  // 从 Redis 获取实时持仓数据和当前价格
   let realtimePositions: Record<string, { mark_price: number; unrealized_pnl: number; roi: number }> = {};
   {
     const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
@@ -157,12 +157,35 @@ export async function loader(_args: Route.LoaderArgs) {
       const stateJson = await client.get("trading:account_state");
       if (stateJson) {
         const state = JSON.parse(stateJson);
-        if (state.positions) {
-          for (const [symbol, pos] of Object.entries(state.positions as Record<string, any>)) {
-            realtimePositions[symbol] = {
-              mark_price: pos.mark_price ?? 0,
-              unrealized_pnl: pos.unrealized_pnl ?? 0,
-              roi: pos.roi ?? 0,
+        const currentPrices: Record<string, number> = state.current_prices ?? {};
+        const redisPositions: Record<string, any> = state.positions ?? {};
+
+        // 优先用 Redis 中的持仓数据，否则用当前价格自行计算
+        for (const p of openPositions) {
+          const rp = redisPositions[p.symbol];
+          if (rp && rp.mark_price) {
+            realtimePositions[p.symbol] = {
+              mark_price: rp.mark_price,
+              unrealized_pnl: rp.unrealized_pnl ?? 0,
+              roi: rp.roi ?? 0,
+            };
+          } else if (currentPrices[p.symbol]) {
+            const markPrice = currentPrices[p.symbol];
+            const entryPrice = Number(p.entryPrice);
+            const size = Number(p.entrySize);
+            const leverage = p.leverage ? Number(p.leverage) : 1;
+            const side = p.side?.toLowerCase();
+
+            const unrealizedPnl = side === "long"
+              ? (markPrice - entryPrice) * size
+              : (entryPrice - markPrice) * size;
+            const margin = leverage > 0 ? (entryPrice * size) / leverage : 0;
+            const roi = margin > 0 ? (unrealizedPnl / margin) * 100 : 0;
+
+            realtimePositions[p.symbol] = {
+              mark_price: markPrice,
+              unrealized_pnl: unrealizedPnl,
+              roi,
             };
           }
         }
