@@ -372,6 +372,9 @@ class Scheduler:
                 )
             logger.info(f"EventDetector initialized for {len(config.symbols_list)} symbol(s)")
 
+            # Fetch and cache available symbols from exchange
+            await self._refresh_available_symbols()
+
             # Start config listener in background (tracked for graceful shutdown)
             self._advisory_tasks.append(asyncio.create_task(self._config_listener()))
             self._advisory_tasks.append(asyncio.create_task(self._manual_trigger_listener()))
@@ -433,6 +436,20 @@ class Scheduler:
                 self.decision_engine.signal_filter.min_interval_hours = interval_sec / 3600
 
             logger.info(f"Applied strategy preset: {self._active_preset_name}")
+
+    async def _refresh_available_symbols(self):
+        """从交易所获取可用 symbol 列表并缓存到 Redis"""
+        if not self._redis:
+            return
+        try:
+            symbols = await self.exchange.get_available_symbols()
+            if symbols:
+                await self._redis.set("trading:available_symbols", json.dumps(symbols))
+                logger.info(f"Cached {len(symbols)} available symbols from exchange")
+            else:
+                logger.warning("No available symbols returned from exchange")
+        except Exception as e:
+            logger.warning(f"Failed to refresh available symbols: {e}")
 
     async def _load_trading_config(self):
         """从 Redis 加载交易配置"""
@@ -655,6 +672,14 @@ class Scheduler:
                             async with self._config_lock:
                                 if "trading_symbols" in cfg:
                                     config.trading_symbols = cfg["trading_symbols"]
+                                    # 为新增 symbol 创建 EventDetector
+                                    for sym in config.symbols_list:
+                                        if sym not in self._event_detectors:
+                                            self._event_detectors[sym] = EventDetector(
+                                                event_config=self._event_trigger_config,
+                                                enabled_strategies=config.enabled_strategies,
+                                            )
+                                            logger.info(f"EventDetector created for new symbol: {sym}")
                                     logger.info(f"Trading symbols updated: {config.symbols_list}")
                                 for param in ["stop_loss_percent", "take_profit_percent", "leverage_max", "quant_weight", "ai_weight"]:
                                     if param in cfg:
