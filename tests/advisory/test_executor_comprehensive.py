@@ -927,6 +927,7 @@ class TestStrategyExecutorSwitch:
     async def test_switch_preset_not_found(self):
         svc = AsyncMock()
         svc.get_all_presets = AsyncMock(return_value=_make_presets())
+        svc.get_active_preset = AsyncMock(return_value=None)
         executor = StrategyExecutor(svc, _mock_redis())
         result = await executor.execute("switch_preset", "nonexistent", {"preset_name": "nonexistent"})
         assert result.success is False
@@ -977,14 +978,18 @@ class TestStrategyExecutorHold:
 
     @pytest.mark.asyncio
     async def test_no_change(self):
-        executor = StrategyExecutor(AsyncMock(), _mock_redis())
+        svc = AsyncMock()
+        svc.get_active_preset = AsyncMock(return_value=None)
+        executor = StrategyExecutor(svc, _mock_redis())
         result = await executor.execute("no_change", "global", {})
         assert result.success is True
 
     @pytest.mark.asyncio
     async def test_hold_aliases(self):
         for action in ("hold", "keep", "maintain"):
-            executor = StrategyExecutor(AsyncMock(), _mock_redis())
+            svc = AsyncMock()
+            svc.get_active_preset = AsyncMock(return_value=None)
+            executor = StrategyExecutor(svc, _mock_redis())
             result = await executor.execute(action, "global", {})
             assert result.success is True
 
@@ -1004,7 +1009,9 @@ class TestStrategyExecutorKeywordFallback:
 
     @pytest.mark.asyncio
     async def test_stay_keyword(self):
-        executor = StrategyExecutor(AsyncMock(), _mock_redis())
+        svc = AsyncMock()
+        svc.get_active_preset = AsyncMock(return_value=None)
+        executor = StrategyExecutor(svc, _mock_redis())
         result = await executor.execute("stay_current", "global", {})
         assert result.success is True
 
@@ -1013,7 +1020,9 @@ class TestStrategyExecutorUnknown:
 
     @pytest.mark.asyncio
     async def test_unknown_action(self):
-        executor = StrategyExecutor(AsyncMock(), _mock_redis())
+        svc = AsyncMock()
+        svc.get_active_preset = AsyncMock(return_value=None)
+        executor = StrategyExecutor(svc, _mock_redis())
         result = await executor.execute("weird_thing", "global", {})
         assert result.success is False
 

@@ -28,8 +28,9 @@ class TestBinanceAdapterInit:
     """Test adapter initialization"""
 
     def test_init_testnet_mode(self, mock_ccxt_binance):
-        """Test testnet mode initialization with correct URL override"""
-        mock_ccxt, _ = mock_ccxt_binance
+        """Test testnet mode initialization with demo trading enabled"""
+        mock_ccxt, exchange_instance = mock_ccxt_binance
+        exchange_instance.enable_demo_trading = Mock()
 
         adapter = BinanceAdapter(
             api_key="test_key",
@@ -43,7 +44,8 @@ class TestBinanceAdapterInit:
         assert call_args["secret"] == "test_secret"
         assert call_args["enableRateLimit"] is True
         assert call_args["options"]["defaultType"] == "future"
-        assert call_args["options"]["urls"]["fapi"] == "https://testnet.binancefuture.com/fapi/v1"
+        # Testnet now uses enable_demo_trading instead of URL override
+        exchange_instance.enable_demo_trading.assert_called_once_with(True)
         assert adapter.testnet is True
 
     def test_init_live_mode(self, mock_ccxt_binance):
@@ -72,10 +74,7 @@ class TestBinanceAdapterInit:
         )
 
         call_args = mock_ccxt.call_args[0][0]
-        assert call_args["proxies"] == {
-            "http": "http://proxy.example.com:8080",
-            "https": "http://proxy.example.com:8080"
-        }
+        assert call_args["aiohttp_proxy"] == "http://proxy.example.com:8080"
 
 
 class TestBinanceAdapterAccount:

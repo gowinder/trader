@@ -4,6 +4,7 @@ import asyncio
 from datetime import datetime, timedelta
 import sys
 from pathlib import Path
+import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
@@ -154,6 +155,7 @@ def test_cache_stats():
     print("✓ Cache stats test passed")
 
 
+@pytest.mark.asyncio
 async def test_cleanup_task():
     """Test background cleanup task"""
     cache = SentimentCache(default_ttl=1, cleanup_interval=2)

@@ -189,7 +189,7 @@ class TestCCXTAdapter:
             mock_exchange_class.return_value = mock_exchange_instance
             mock_ccxt.test_exchange = mock_exchange_class
 
-            with pytest.raises(ValueError, match="does not support set_sandbox_mode"):
+            with pytest.raises(ValueError, match="does not support testnet"):
                 CCXTAdapter.from_config(
                     exchange_id="test_exchange",
                     api_key="test_key",
