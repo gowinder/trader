@@ -404,3 +404,5 @@ trades/
 # Runtime data and cache
 data/cache/
 data/*.db
+
+.superset/
