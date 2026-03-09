@@ -118,6 +118,14 @@ class BaseExchange(ABC):
         """Cancel order"""
         pass
 
+    async def get_available_symbols(self) -> List[str]:
+        """Get all available USDT perpetual contract symbols from the exchange.
+
+        Returns:
+            List of symbol strings (e.g., ['BTC/USDT:USDT', 'ETH/USDT:USDT'])
+        """
+        return []
+
     @abstractmethod
     async def close(self):
         """Close connection and cleanup resources"""

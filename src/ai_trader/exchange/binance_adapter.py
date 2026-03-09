@@ -380,6 +380,25 @@ class BinanceAdapter(BaseExchange):
         }
         return mapping[side]
 
+    async def get_available_symbols(self) -> List[str]:
+        """Get all available USDT perpetual contract symbols."""
+        try:
+            markets = await self.exchange.load_markets()
+            symbols = []
+            for symbol, market in markets.items():
+                if (
+                    market.get("swap", False)
+                    and market.get("active", True)
+                    and market.get("quote") == "USDT"
+                    and market.get("settle") == "USDT"
+                ):
+                    symbols.append(symbol)
+            symbols.sort()
+            return symbols
+        except Exception as e:
+            logger.error(f"Binance get available symbols failed: {e}")
+            return []
+
     async def cancel_order(self, symbol: str, order_id: str) -> bool:
         """Cancel order
 
