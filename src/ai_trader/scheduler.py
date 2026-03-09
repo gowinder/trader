@@ -1139,7 +1139,26 @@ class Scheduler:
                     "roi": position.roi,
                 }
 
-            # 构建账户状态
+            # 读取现有状态并合并（避免多 symbol 时覆盖）
+            existing_state = None
+            try:
+                existing_json = await self._redis.get("trading:account_state")
+                if existing_json:
+                    existing_state = json.loads(existing_json)
+            except Exception:
+                pass
+
+            existing_positions = existing_state.get("positions", {}) if existing_state else {}
+            existing_prices = existing_state.get("current_prices", {}) if existing_state else {}
+
+            # 更新当前 symbol 的持仓数据
+            if position_data:
+                existing_positions[symbol] = position_data
+            else:
+                existing_positions.pop(symbol, None)
+
+            existing_prices[symbol] = current_price
+
             state = {
                 "updated_at": now,
                 "account": {
@@ -1148,11 +1167,11 @@ class Scheduler:
                     "margin_used": account.margin_used,
                     "unrealized_pnl": account.unrealized_pnl,
                 },
-                "positions": {symbol: position_data} if position_data else {},
-                "current_prices": {symbol: current_price},
+                "positions": existing_positions,
+                "current_prices": existing_prices,
             }
 
-            # 存储到 Redis（Hash 结构便于单独更新）
+            # 存储到 Redis
             await self._redis.set("trading:account_state", json.dumps(state))
             # 设置 5 分钟过期（如果 trader 停止，状态会自动过期）
             await self._redis.expire("trading:account_state", 300)
