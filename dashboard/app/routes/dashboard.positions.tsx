@@ -19,6 +19,7 @@ import {
 import { db } from "db";
 import { positionHistory, decisions as decisionsTable } from "db/schema";
 import { desc, eq, and, gte, lte, or, sql, inArray } from "drizzle-orm";
+import { createClient } from "redis";
 
 interface DecisionSummary {
   id: string;
@@ -146,6 +147,33 @@ export async function loader(_args: Route.LoaderArgs) {
     positionDecisionsMap[p.id] = matched;
   }
 
+  // 从 Redis 获取实时持仓数据（mark_price, unrealized_pnl, roi）
+  let realtimePositions: Record<string, { mark_price: number; unrealized_pnl: number; roi: number }> = {};
+  {
+    const redisUrl = process.env.REDIS_URL || "redis://localhost:6379";
+    const client = createClient({ url: redisUrl });
+    try {
+      await client.connect();
+      const stateJson = await client.get("trading:account_state");
+      if (stateJson) {
+        const state = JSON.parse(stateJson);
+        if (state.positions) {
+          for (const [symbol, pos] of Object.entries(state.positions as Record<string, any>)) {
+            realtimePositions[symbol] = {
+              mark_price: pos.mark_price ?? 0,
+              unrealized_pnl: pos.unrealized_pnl ?? 0,
+              roi: pos.roi ?? 0,
+            };
+          }
+        }
+      }
+    } catch (e) {
+      console.error("Failed to fetch realtime positions from Redis:", e);
+    } finally {
+      try { await client.disconnect(); } catch { /* ignore */ }
+    }
+  }
+
   const serializePosition = (p: typeof allPositions[0]) => ({
     ...p,
     entryTime: p.entryTime.toISOString(),
@@ -162,6 +190,7 @@ export async function loader(_args: Route.LoaderArgs) {
     openPositions: openPositions.map(serializePosition),
     closedPositions: closedPositions.map(serializePosition),
     positionDecisions: positionDecisionsMap,
+    realtimePositions,
     stats: {
       totalTrades: Number(stats.totalTrades),
       winningTrades: Number(stats.winningTrades),
@@ -173,7 +202,7 @@ export async function loader(_args: Route.LoaderArgs) {
 }
 
 export default function PositionsPage({ loaderData }: Route.ComponentProps) {
-  const { openPositions, closedPositions, stats, positionDecisions } = loaderData;
+  const { openPositions, closedPositions, stats, positionDecisions, realtimePositions } = loaderData;
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
 
   const toggleExpand = (id: string) => {
@@ -237,6 +266,9 @@ export default function PositionsPage({ loaderData }: Route.ComponentProps) {
                     <th className="pb-3 font-medium text-right">入场价</th>
                     <th className="pb-3 font-medium text-right">数量</th>
                     <th className="pb-3 font-medium text-right">杠杆</th>
+                    <th className="pb-3 font-medium text-right">标记价</th>
+                    <th className="pb-3 font-medium text-right">未实现盈亏</th>
+                    <th className="pb-3 font-medium text-right">收益率</th>
                     <th className="pb-3 font-medium text-right">入场时间</th>
                   </tr>
                 </thead>
@@ -244,6 +276,7 @@ export default function PositionsPage({ loaderData }: Route.ComponentProps) {
                   {openPositions.map((position) => {
                     const decisions = positionDecisions[position.id] || [];
                     const isExpanded = expandedIds.has(position.id);
+                    const realtime = realtimePositions[position.symbol] || null;
                     return (
                       <PositionRow
                         key={position.id}
@@ -252,6 +285,7 @@ export default function PositionsPage({ loaderData }: Route.ComponentProps) {
                         isExpanded={isExpanded}
                         onToggle={() => toggleExpand(position.id)}
                         columns="open"
+                        realtime={realtime}
                       />
                     );
                   })}
@@ -322,14 +356,16 @@ function PositionRow({
   isExpanded,
   onToggle,
   columns,
+  realtime,
 }: {
   position: any;
   decisions: DecisionSummary[];
   isExpanded: boolean;
   onToggle: () => void;
   columns: "open" | "closed";
+  realtime?: { mark_price: number; unrealized_pnl: number; roi: number } | null;
 }) {
-  const colSpan = columns === "open" ? 7 : 8;
+  const colSpan = columns === "open" ? 10 : 8;
 
   return (
     <>
@@ -377,6 +413,33 @@ function PositionRow({
             </td>
             <td className="py-3 text-right tabular-nums">
               {position.leverage ? `${position.leverage}x` : "-"}
+            </td>
+            <td className="py-3 text-right tabular-nums">
+              {realtime ? formatUSD(realtime.mark_price) : "-"}
+            </td>
+            <td
+              className={cn(
+                "py-3 text-right tabular-nums font-medium",
+                realtime && realtime.unrealized_pnl > 0
+                  ? "text-profit"
+                  : realtime && realtime.unrealized_pnl < 0
+                    ? "text-loss"
+                    : ""
+              )}
+            >
+              {realtime ? formatUSD(realtime.unrealized_pnl) : "-"}
+            </td>
+            <td
+              className={cn(
+                "py-3 text-right tabular-nums",
+                realtime && realtime.roi > 0
+                  ? "text-profit"
+                  : realtime && realtime.roi < 0
+                    ? "text-loss"
+                    : ""
+              )}
+            >
+              {realtime ? formatPercent(realtime.roi) : "-"}
             </td>
             <td className="py-3 text-right text-muted-foreground">
               {formatDateTime(position.entryTime)}
