@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from ai_trader.advisory.telegram import format_advisory_message
+from ai_trader.advisory.telegram.notifier import format_advisory_message
 from ai_trader.models.advisory import AdvisoryResult, Suggestion, SuggestionType, Urgency
 
 
