@@ -117,7 +117,7 @@ export async function action({ request }: ActionFunctionArgs) {
     }
 
     // 1. 查找 preset name → id 映射
-    const presetNames = [...new Set(configured.map((c) => c.preset_name))];
+    const presetNames = Array.from(new Set(configured.map((c: any) => c.preset_name)));
     const presets = await sql`
       SELECT id, name FROM strategy_presets WHERE name = ANY(${presetNames})
     `;
