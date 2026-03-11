@@ -39,6 +39,7 @@ export default [
   route("api/change-password", "routes/api.change-password.ts"),
   route("api/symbols", "routes/api.symbols.ts"),
   route("api/presets-list", "routes/api.presets-list.ts"),
+  route("api/symbol-strategy-suggest", "routes/api.symbol-strategy-suggest.ts"),
   route("dashboard", "routes/dashboard.tsx", [
     index("routes/dashboard._index.tsx"),
     route("chart", "routes/dashboard.chart.tsx"),

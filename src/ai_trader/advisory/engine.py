@@ -9,6 +9,7 @@ from .context import AdvisoryContextBuilder
 from .prompts import (
     ADVISORY_SYSTEM, ADVISORY_SCHEMA,
     STRATEGY_SUGGEST_SYSTEM, STRATEGY_SUGGEST_SCHEMA,
+    SYMBOL_STRATEGY_SUGGEST_SYSTEM, SYMBOL_STRATEGY_SUGGEST_SCHEMA,
 )
 from ..models.advisory import AdvisoryResult, Suggestion, TriggerType, SuggestionType, Urgency
 from ..strategies.presets import SYSTEM_PRESETS
@@ -207,6 +208,96 @@ class AdvisoryEngine:
             }
         except Exception as e:
             logger.error(f"Failed to generate strategy suggestion: {type(e).__name__}: {e}")
+            raise
+
+    async def suggest_symbol_strategies(
+        self,
+        target_symbols: List[str],
+        symbols: List[str],
+        positions: List[Dict],
+        market_data: Dict[str, Dict],
+        sentiment: Optional[Dict],
+        current_config: Dict[str, Any],
+        account_summary: Optional[Dict] = None,
+    ) -> Dict[str, Any]:
+        """Generate per-symbol strategy preset recommendations."""
+        trigger_reason = "manual_symbol_strategy_suggestion"
+        context = await self.context_builder.build(
+            symbols=symbols,
+            positions=positions,
+            market_data=market_data,
+            sentiment=sentiment,
+            trigger_reason=trigger_reason,
+            current_config=current_config,
+            account_summary=account_summary,
+            strategy_preset_info=current_config.get("_strategy_preset_info"),
+            market_classifications=current_config.get("_market_classifications"),
+        )
+
+        # Build presets description
+        presets_desc_lines = []
+        all_presets_info = current_config.get("_strategy_preset_info", {})
+        all_presets_list = all_presets_info.get("all_presets", []) if all_presets_info else []
+
+        if all_presets_list:
+            for p in all_presets_list:
+                presets_desc_lines.append(
+                    f"- **{p['name']}** ({p.get('display_name', p['name'])}): "
+                    f"{p.get('description', '')} | "
+                    f"category: {p.get('category', '')}, risk: {p.get('risk_level', '')}"
+                )
+        else:
+            for p in SYSTEM_PRESETS:
+                presets_desc_lines.append(
+                    f"- **{p.name}** ({p.display_name}): {p.description} | "
+                    f"category: {p.category}, risk: {p.risk_level}"
+                )
+        presets_description = "\n".join(presets_desc_lines)
+        symbols_list = "\n".join(f"- {s}" for s in target_symbols)
+
+        system_prompt = SYMBOL_STRATEGY_SUGGEST_SYSTEM.format(
+            presets_description=presets_description,
+            symbols_list=symbols_list,
+        )
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": context},
+        ]
+
+        try:
+            raw_result = await self.llm.chat(
+                messages=messages,
+                schema=SYMBOL_STRATEGY_SUGGEST_SCHEMA,
+                max_tokens=2000,
+                temperature=0.3,
+                usage_type="advisory",
+            )
+            logger.info(f"Symbol strategy suggestion result: {raw_result}")
+
+            valid_names = [p["name"] for p in all_presets_list] if all_presets_list else [p.name for p in SYSTEM_PRESETS]
+            display_name_map = {}
+            if all_presets_list:
+                display_name_map = {p["name"]: p.get("display_name", p["name"]) for p in all_presets_list}
+            else:
+                display_name_map = {p.name: p.display_name for p in SYSTEM_PRESETS}
+
+            suggestions = {}
+            for item in raw_result.get("suggestions", []):
+                symbol = item.get("symbol", "")
+                preset = item.get("recommended_preset", "")
+                if preset not in valid_names:
+                    preset = valid_names[0] if valid_names else ""
+                suggestions[symbol] = {
+                    "recommended_preset": preset,
+                    "recommended_display_name": display_name_map.get(preset, preset),
+                    "reason": item.get("reason", ""),
+                    "market_state": item.get("market_state", ""),
+                }
+
+            return suggestions
+        except Exception as e:
+            logger.error(f"Failed to generate symbol strategy suggestions: {type(e).__name__}: {e}")
             raise
 
     @property

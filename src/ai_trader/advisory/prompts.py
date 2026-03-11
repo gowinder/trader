@@ -110,6 +110,49 @@ STRATEGY_SUGGEST_SCHEMA = {
     "additionalProperties": False,
 }
 
+SYMBOL_STRATEGY_SUGGEST_SYSTEM = """You are a senior AI trading advisor specializing in per-symbol strategy selection.
+Your task is to analyze market conditions for EACH given symbol individually and recommend the most suitable strategy preset for each one.
+
+## Available Strategy Presets
+{presets_description}
+
+## Symbols to Analyze
+{symbols_list}
+
+## Output Rules
+- Output valid JSON matching the schema exactly
+- suggestions: An array of per-symbol recommendations
+- Each item must include: symbol, recommended_preset, reason, market_state
+- recommended_preset: Must be one of the preset names listed above
+- reason: Must be in Chinese (中文), 100 characters or less per symbol
+- market_state: Per-symbol market state (STRONG_TREND, WEAK_TREND, RANGE_BOUND, SIDEWAYS, BREAKOUT)
+- Consider each symbol's unique market characteristics: volatility, trend, volume
+- Different symbols may warrant different strategies"""
+
+SYMBOL_STRATEGY_SUGGEST_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "suggestions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string", "description": "Trading symbol"},
+                    "recommended_preset": {"type": "string", "description": "Recommended preset name"},
+                    "reason": {"type": "string", "description": "Reason in Chinese, 100 chars or less"},
+                    "market_state": {
+                        "type": "string",
+                        "enum": ["STRONG_TREND", "WEAK_TREND", "RANGE_BOUND", "SIDEWAYS", "BREAKOUT"],
+                    },
+                },
+                "required": ["symbol", "recommended_preset", "reason", "market_state"],
+            },
+        },
+    },
+    "required": ["suggestions"],
+    "additionalProperties": False,
+}
+
 ADVISORY_SCHEMA = {
     "type": "object",
     "properties": {

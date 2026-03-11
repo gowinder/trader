@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
 import { Button } from "~/components/ui/button";
 import { Switch } from "~/components/ui/switch";
-import { Coins, Search, Save, RefreshCw, ChevronDown, RotateCcw, ArrowUpDown, Star } from "lucide-react";
+import { Coins, Search, Save, RefreshCw, ChevronDown, RotateCcw, ArrowUpDown, Star, Sparkles, CheckCheck } from "lucide-react";
 
 // --- Data Structures ---
 
@@ -86,6 +86,8 @@ export default function SymbolsPage() {
   const [sortMode, setSortMode] = useState<SortMode>("enabled_first");
   const [volumes, setVolumes] = useState<Record<string, number>>({});
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
+  const [batchSuggesting, setBatchSuggesting] = useState(false);
+  const [symbolSuggestions, setSymbolSuggestions] = useState<Record<string, { recommended_preset: string; recommended_display_name: string; reason: string; market_state: string }>>({});
 
   // Track original configured state for dirty detection
   const [originalConfigured, setOriginalConfigured] = useState<Map<string, SymbolConfig>>(new Map());
@@ -270,6 +272,70 @@ export default function SymbolsPage() {
     });
   };
 
+  const handleBatchSuggest = async () => {
+    const enabledSymbols = Array.from(configuredSymbols.keys());
+    if (enabledSymbols.length === 0) return;
+    setBatchSuggesting(true);
+    setSymbolSuggestions({});
+    try {
+      const triggerRes = await fetch("/api/symbol-strategy-suggest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbols: enabledSymbols }),
+      });
+      if (!triggerRes.ok) {
+        const data = await triggerRes.json().catch(() => ({}));
+        setMessage({ type: "error", text: data.error || "触发策略建议失败" });
+        return;
+      }
+      const { taskId } = await triggerRes.json();
+      for (let i = 0; i < 60; i++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const pollRes = await fetch(`/api/symbol-strategy-suggest?taskId=${taskId}`);
+        if (!pollRes.ok) continue;
+        const result = await pollRes.json();
+        if (result.status === "completed" && result.suggestions) {
+          setSymbolSuggestions(result.suggestions);
+          setMessage({ type: "success", text: `AI 已为 ${Object.keys(result.suggestions).length} 个交易对生成策略建议` });
+          return;
+        }
+        if (result.status === "error") {
+          setMessage({ type: "error", text: result.error || "策略建议生成失败" });
+          return;
+        }
+      }
+      setMessage({ type: "error", text: "策略建议超时，请重试" });
+    } catch {
+      setMessage({ type: "error", text: "网络错误" });
+    } finally {
+      setBatchSuggesting(false);
+    }
+  };
+
+  const handleBatchAdopt = () => {
+    if (Object.keys(symbolSuggestions).length === 0) return;
+    setConfiguredSymbols((prev) => {
+      const next = new Map(prev);
+      for (const [symbol, suggestion] of Object.entries(symbolSuggestions)) {
+        const existing = next.get(symbol);
+        if (!existing) continue;
+        const preset = presets.find((p) => p.name === suggestion.recommended_preset);
+        if (preset) {
+          next.set(symbol, {
+            ...existing,
+            preset_name: preset.name,
+            preset_display_name: preset.displayName,
+            config_overrides: {},
+            preset_config: { ...preset.config },
+          });
+        }
+      }
+      return next;
+    });
+    setSymbolSuggestions({});
+    setMessage({ type: "success", text: "已批量采纳 AI 策略建议，请点击保存生效" });
+  };
+
   const resetOverrides = (symbol: string) => {
     setConfiguredSymbols((prev) => {
       const next = new Map(prev);
@@ -430,15 +496,46 @@ export default function SymbolsPage() {
                 );
               })}
             </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={enableRecommended}
-              disabled={presets.length === 0}
-            >
-              <Star className="mr-1 h-3 w-3" />
-              启用推荐交易对
-            </Button>
+            <div className="flex items-center gap-2">
+              {Object.keys(symbolSuggestions).length > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleBatchAdopt}
+                  className="border-blue-500/50 text-blue-400 hover:bg-blue-500/10"
+                >
+                  <CheckCheck className="mr-1 h-3 w-3" />
+                  批量采纳 ({Object.keys(symbolSuggestions).length})
+                </Button>
+              )}
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleBatchSuggest}
+                disabled={batchSuggesting || configuredSymbols.size === 0}
+              >
+                {batchSuggesting ? (
+                  <>
+                    <RefreshCw className="mr-1 h-3 w-3 animate-spin" />
+                    AI 分析中...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="mr-1 h-3 w-3" />
+                    批量建议
+                  </>
+                )}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={enableRecommended}
+                disabled={presets.length === 0}
+              >
+                <Star className="mr-1 h-3 w-3" />
+                推荐
+              </Button>
+            </div>
           </div>
 
           {/* Symbol list */}
@@ -501,6 +598,12 @@ export default function SymbolsPage() {
                         >
                           {cfg.preset_display_name}
                           {hasOverrides(cfg) && " \u00b7 已修改"}
+                        </span>
+                      )}
+                      {symbolSuggestions[symbol] && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-300">
+                          AI: {symbolSuggestions[symbol].recommended_display_name}
+                          {symbolSuggestions[symbol].recommended_preset !== cfg?.preset_name && " →"}
                         </span>
                       )}
                     </div>
