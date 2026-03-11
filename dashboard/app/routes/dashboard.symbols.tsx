@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
 import { Button } from "~/components/ui/button";
 import { Switch } from "~/components/ui/switch";
-import { Coins, Search, Save, RefreshCw, ChevronDown, RotateCcw } from "lucide-react";
+import { Coins, Search, Save, RefreshCw, ChevronDown, RotateCcw, ArrowUpDown, Star } from "lucide-react";
 
 // --- Data Structures ---
 
@@ -60,6 +60,19 @@ const STRATEGY_LABELS: Record<string, string> = {
   momentum_enabled: "动量",
 };
 
+// 推荐交易对：主流 + 高流动性山寨币
+const RECOMMENDED_SYMBOLS = [
+  "BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT",
+  "BNB/USDT:USDT", "XRP/USDT:USDT", "ADA/USDT:USDT",
+  "DOGE/USDT:USDT", "AVAX/USDT:USDT", "DOT/USDT:USDT",
+  "LINK/USDT:USDT", "NEAR/USDT:USDT", "SUI/USDT:USDT",
+  "ARB/USDT:USDT", "OP/USDT:USDT", "APT/USDT:USDT",
+  "FIL/USDT:USDT", "ATOM/USDT:USDT", "UNI/USDT:USDT",
+  "RENDER/USDT:USDT", "INJ/USDT:USDT",
+];
+
+type SortMode = "alpha" | "enabled_first" | "recommended_first";
+
 // --- Component ---
 
 export default function SymbolsPage() {
@@ -70,6 +83,7 @@ export default function SymbolsPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState("");
+  const [sortMode, setSortMode] = useState<SortMode>("enabled_first");
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   // Track original configured state for dirty detection
@@ -111,10 +125,25 @@ export default function SymbolsPage() {
   }, [availableSymbols, configuredSymbols]);
 
   const filteredSymbols = useMemo(() => {
-    if (!search.trim()) return allSymbols;
-    const q = search.toUpperCase();
-    return allSymbols.filter((s) => s.toUpperCase().includes(q));
-  }, [allSymbols, search]);
+    let list = allSymbols;
+    if (search.trim()) {
+      const q = search.toUpperCase();
+      list = list.filter((s) => s.toUpperCase().includes(q));
+    }
+    // Apply sorting
+    return [...list].sort((a, b) => {
+      if (sortMode === "enabled_first") {
+        const aEnabled = configuredSymbols.has(a) ? 0 : 1;
+        const bEnabled = configuredSymbols.has(b) ? 0 : 1;
+        if (aEnabled !== bEnabled) return aEnabled - bEnabled;
+      } else if (sortMode === "recommended_first") {
+        const aRec = RECOMMENDED_SYMBOLS.includes(a) ? 0 : 1;
+        const bRec = RECOMMENDED_SYMBOLS.includes(b) ? 0 : 1;
+        if (aRec !== bRec) return aRec - bRec;
+      }
+      return a.localeCompare(b);
+    });
+  }, [allSymbols, search, sortMode, configuredSymbols]);
 
   const hasChanges = useMemo(() => {
     if (originalConfigured.size !== configuredSymbols.size) return true;
@@ -211,6 +240,26 @@ export default function SymbolsPage() {
       }
 
       next.set(symbol, { ...cfg, config_overrides: newOverrides });
+      return next;
+    });
+  };
+
+  const enableRecommended = () => {
+    if (presets.length === 0) return;
+    setConfiguredSymbols((prev) => {
+      const next = new Map(prev);
+      const defaultPreset = presets[0];
+      for (const symbol of RECOMMENDED_SYMBOLS) {
+        if (!next.has(symbol) && allSymbols.includes(symbol)) {
+          next.set(symbol, {
+            symbol,
+            preset_name: defaultPreset.name,
+            preset_display_name: defaultPreset.displayName,
+            config_overrides: {},
+            preset_config: { ...defaultPreset.config },
+          });
+        }
+      }
       return next;
     });
   };
@@ -347,6 +396,42 @@ export default function SymbolsPage() {
                 {filteredSymbols.length} 个结果
               </span>
             )}
+          </div>
+
+          {/* Toolbar: sort + recommended */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5">
+              <ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground" />
+              {(["enabled_first", "recommended_first", "alpha"] as SortMode[]).map((mode) => {
+                const labels: Record<SortMode, string> = {
+                  enabled_first: "已启用优先",
+                  recommended_first: "推荐优先",
+                  alpha: "字母",
+                };
+                return (
+                  <button
+                    key={mode}
+                    onClick={() => setSortMode(mode)}
+                    className={`text-xs px-2 py-1 rounded transition-colors ${
+                      sortMode === mode
+                        ? "bg-primary/15 text-primary"
+                        : "text-muted-foreground hover:text-foreground hover:bg-muted"
+                    }`}
+                  >
+                    {labels[mode]}
+                  </button>
+                );
+              })}
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={enableRecommended}
+              disabled={presets.length === 0}
+            >
+              <Star className="mr-1 h-3 w-3" />
+              启用推荐交易对
+            </Button>
           </div>
 
           {/* Symbol list */}
