@@ -281,6 +281,20 @@ class CCXTAdapter(BaseExchange):
             logger.error(f"CCXT get available symbols failed: {e}")
             return []
 
+    async def get_all_tickers(self) -> dict[str, float]:
+        """获取所有交易对的 24h 成交量(USDT)，返回 {symbol: quoteVolume}"""
+        try:
+            tickers = await self._exchange.fetch_tickers()
+            result = {}
+            for symbol, t in tickers.items():
+                qv = t.get("quoteVolume")
+                if qv is not None:
+                    result[symbol] = float(qv)
+            return result
+        except Exception as e:
+            logger.warning(f"CCXT fetch tickers failed: {e}")
+            return {}
+
     async def close(self):
         """Close connection and cleanup resources"""
         await self._exchange.close()

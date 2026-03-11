@@ -71,7 +71,7 @@ const RECOMMENDED_SYMBOLS = [
   "RENDER/USDT:USDT", "INJ/USDT:USDT",
 ];
 
-type SortMode = "alpha" | "enabled_first" | "recommended_first";
+type SortMode = "alpha" | "enabled_first" | "recommended_first" | "volume_desc";
 
 // --- Component ---
 
@@ -84,6 +84,7 @@ export default function SymbolsPage() {
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState("");
   const [sortMode, setSortMode] = useState<SortMode>("enabled_first");
+  const [volumes, setVolumes] = useState<Record<string, number>>({});
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
   // Track original configured state for dirty detection
@@ -99,6 +100,7 @@ export default function SymbolsPage() {
       const presetsJson = await presetsRes.json();
 
       setAvailableSymbols(symbolsJson.available || []);
+      setVolumes(symbolsJson.volumes || {});
       setPresets(presetsJson.presets || []);
 
       const cfgMap = new Map<string, SymbolConfig>();
@@ -140,10 +142,14 @@ export default function SymbolsPage() {
         const aRec = RECOMMENDED_SYMBOLS.includes(a) ? 0 : 1;
         const bRec = RECOMMENDED_SYMBOLS.includes(b) ? 0 : 1;
         if (aRec !== bRec) return aRec - bRec;
+      } else if (sortMode === "volume_desc") {
+        const aVol = volumes[a] ?? 0;
+        const bVol = volumes[b] ?? 0;
+        if (aVol !== bVol) return bVol - aVol;
       }
       return a.localeCompare(b);
     });
-  }, [allSymbols, search, sortMode, configuredSymbols]);
+  }, [allSymbols, search, sortMode, configuredSymbols, volumes]);
 
   const hasChanges = useMemo(() => {
     if (originalConfigured.size !== configuredSymbols.size) return true;
@@ -402,10 +408,11 @@ export default function SymbolsPage() {
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-1.5">
               <ArrowUpDown className="h-3.5 w-3.5 text-muted-foreground" />
-              {(["enabled_first", "recommended_first", "alpha"] as SortMode[]).map((mode) => {
+              {(["enabled_first", "recommended_first", "volume_desc", "alpha"] as SortMode[]).map((mode) => {
                 const labels: Record<SortMode, string> = {
                   enabled_first: "已启用优先",
                   recommended_first: "推荐优先",
+                  volume_desc: "成交量",
                   alpha: "字母",
                 };
                 return (
@@ -475,6 +482,15 @@ export default function SymbolsPage() {
                         {baseSymbol}
                       </span>
                       <span className="text-xs text-muted-foreground">/USDT</span>
+                      {volumes[symbol] != null && volumes[symbol] > 0 && (
+                        <span className="text-[10px] text-muted-foreground/70 font-mono">
+                          {volumes[symbol] >= 1e9
+                            ? `${(volumes[symbol] / 1e9).toFixed(1)}B`
+                            : volumes[symbol] >= 1e6
+                              ? `${(volumes[symbol] / 1e6).toFixed(0)}M`
+                              : `${(volumes[symbol] / 1e3).toFixed(0)}K`}
+                        </span>
+                      )}
                       {cfg && (
                         <span
                           className={`text-[11px] px-2 py-0.5 rounded ${
