@@ -33,11 +33,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
     // 2. 从数据库获取已配置的 symbol_strategy + preset 信息
     let configured: Array<{
       symbol: string;
-      presetName: string;
-      presetDisplayName: string;
-      presetCategory: string;
-      presetRiskLevel: string;
-      configOverrides: Record<string, unknown>;
+      preset_name: string;
+      preset_display_name: string;
+      config_overrides: Record<string, unknown>;
+      preset_config: Record<string, unknown>;
       enabled: boolean;
     }> = [];
 
@@ -51,22 +50,26 @@ export async function loader({ request }: LoaderFunctionArgs) {
             sp.name as preset_name,
             sp.display_name as preset_display_name,
             sp.category as preset_category,
-            sp.risk_level as preset_risk_level
+            sp.risk_level as preset_risk_level,
+            sp.config_json as config_json
           FROM symbol_strategy ss
           JOIN strategy_presets sp ON ss.preset_id = sp.id
+          WHERE ss.enabled = true
           ORDER BY ss.symbol
         `;
 
         configured = rows.map((r) => ({
           symbol: r.symbol,
-          presetName: r.preset_name,
-          presetDisplayName: r.preset_display_name,
-          presetCategory: r.preset_category,
-          presetRiskLevel: r.preset_risk_level,
-          configOverrides:
+          preset_name: r.preset_name,
+          preset_display_name: r.preset_display_name,
+          config_overrides:
             typeof r.config_overrides === "string"
               ? JSON.parse(r.config_overrides)
               : r.config_overrides || {},
+          preset_config:
+            typeof r.config_json === "string"
+              ? JSON.parse(r.config_json)
+              : r.config_json || {},
           enabled: r.enabled === true,
         }));
       } catch (dbErr) {
@@ -133,25 +136,26 @@ export async function action({ request }: ActionFunctionArgs) {
       }
     }
 
-    // 2. 将所有现有记录设为 disabled
-    await sql`UPDATE symbol_strategy SET enabled = false, updated_at = NOW()`;
+    // 2. 在事务中：先将所有现有记录设为 disabled，再 upsert 新配置
+    await sql.begin(async (tx) => {
+      await tx`UPDATE symbol_strategy SET enabled = false, updated_at = NOW()`;
 
-    // 3. Upsert 每个配置的 symbol
-    for (const c of configured) {
-      const presetId = presetMap.get(c.preset_name)!;
-      const overrides = JSON.stringify(c.config_overrides || {});
+      for (const c of configured) {
+        const presetId = presetMap.get(c.preset_name)!;
+        const overrides = JSON.stringify(c.config_overrides || {});
 
-      await sql`
-        INSERT INTO symbol_strategy (symbol, preset_id, config_overrides, enabled, created_at, updated_at)
-        VALUES (${c.symbol}, ${presetId}, ${overrides}::jsonb, true, NOW(), NOW())
-        ON CONFLICT (symbol)
-        DO UPDATE SET
-          preset_id = ${presetId},
-          config_overrides = ${overrides}::jsonb,
-          enabled = true,
-          updated_at = NOW()
-      `;
-    }
+        await tx`
+          INSERT INTO symbol_strategy (symbol, preset_id, config_overrides, enabled, created_at, updated_at)
+          VALUES (${c.symbol}, ${presetId}, ${overrides}::jsonb, true, NOW(), NOW())
+          ON CONFLICT (symbol)
+          DO UPDATE SET
+            preset_id = ${presetId},
+            config_overrides = ${overrides}::jsonb,
+            enabled = true,
+            updated_at = NOW()
+        `;
+      }
+    });
 
     // 4. 同步到 Redis（向后兼容）
     client = await getRedisClient();
