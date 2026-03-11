@@ -121,6 +121,10 @@ class Scheduler:
         self._active_preset_name: Optional[str] = None
         self._strategy_preset_service: Optional[StrategyPresetService] = None
 
+        # Per-symbol strategy configs and engines
+        self._symbol_strategy_configs: dict = {}  # symbol -> SymbolStrategyConfig
+        self._symbol_engines: dict = {}  # symbol -> HybridDecisionEngine
+
         # Config lock for atomic config updates
         self._config_lock = asyncio.Lock()
 
@@ -370,9 +374,11 @@ class Scheduler:
 
             # Initialize per-symbol EventDetectors
             for symbol in config.symbols_list:
+                symbol_cfg = self._symbol_strategy_configs.get(symbol)
+                enabled_strats = symbol_cfg.merged_config.enabled_strategies if symbol_cfg else config.enabled_strategies
                 self._event_detectors[symbol] = EventDetector(
                     event_config=self._event_trigger_config,
-                    enabled_strategies=config.enabled_strategies,
+                    enabled_strategies=enabled_strats,
                 )
             logger.info(f"EventDetector initialized for {len(config.symbols_list)} symbol(s)")
 
@@ -428,6 +434,8 @@ class Scheduler:
             self._active_preset_name = preset_data.get("name", self._active_preset_name)
             config.apply_preset(preset_config)
 
+            # DEPRECATED: Global preset switching. Per-symbol config now handled by _symbol_engines.
+            # This remains as fallback for symbols without per-symbol config.
             # 重建决策引擎（保留 prompt_enricher 引用）
             old_enricher = getattr(self.decision_engine, "prompt_enricher", None)
             self.decision_engine = HybridDecisionEngine(self.llm)
@@ -440,6 +448,30 @@ class Scheduler:
                 self.decision_engine.signal_filter.min_interval_hours = interval_sec / 3600
 
             logger.info(f"Applied strategy preset: {self._active_preset_name}")
+
+    async def _load_symbol_strategies(self):
+        """Load per-symbol strategy configs from database."""
+        try:
+            if not self._strategy_preset_service:
+                return
+            configs = await self._strategy_preset_service.get_all_symbol_strategies()
+            new_configs = {cfg.symbol: cfg for cfg in configs}
+            new_engines = {}
+            for symbol, cfg in new_configs.items():
+                merged = cfg.merged_config
+                new_engines[symbol] = HybridDecisionEngine(self.llm, symbol_strategy_config=merged)
+            self._symbol_strategy_configs = new_configs
+            self._symbol_engines = new_engines
+            logger.info(f"Loaded per-symbol strategies for {len(new_configs)} symbols")
+            # Rebuild EventDetectors for symbols with per-symbol config
+            for symbol, cfg in self._symbol_strategy_configs.items():
+                if symbol in self._event_detectors:
+                    self._event_detectors[symbol] = EventDetector(
+                        event_config=self._event_trigger_config,
+                        enabled_strategies=cfg.merged_config.enabled_strategies,
+                    )
+        except Exception as e:
+            logger.error(f"Failed to load symbol strategies: {e}")
 
     async def _refresh_available_symbols(self):
         """从交易所获取可用 symbol 列表并缓存到 Redis"""
@@ -547,7 +579,7 @@ class Scheduler:
 
         pubsub = self._redis.pubsub()
         try:
-            await pubsub.subscribe("trading:config:updated", "strategy:preset:updated", "llm:providers:updated", "advisory:config:updated", "advisory:llm_config:updated", "advisory:auto_execute:updated", "llm:config:updated", "notification:config:updated", "notification:test", "trading:event_trigger_config:updated")
+            await pubsub.subscribe("trading:config:updated", "strategy:preset:updated", "llm:providers:updated", "advisory:config:updated", "advisory:llm_config:updated", "advisory:auto_execute:updated", "llm:config:updated", "notification:config:updated", "notification:test", "trading:event_trigger_config:updated", "symbol_strategy:updated")
 
             async for message in pubsub.listen():
                 if message["type"] == "message":
@@ -664,6 +696,9 @@ class Scheduler:
                                     logger.info("Event trigger config updated from Redis")
                             except Exception as e:
                                 logger.error(f"Failed to update event trigger config: {e}")
+                        elif channel == "symbol_strategy:updated":
+                            logger.info("Symbol strategy config updated, reloading...")
+                            await self._load_symbol_strategies()
                         else:
                             cfg = json.loads(message["data"])
                             # optimization 模块发布的参数变更事件，不含交易配置字段，跳过
@@ -683,9 +718,11 @@ class Scheduler:
                                     # 为新增 symbol 创建 EventDetector
                                     for sym in config.symbols_list:
                                         if sym not in self._event_detectors:
+                                            sym_cfg = self._symbol_strategy_configs.get(sym)
+                                            sym_strats = sym_cfg.merged_config.enabled_strategies if sym_cfg else config.enabled_strategies
                                             self._event_detectors[sym] = EventDetector(
                                                 event_config=self._event_trigger_config,
-                                                enabled_strategies=config.enabled_strategies,
+                                                enabled_strategies=sym_strats,
                                             )
                                             logger.info(f"EventDetector created for new symbol: {sym}")
                                     logger.info(f"Trading symbols updated: {config.symbols_list}")
@@ -1014,6 +1051,9 @@ class Scheduler:
 
         # Publish initial account state for open positions (so Dashboard shows PnL immediately)
         await self._publish_initial_open_positions()
+
+        # Load per-symbol strategy configs
+        await self._load_symbol_strategies()
 
         # Initialize Advisory system
         await self._init_advisory()
@@ -2458,7 +2498,8 @@ class Scheduler:
         # 2. 决策（含多时间框架数据 + 真实纪律上下文）
         total_daily_pnl = sum(self._daily_pnl.values())
         try:
-            decision, tech, risk = await self.decision_engine.analyze_and_decide(
+            engine = self._symbol_engines.get(symbol, self.decision_engine)
+            decision, tech, risk = await engine.analyze_and_decide(
                 market_data, position, balance, equity,
                 mtf_data=mtf_data,
                 daily_pnl=total_daily_pnl,

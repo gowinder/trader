@@ -36,18 +36,27 @@ class HybridDecisionEngine(DecisionEngine):
     When sentiment is disabled, quant + AI weights are normalized to 1.0
     """
 
-    def __init__(self, llm_client: LLMClient):
+    def __init__(self, llm_client: LLMClient, symbol_strategy_config=None):
         """Initialize hybrid decision engine
 
         Args:
             llm_client: LLM client for AI analysis and sentiment analysis
+            symbol_strategy_config: Optional per-symbol StrategyPresetConfig override
         """
         super().__init__(llm_client)
 
+        # Per-symbol strategy config (None means use global config)
+        self._symbol_config = symbol_strategy_config
+
         # Phase 4: Quantitative strategy components
-        if config.enable_quant_strategies:
+        if symbol_strategy_config:
+            enabled = symbol_strategy_config.enabled_strategies
+        else:
+            enabled = config.enabled_strategies if config.enable_quant_strategies else []
+
+        if enabled:
             self.market_classifier = MarketClassifier()
-            self.strategy_selector = StrategySelector(config.enabled_strategies)
+            self.strategy_selector = StrategySelector(enabled)
         else:
             self.market_classifier = None
             self.strategy_selector = None
@@ -350,11 +359,14 @@ class HybridDecisionEngine(DecisionEngine):
             return base_decision
 
         # Fusion logic: weighted combination
-        # Normalize weights
+        # Normalize weights (per-symbol config takes priority over global)
+        ai_weight = self._symbol_config.ai_weight if self._symbol_config else config.ai_weight
+        quant_weight = self._symbol_config.quant_weight if self._symbol_config else config.quant_weight
+        sentiment_weight = self._symbol_config.sentiment_weight if self._symbol_config else config.sentiment_weight
         weights = {
-            "ai": config.ai_weight,
-            "quant": config.quant_weight if quant_signal else 0.0,
-            "sentiment": config.sentiment_weight if sentiment_result else 0.0,
+            "ai": ai_weight,
+            "quant": quant_weight if quant_signal else 0.0,
+            "sentiment": sentiment_weight if sentiment_result else 0.0,
         }
 
         total_weight = sum(weights.values())

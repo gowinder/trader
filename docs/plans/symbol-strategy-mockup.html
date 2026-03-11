@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Symbol Strategy UI Mockup</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0a0a0a; color: #e4e4e7; padding: 32px; max-width: 960px; margin: 0 auto; }
+  h1 { font-size: 20px; margin-bottom: 24px; display: flex; align-items: center; gap: 8px; }
+  .card { border: 1px solid #27272a; border-radius: 8px; background: #09090b; }
+  .card-header { padding: 16px 20px; border-bottom: 1px solid #27272a; display: flex; justify-content: space-between; align-items: center; }
+  .card-title { font-size: 14px; font-weight: 600; }
+  .card-body { padding: 16px 20px; }
+  .search-box { width: 100%; padding: 8px 12px 8px 36px; border: 1px solid #27272a; border-radius: 6px; background: #09090b; color: #e4e4e7; font-size: 13px; margin-bottom: 12px; position: relative; }
+  .search-wrap { position: relative; margin-bottom: 16px; }
+  .search-wrap::before { content: "🔍"; position: absolute; left: 10px; top: 8px; font-size: 13px; }
+  .quick-btns { display: flex; gap: 8px; margin-bottom: 16px; }
+  .btn { padding: 5px 12px; border: 1px solid #27272a; border-radius: 6px; background: transparent; color: #a1a1aa; font-size: 12px; cursor: pointer; }
+  .btn:hover { border-color: #3f3f46; color: #e4e4e7; }
+  .btn-primary { background: #2563eb; border-color: #2563eb; color: #fff; }
+  .btn-primary:hover { background: #1d4ed8; }
+  .btn-sm { padding: 4px 10px; font-size: 11px; }
+
+  /* Symbol rows */
+  .symbol-list { display: flex; flex-direction: column; gap: 8px; }
+  .symbol-row { border: 1px solid #27272a; border-radius: 8px; overflow: hidden; transition: all 0.2s; }
+  .symbol-row.enabled { border-color: rgba(37, 99, 235, 0.3); background: rgba(37, 99, 235, 0.03); }
+  .symbol-row.expanded { border-color: rgba(37, 99, 235, 0.5); }
+  .symbol-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; cursor: pointer; }
+  .symbol-left { display: flex; align-items: center; gap: 10px; }
+  .symbol-dot { width: 8px; height: 8px; border-radius: 50%; background: #3f3f46; }
+  .symbol-dot.on { background: #22c55e; }
+  .symbol-name { font-family: monospace; font-size: 14px; font-weight: 600; }
+  .symbol-suffix { font-size: 12px; color: #71717a; }
+  .symbol-right { display: flex; align-items: center; gap: 12px; }
+  .preset-badge { font-size: 11px; padding: 2px 8px; border-radius: 4px; background: rgba(37, 99, 235, 0.15); color: #60a5fa; }
+  .preset-badge.modified { background: rgba(234, 179, 8, 0.15); color: #facc15; }
+  .toggle { width: 36px; height: 20px; border-radius: 10px; background: #27272a; position: relative; cursor: pointer; transition: background 0.2s; }
+  .toggle.on { background: #2563eb; }
+  .toggle::after { content: ""; position: absolute; width: 16px; height: 16px; border-radius: 50%; background: #fff; top: 2px; left: 2px; transition: transform 0.2s; }
+  .toggle.on::after { transform: translateX(16px); }
+  .expand-icon { color: #71717a; font-size: 12px; transition: transform 0.2s; }
+  .expanded .expand-icon { transform: rotate(180deg); }
+
+  /* Expand panel */
+  .symbol-panel { display: none; padding: 0 16px 16px; border-top: 1px solid #1a1a1e; }
+  .expanded .symbol-panel { display: block; }
+  .panel-section { margin-top: 12px; }
+  .panel-label { font-size: 11px; color: #71717a; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+
+  /* Preset selector */
+  .preset-select { width: 100%; padding: 8px 12px; border: 1px solid #27272a; border-radius: 6px; background: #18181b; color: #e4e4e7; font-size: 13px; cursor: pointer; }
+  .preset-select:focus { outline: none; border-color: #2563eb; }
+
+  /* Params grid */
+  .params-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+  .param-group { }
+  .param-group-title { font-size: 12px; font-weight: 600; color: #a1a1aa; margin-bottom: 8px; padding-bottom: 4px; border-bottom: 1px solid #1a1a1e; }
+  .param-item { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; }
+  .param-name { font-size: 12px; color: #a1a1aa; }
+  .param-value { display: flex; align-items: center; gap: 6px; }
+  .param-input { width: 72px; padding: 4px 8px; border: 1px solid #27272a; border-radius: 4px; background: #18181b; color: #e4e4e7; font-size: 12px; text-align: right; font-family: monospace; }
+  .param-input:focus { outline: none; border-color: #2563eb; }
+  .param-input.modified { border-color: #eab308; background: rgba(234, 179, 8, 0.05); }
+  .param-default { font-size: 10px; color: #52525b; }
+  .param-default.highlight { color: #eab308; }
+
+  /* Panel footer */
+  .panel-footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; padding-top: 12px; border-top: 1px solid #1a1a1e; }
+
+  /* Page save bar */
+  .save-bar { position: fixed; bottom: 0; left: 0; right: 0; background: #18181b; border-top: 1px solid #27272a; padding: 12px 32px; display: flex; justify-content: flex-end; align-items: center; gap: 12px; }
+  .save-bar .hint { font-size: 12px; color: #71717a; }
+  .body-pad { padding-bottom: 80px; }
+
+  /* Disabled symbol */
+  .symbol-row:not(.enabled) .symbol-name { color: #71717a; }
+
+  /* Strategies enabled list */
+  .strategies-list { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+  .strategy-tag { font-size: 11px; padding: 2px 8px; border-radius: 4px; background: #27272a; color: #a1a1aa; }
+  .strategy-tag.active { background: rgba(34, 197, 94, 0.15); color: #4ade80; }
+</style>
+</head>
+<body class="body-pad">
+  <h1>🪙 交易对管理</h1>
+
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">交易对列表 <span style="color:#71717a;font-weight:400">— 已启用 3 / 20 个</span></span>
+      <button class="btn btn-primary btn-sm" style="opacity:0.5;cursor:default">💾 保存</button>
+    </div>
+    <div class="card-body">
+      <div class="search-wrap">
+        <input class="search-box" placeholder="搜索交易对..." />
+      </div>
+      <div class="quick-btns">
+        <button class="btn btn-sm">仅默认 (3个)</button>
+        <button class="btn btn-sm">推荐 (20个)</button>
+        <button class="btn btn-sm">全选</button>
+        <button class="btn btn-sm">重置</button>
+      </div>
+
+      <div class="symbol-list">
+        <!-- BTC - expanded with modifications -->
+        <div class="symbol-row enabled expanded" onclick="this.classList.toggle('expanded')">
+          <div class="symbol-header">
+            <div class="symbol-left">
+              <div class="symbol-dot on"></div>
+              <span class="symbol-name">BTC</span>
+              <span class="symbol-suffix">/USDT</span>
+              <span class="preset-badge modified">稳健趋势 · 已修改</span>
+            </div>
+            <div class="symbol-right">
+              <span class="expand-icon">▼</span>
+              <div class="toggle on" onclick="event.stopPropagation()"></div>
+            </div>
+          </div>
+          <div class="symbol-panel" onclick="event.stopPropagation()">
+            <div class="panel-section">
+              <div class="panel-label">策略预设</div>
+              <select class="preset-select">
+                <option selected>稳健趋势 — 跟随明确趋势，低频交易，严格风控</option>
+                <option>激进趋势 — 强趋势积极跟进，允许加仓</option>
+                <option>震荡收割 — 区间震荡高抛低吸</option>
+                <option>突破猎手 — 捕捉盘整后突破行情</option>
+                <option>温和剥头皮 — 中频小利润交易</option>
+                <option>激进剥头皮 — 高频快进快出</option>
+                <option>均衡保守 — AI主导，低仓低频</option>
+              </select>
+              <div class="strategies-list">
+                <span class="strategy-tag active">趋势跟随</span>
+                <span class="strategy-tag">均值回归</span>
+                <span class="strategy-tag">突破</span>
+              </div>
+            </div>
+
+            <div class="params-grid">
+              <div class="param-group">
+                <div class="param-group-title">权重配置</div>
+                <div class="param-item">
+                  <span class="param-name">AI 权重</span>
+                  <div class="param-value">
+                    <input class="param-input modified" value="0.70" />
+                    <span class="param-default highlight">默认 0.60</span>
+                  </div>
+                </div>
+                <div class="param-item">
+                  <span class="param-name">量化权重</span>
+                  <div class="param-value">
+                    <input class="param-input" value="0.40" />
+                    <span class="param-default">默认 0.40</span>
+                  </div>
+                </div>
+                <div class="param-item">
+                  <span class="param-name">情绪权重</span>
+                  <div class="param-value">
+                    <input class="param-input" value="0.20" />
+                    <span class="param-default">默认 0.20</span>
+                  </div>
+                </div>
+              </div>
+              <div class="param-group">
+                <div class="param-group-title">风控参数</div>
+                <div class="param-item">
+                  <span class="param-name">止损 ATR 倍数</span>
+                  <div class="param-value">
+                    <input class="param-input modified" value="2.50" />
+                    <span class="param-default highlight">默认 3.00</span>
+                  </div>
+                </div>
+                <div class="param-item">
+                  <span class="param-name">止盈 ATR 倍数</span>
+                  <div class="param-value">
+                    <input class="param-input" value="8.00" />
+                    <span class="param-default">默认 8.00</span>
+                  </div>
+                </div>
+                <div class="param-item">
+                  <span class="param-name">最大仓位 %</span>
+                  <div class="param-value">
+                    <input class="param-input" value="15.0" />
+                    <span class="param-default">默认 15.0</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel-footer">
+              <button class="btn btn-sm">↩ 重置为预设默认</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ETH - enabled, collapsed, no modifications -->
+        <div class="symbol-row enabled" onclick="this.classList.toggle('expanded')">
+          <div class="symbol-header">
+            <div class="symbol-left">
+              <div class="symbol-dot on"></div>
+              <span class="symbol-name">ETH</span>
+              <span class="symbol-suffix">/USDT</span>
+              <span class="preset-badge">激进趋势</span>
+            </div>
+            <div class="symbol-right">
+              <span class="expand-icon">▼</span>
+              <div class="toggle on" onclick="event.stopPropagation()"></div>
+            </div>
+          </div>
+          <div class="symbol-panel" onclick="event.stopPropagation()">
+            <div class="panel-section">
+              <div class="panel-label">策略预设</div>
+              <select class="preset-select">
+                <option>稳健趋势 — 跟随明确趋势，低频交易，严格风控</option>
+                <option selected>激进趋势 — 强趋势积极跟进，允许加仓</option>
+                <option>震荡收割 — 区间震荡高抛低吸</option>
+                <option>突破猎手 — 捕捉盘整后突破行情</option>
+                <option>温和剥头皮 — 中频小利润交易</option>
+                <option>激进剥头皮 — 高频快进快出</option>
+                <option>均衡保守 — AI主导，低仓低频</option>
+              </select>
+              <div class="strategies-list">
+                <span class="strategy-tag active">趋势跟随</span>
+                <span class="strategy-tag">均值回归</span>
+                <span class="strategy-tag active">突破</span>
+              </div>
+            </div>
+
+            <div class="params-grid">
+              <div class="param-group">
+                <div class="param-group-title">权重配置</div>
+                <div class="param-item">
+                  <span class="param-name">AI 权重</span>
+                  <div class="param-value">
+                    <input class="param-input" value="0.40" />
+                    <span class="param-default">默认 0.40</span>
+                  </div>
+                </div>
+                <div class="param-item">
+                  <span class="param-name">量化权重</span>
+                  <div class="param-value">
+                    <input class="param-input" value="0.60" />
+                    <span class="param-default">默认 0.60</span>
+                  </div>
+                </div>
+                <div class="param-item">
+                  <span class="param-name">情绪权重</span>
+                  <div class="param-value">
+                    <input class="param-input" value="0.00" />
+                    <span class="param-default">默认 0.00</span>
+                  </div>
+                </div>
+              </div>
+              <div class="param-group">
+                <div class="param-group-title">风控参数</div>
+                <div class="param-item">
+                  <span class="param-name">止损 ATR 倍数</span>
+                  <div class="param-value">
+                    <input class="param-input" value="2.00" />
+                    <span class="param-default">默认 2.00</span>
+                  </div>
+                </div>
+                <div class="param-item">
+                  <span class="param-name">止盈 ATR 倍数</span>
+                  <div class="param-value">
+                    <input class="param-input" value="5.00" />
+                    <span class="param-default">默认 5.00</span>
+                  </div>
+                </div>
+                <div class="param-item">
+                  <span class="param-name">最大仓位 %</span>
+                  <div class="param-value">
+                    <input class="param-input" value="30.0" />
+                    <span class="param-default">默认 30.0</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel-footer">
+              <button class="btn btn-sm">↩ 重置为预设默认</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- DOGE - enabled, collapsed -->
+        <div class="symbol-row enabled" onclick="this.classList.toggle('expanded')">
+          <div class="symbol-header">
+            <div class="symbol-left">
+              <div class="symbol-dot on"></div>
+              <span class="symbol-name">DOGE</span>
+              <span class="symbol-suffix">/USDT</span>
+              <span class="preset-badge">温和剥头皮</span>
+            </div>
+            <div class="symbol-right">
+              <span class="expand-icon">▼</span>
+              <div class="toggle on" onclick="event.stopPropagation()"></div>
+            </div>
+          </div>
+          <div class="symbol-panel" onclick="event.stopPropagation()">
+            <div class="panel-section">
+              <div class="panel-label">策略预设</div>
+              <select class="preset-select">
+                <option>稳健趋势 — 跟随明确趋势，低频交易，严格风控</option>
+                <option>激进趋势 — 强趋势积极跟进，允许加仓</option>
+                <option>震荡收割 — 区间震荡高抛低吸</option>
+                <option>突破猎手 — 捕捉盘整后突破行情</option>
+                <option selected>温和剥头皮 — 中频小利润交易</option>
+                <option>激进剥头皮 — 高频快进快出</option>
+                <option>均衡保守 — AI主导，低仓低频</option>
+              </select>
+              <div class="strategies-list">
+                <span class="strategy-tag active">均值回归</span>
+                <span class="strategy-tag active">趋势跟随</span>
+                <span class="strategy-tag">突破</span>
+              </div>
+            </div>
+
+            <div class="params-grid">
+              <div class="param-group">
+                <div class="param-group-title">权重配置</div>
+                <div class="param-item">
+                  <span class="param-name">AI 权重</span>
+                  <div class="param-value"><input class="param-input" value="0.25" /><span class="param-default">默认 0.25</span></div>
+                </div>
+                <div class="param-item">
+                  <span class="param-name">量化权重</span>
+                  <div class="param-value"><input class="param-input" value="0.75" /><span class="param-default">默认 0.75</span></div>
+                </div>
+                <div class="param-item">
+                  <span class="param-name">情绪权重</span>
+                  <div class="param-value"><input class="param-input" value="0.00" /><span class="param-default">默认 0.00</span></div>
+                </div>
+              </div>
+              <div class="param-group">
+                <div class="param-group-title">风控参数</div>
+                <div class="param-item">
+                  <span class="param-name">止损 ATR 倍数</span>
+                  <div class="param-value"><input class="param-input" value="1.50" /><span class="param-default">默认 1.50</span></div>
+                </div>
+                <div class="param-item">
+                  <span class="param-name">止盈 ATR 倍数</span>
+                  <div class="param-value"><input class="param-input" value="2.00" /><span class="param-default">默认 2.00</span></div>
+                </div>
+                <div class="param-item">
+                  <span class="param-name">最大仓位 %</span>
+                  <div class="param-value"><input class="param-input" value="10.0" /><span class="param-default">默认 10.0</span></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="panel-footer">
+              <button class="btn btn-sm">↩ 重置为预设默认</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- SOL - disabled -->
+        <div class="symbol-row">
+          <div class="symbol-header">
+            <div class="symbol-left">
+              <div class="symbol-dot"></div>
+              <span class="symbol-name">SOL</span>
+              <span class="symbol-suffix">/USDT</span>
+            </div>
+            <div class="symbol-right">
+              <div class="toggle" onclick="event.stopPropagation()"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- BNB - disabled -->
+        <div class="symbol-row">
+          <div class="symbol-header">
+            <div class="symbol-left">
+              <div class="symbol-dot"></div>
+              <span class="symbol-name">BNB</span>
+              <span class="symbol-suffix">/USDT</span>
+            </div>
+            <div class="symbol-right">
+              <div class="toggle" onclick="event.stopPropagation()"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- XRP - disabled -->
+        <div class="symbol-row">
+          <div class="symbol-header">
+            <div class="symbol-left">
+              <div class="symbol-dot"></div>
+              <span class="symbol-name">XRP</span>
+              <span class="symbol-suffix">/USDT</span>
+            </div>
+            <div class="symbol-right">
+              <div class="toggle" onclick="event.stopPropagation()"></div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+
+  <div class="save-bar">
+    <span class="hint">3 个交易对已配置策略</span>
+    <button class="btn btn-primary">💾 保存所有更改</button>
+  </div>
+</body>
+</html>
