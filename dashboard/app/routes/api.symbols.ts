@@ -77,10 +77,17 @@ export async function loader({ request }: LoaderFunctionArgs) {
       }
     }
 
-    return Response.json({ available, configured });
+    // 3. 获取 24h 成交量数据
+    let volumes: Record<string, number> = {};
+    try {
+      const volumesRaw = await client.get("trading:symbol_volumes");
+      if (volumesRaw) volumes = JSON.parse(volumesRaw);
+    } catch { /* ignore */ }
+
+    return Response.json({ available, configured, volumes });
   } catch (error) {
     console.error("Failed to get symbols:", error);
-    return Response.json({ available: [], configured: [] });
+    return Response.json({ available: [], configured: [], volumes: {} });
   } finally {
     if (client) {
       try { await client.disconnect(); } catch { /* ignore */ }

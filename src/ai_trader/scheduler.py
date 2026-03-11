@@ -474,7 +474,7 @@ class Scheduler:
             logger.error(f"Failed to load symbol strategies: {e}")
 
     async def _refresh_available_symbols(self):
-        """从交易所获取可用 symbol 列表并缓存到 Redis"""
+        """从交易所获取可用 symbol 列表和24h成交量并缓存到 Redis"""
         if not self._redis:
             return
         try:
@@ -484,6 +484,12 @@ class Scheduler:
                 logger.info(f"Cached {len(symbols)} available symbols from exchange")
             else:
                 logger.warning("No available symbols returned from exchange")
+            # 获取所有 ticker 的 24h 成交量
+            if hasattr(self.exchange, "get_all_tickers"):
+                volumes = await self.exchange.get_all_tickers()
+                if volumes:
+                    await self._redis.set("trading:symbol_volumes", json.dumps(volumes))
+                    logger.info(f"Cached volume data for {len(volumes)} symbols")
         except Exception as e:
             logger.warning(f"Failed to refresh available symbols: {e}")
 
