@@ -12,8 +12,8 @@ import {
 import { cn, formatDateTime, formatUSD, getPnlColorClass } from "~/lib/utils";
 import { ChevronLeft, ChevronRight, ExternalLink, X } from "lucide-react";
 import { db } from "db";
-import { decisions as decisionsTable } from "db/schema";
-import { desc, count, eq, and, gte, ne } from "drizzle-orm";
+import { decisions as decisionsTable, positionHistory } from "db/schema";
+import { desc, count, eq, and, gte, ne, or } from "drizzle-orm";
 
 export async function loader({ request }: Route.LoaderArgs) {
   const url = new URL(request.url);
@@ -72,8 +72,17 @@ export async function loader({ request }: Route.LoaderArgs) {
         llmProvider: decisionsTable.llmProvider,
         strategyPreset: decisionsTable.strategyPreset,
         triggerSource: decisionsTable.triggerSource,
+        realizedPnl: positionHistory.realizedPnl,
+        pnlPercent: positionHistory.pnlPercent,
       })
       .from(decisionsTable)
+      .leftJoin(
+        positionHistory,
+        or(
+          eq(decisionsTable.id, positionHistory.entryDecisionId),
+          eq(decisionsTable.id, positionHistory.exitDecisionId)
+        )
+      )
       .where(whereClause)
       .orderBy(desc(decisionsTable.createdAt))
       .limit(limit)
@@ -99,7 +108,8 @@ export async function loader({ request }: Route.LoaderArgs) {
       llmProvider: d.llmProvider,
       strategyPreset: d.strategyPreset,
       triggerSource: d.triggerSource,
-      resultPnl: null, // TODO: 从 position_history 计算
+      resultPnl: d.realizedPnl ? parseFloat(d.realizedPnl) : null,
+      resultPnlPercent: d.pnlPercent ? parseFloat(d.pnlPercent) : null,
     })),
     pagination: {
       page,

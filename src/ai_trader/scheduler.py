@@ -204,9 +204,13 @@ class Scheduler:
             await self._strategy_preset_service.ensure_default_active()
             await self._load_active_preset()
         except Exception as e:
-            logger.error(f"Failed to initialize persistence service: {e}")
-            self.db_manager = None
-            self.persistence_service = None
+            if not self._persistence_initialized:
+                logger.error(f"Failed to initialize persistence service: {e}")
+                self.db_manager = None
+                self.persistence_service = None
+            else:
+                # 核心持久化已初始化，后续组件失败不影响核心功能
+                logger.error(f"Failed to initialize optional persistence components: {e}")
 
     async def _init_advisory(self):
         """初始化 Advisory 系统"""
@@ -464,10 +468,14 @@ class Scheduler:
                 # Convert minutes to seconds
                 interval_minutes = max(1, cfg.get("decisionInterval", 1))
                 self._decision_interval = interval_minutes * 60
+                # 同步交易对配置
+                if "trading_symbols" in cfg:
+                    config.trading_symbols = cfg["trading_symbols"]
+                    logger.info(f"Loaded trading symbols from Redis: {config.symbols_list}")
                 # 自动优化开关（Dashboard 优先，其次 env）
                 if "enableAutoOptimization" in cfg:
                     await self._sync_auto_optimization(cfg["enableAutoOptimization"])
-                logger.info(f"Loaded trading config: enabled={self._trading_enabled}, interval={interval_minutes}m")
+                logger.info(f"Loaded trading config: enabled={self._trading_enabled}, interval={interval_minutes}m, symbols={len(config.symbols_list)}")
         except Exception as e:
             logger.error(f"Failed to load trading config: {e}")
 
@@ -1004,6 +1012,9 @@ class Scheduler:
         # Initialize Redis for dynamic config
         await self._init_redis()
 
+        # Publish initial account state for open positions (so Dashboard shows PnL immediately)
+        await self._publish_initial_open_positions()
+
         # Initialize Advisory system
         await self._init_advisory()
 
@@ -1039,7 +1050,15 @@ class Scheduler:
 
             try:
                 # Run cycle for each symbol (re-read from config for hot-reload)
-                for symbol in config.symbols_list:
+                # Prioritize symbols with open positions
+                symbols = config.symbols_list
+                position_symbols = set(self._current_position_ids.keys())
+                if position_symbols:
+                    priority = [s for s in symbols if s in position_symbols]
+                    rest = [s for s in symbols if s not in position_symbols]
+                    symbols = priority + rest
+
+                for symbol in symbols:
                     try:
                         trigger_events = []
 
@@ -1181,25 +1200,30 @@ class Scheduler:
                 # 无持仓时移除该 symbol
                 existing_positions.pop(symbol, None)
 
-            existing_prices[symbol] = current_price
-
-            # 读取现有状态并合并（避免多 symbol 时覆盖）
-            existing_state = None
-            try:
-                existing_json = await self._redis.get("trading:account_state")
-                if existing_json:
-                    existing_state = json.loads(existing_json)
-            except Exception:
-                pass
-
-            existing_positions = existing_state.get("positions", {}) if existing_state else {}
-            existing_prices = existing_state.get("current_prices", {}) if existing_state else {}
-
-            # 更新当前 symbol 的持仓数据
-            if position_data:
-                existing_positions[symbol] = position_data
-            else:
-                existing_positions.pop(symbol, None)
+            # 保护：如果 Redis key 过期导致已知仓位丢失，从数据库恢复
+            known_position_symbols = set(self._current_position_ids.keys())
+            missing = known_position_symbols - set(existing_positions.keys()) - {symbol}
+            if missing and self.db_manager and config.trading_mode == "testnet":
+                for ms in missing:
+                    try:
+                        mp = existing_prices.get(ms)
+                        if not mp:
+                            t = await self.market_mgr.client.get_ticker(ms)
+                            mp = t.last_price if t else None
+                        if mp:
+                            pos = await self._load_testnet_virtual_position(ms, mp)
+                            if pos and pos.size > 0:
+                                existing_positions[ms] = {
+                                    "symbol": pos.symbol, "side": pos.side,
+                                    "size": pos.size, "entry_price": pos.entry_price,
+                                    "mark_price": pos.mark_price,
+                                    "liquidation_price": pos.liquidation_price,
+                                    "leverage": pos.leverage, "margin": pos.margin,
+                                    "unrealized_pnl": pos.unrealized_pnl, "roi": pos.roi,
+                                }
+                                existing_prices[ms] = mp
+                    except Exception:
+                        pass
 
             existing_prices[symbol] = current_price
 
@@ -1217,8 +1241,9 @@ class Scheduler:
 
             # 存储到 Redis
             await self._redis.set("trading:account_state", json.dumps(state))
-            # 设置 5 分钟过期（如果 trader 停止，状态会自动过期）
-            await self._redis.expire("trading:account_state", 300)
+            # 设置 30 分钟过期（如果 trader 停止，状态会自动过期）
+            # 需要足够长以覆盖所有 symbol 的完整决策周期
+            await self._redis.expire("trading:account_state", 1800)
 
             logger.debug(f"Published account state to Redis: equity={account.total_equity}")
         except Exception as e:
@@ -1324,12 +1349,14 @@ class Scheduler:
             if action in ["long", "short", "add_long", "add_short", "open_long", "open_short"]:
                 # 开仓或加仓
                 side = "long" if action in ["long", "add_long", "open_long"] else "short"
+                entry_decision_id = getattr(decision, '_decision_id', None) if decision else None
                 position_id = await self.persistence_service.save_position_open(
                     symbol=symbol,
                     side=side,
                     entry_price=price,
                     entry_size=size,
                     leverage=leverage,
+                    entry_decision_id=entry_decision_id,
                 )
                 self._current_position_ids[symbol] = position_id
                 logger.info(f"Position opened and persisted: {position_id}")
@@ -1369,12 +1396,14 @@ class Scheduler:
                         pnl = -pnl  # 空仓盈亏反向
                     pnl_percent = (pnl / (entry_price * size)) * 100
 
+                    exit_decision_id = getattr(decision, '_decision_id', None) if decision else None
                     await self.persistence_service.save_position_close(
                         position_id=self._current_position_ids.get(symbol),
                         exit_price=price,
                         realized_pnl=pnl,
                         pnl_percent=pnl_percent,
                         fee_total=None,
+                        exit_decision_id=exit_decision_id,
                     )
 
                     # 更新每日统计
@@ -2047,6 +2076,40 @@ class Scheduler:
     async def run_cycle(self):
         """执行单次交易循环（兼容旧版单 symbol）"""
         await self.run_cycle_for_symbol(config.trading_symbol)
+
+    async def _publish_initial_open_positions(self):
+        """启动时为所有 open 仓位立即获取价格并发布到 Redis，确保 Dashboard 立即显示未实现盈亏。"""
+        if not self._redis or not self.db_manager:
+            return
+
+        try:
+            rows = await self.db_manager.fetch(
+                "SELECT DISTINCT symbol FROM position_history WHERE status = 'open' AND entry_size > 0"
+            )
+            if not rows:
+                logger.info("No open positions to publish initial state for")
+                return
+
+            open_symbols = [str(r["symbol"]) for r in rows]
+            logger.info(f"Publishing initial state for {len(open_symbols)} open position(s): {open_symbols}")
+
+            for symbol in open_symbols:
+                try:
+                    ticker = await self.market_mgr.client.get_ticker(symbol)
+                    current_price = ticker.last_price if ticker else None
+                    if not current_price:
+                        continue
+                    position = await self._load_testnet_virtual_position(symbol, current_price)
+                    account_state = await self._build_testnet_account_state(symbol, current_price)
+                    await self._publish_account_state(symbol, account_state, position, current_price)
+                    if position:
+                        logger.info(f"Initial state published for {symbol}: price={current_price}, pnl={position.unrealized_pnl:.2f}")
+                    else:
+                        logger.info(f"Initial state published for {symbol}: no position")
+                except Exception as e:
+                    logger.warning(f"Failed to publish initial state for {symbol}: {e}")
+        except Exception as e:
+            logger.warning(f"Failed to publish initial open positions: {e}")
 
     async def _load_testnet_virtual_position(self, symbol: str, mark_price: float):
         """在 testnet 模式下从数据库恢复当前持仓，形成闭环。"""

@@ -59,6 +59,7 @@ class TradingDecision(BaseModel):
         "wait_for_price"
     )
     _llm_raw_output: str = PrivateAttr(default="")
+    _decision_id: Optional[str] = PrivateAttr(default=None)
 
     @field_validator("leverage")
     @classmethod

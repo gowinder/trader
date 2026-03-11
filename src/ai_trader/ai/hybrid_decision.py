@@ -274,7 +274,7 @@ class HybridDecisionEngine(DecisionEngine):
                         for name in quant_signal.contributing_strategies
                     }
 
-                await self.persistence_service.save_decision(
+                decision_id = await self.persistence_service.save_decision(
                     decision=decision,
                     technical=tech_result,
                     risk=risk_result,
@@ -288,6 +288,8 @@ class HybridDecisionEngine(DecisionEngine):
                     strategy_signals=_strategy_signals_dict,
                     trigger_source="event" if trigger_context else "timer",
                 )
+                if decision_id:
+                    decision._decision_id = str(decision_id)
             except Exception as e:
                 logger.error(f"Failed to persist decision: {e}")
 

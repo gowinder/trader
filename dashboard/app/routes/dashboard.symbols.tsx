@@ -11,6 +11,17 @@ interface SymbolsData {
 
 const DEFAULT_SYMBOLS = ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT"];
 
+// 推荐交易对：主流 + 高流动性山寨币
+const RECOMMENDED_SYMBOLS = [
+  "BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT",
+  "BNB/USDT:USDT", "XRP/USDT:USDT", "ADA/USDT:USDT",
+  "DOGE/USDT:USDT", "AVAX/USDT:USDT", "DOT/USDT:USDT",
+  "LINK/USDT:USDT", "NEAR/USDT:USDT", "SUI/USDT:USDT",
+  "ARB/USDT:USDT", "OP/USDT:USDT", "APT/USDT:USDT",
+  "FIL/USDT:USDT", "ATOM/USDT:USDT", "UNI/USDT:USDT",
+  "RENDER/USDT:USDT", "INJ/USDT:USDT",
+];
+
 export default function SymbolsPage() {
   const [data, setData] = useState<SymbolsData>({ available: [], enabled: [] });
   const [enabledSet, setEnabledSet] = useState<Set<string>>(new Set(DEFAULT_SYMBOLS));
@@ -181,6 +192,16 @@ export default function SymbolsPage() {
               onClick={() => setEnabledSet(new Set(DEFAULT_SYMBOLS))}
             >
               仅默认 (3个)
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                const recommended = RECOMMENDED_SYMBOLS.filter((s) => allSymbols.includes(s));
+                setEnabledSet(new Set(recommended));
+              }}
+            >
+              推荐 ({RECOMMENDED_SYMBOLS.length}个)
             </Button>
             <Button
               variant="outline"
