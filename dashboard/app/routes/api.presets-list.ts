@@ -34,6 +34,6 @@ export async function loader() {
     console.error("Failed to load presets list:", message);
     return Response.json({ presets: [] });
   } finally {
-    await sql.end();
+    if (sql) await sql.end();
   }
 }
