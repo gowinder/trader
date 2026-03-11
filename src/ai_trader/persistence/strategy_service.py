@@ -303,3 +303,33 @@ class StrategyPresetService:
             if default:
                 await self.activate_preset(default)
                 logger.info(f"Activated default preset: {DEFAULT_PRESET_NAME}")
+
+    async def get_all_symbol_strategies(self) -> list:
+        """Load all enabled symbol strategy configurations from database."""
+        from ..models.symbol_strategy import SymbolStrategyConfig
+        from ..models.strategy_preset import StrategyPresetConfig
+
+        query = """
+            SELECT ss.symbol, sp.name as preset_name, sp.config_json,
+                   ss.config_overrides, ss.enabled
+            FROM symbol_strategy ss
+            JOIN strategy_presets sp ON ss.preset_id = sp.id
+            WHERE ss.enabled = true
+            ORDER BY ss.symbol
+        """
+        rows = await self.db.fetch(query)
+
+        results = []
+        for row in rows:
+            config_json = row["config_json"] if isinstance(row["config_json"], dict) else {}
+            overrides = row["config_overrides"] if isinstance(row["config_overrides"], dict) else {}
+            preset_config = StrategyPresetConfig(**config_json)
+            results.append(
+                SymbolStrategyConfig(
+                    symbol=row["symbol"],
+                    preset_name=row["preset_name"],
+                    preset_config=preset_config,
+                    config_overrides=overrides,
+                )
+            )
+        return results

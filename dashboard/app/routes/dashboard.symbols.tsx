@@ -1,57 +1,173 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
 import { Button } from "~/components/ui/button";
 import { Switch } from "~/components/ui/switch";
-import { Coins, Search, Save, RefreshCw } from "lucide-react";
+import { Coins, Search, Save, RefreshCw, ChevronDown, RotateCcw } from "lucide-react";
 
-interface SymbolsData {
-  available: string[];
-  enabled: string[];
+// --- Data Structures ---
+
+interface SymbolConfig {
+  symbol: string;
+  preset_name: string;
+  preset_display_name: string;
+  config_overrides: Record<string, number>;
+  preset_config: Record<string, any>;
 }
 
-const DEFAULT_SYMBOLS = ["BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT"];
+interface PresetOption {
+  name: string;
+  displayName: string;
+  description: string;
+  category: string;
+  riskLevel: string;
+  config: Record<string, any>;
+}
 
-// 推荐交易对：主流 + 高流动性山寨币
-const RECOMMENDED_SYMBOLS = [
-  "BTC/USDT:USDT", "ETH/USDT:USDT", "SOL/USDT:USDT",
-  "BNB/USDT:USDT", "XRP/USDT:USDT", "ADA/USDT:USDT",
-  "DOGE/USDT:USDT", "AVAX/USDT:USDT", "DOT/USDT:USDT",
-  "LINK/USDT:USDT", "NEAR/USDT:USDT", "SUI/USDT:USDT",
-  "ARB/USDT:USDT", "OP/USDT:USDT", "APT/USDT:USDT",
-  "FIL/USDT:USDT", "ATOM/USDT:USDT", "UNI/USDT:USDT",
-  "RENDER/USDT:USDT", "INJ/USDT:USDT",
+interface TunableParam {
+  key: string;
+  label: string;
+  min: number;
+  max: number;
+  step: number;
+}
+
+const TUNABLE_PARAMS: { weights: TunableParam[]; risk: TunableParam[] } = {
+  weights: [
+    { key: "ai_weight", label: "AI 权重", min: 0, max: 1, step: 0.05 },
+    { key: "quant_weight", label: "量化权重", min: 0, max: 1, step: 0.05 },
+    { key: "sentiment_weight", label: "情绪权重", min: 0, max: 1, step: 0.05 },
+  ],
+  risk: [
+    { key: "stop_loss_atr_multiplier", label: "止损 ATR 倍数", min: 0.5, max: 10, step: 0.5 },
+    { key: "take_profit_atr_multiplier", label: "止盈 ATR 倍数", min: 1, max: 20, step: 0.5 },
+    { key: "max_position_pct", label: "最大仓位 %", min: 1, max: 50, step: 1 },
+  ],
+};
+
+const STRATEGY_KEYS = [
+  "trend_following_enabled",
+  "mean_reversion_enabled",
+  "breakout_enabled",
+  "scalping_enabled",
+  "momentum_enabled",
 ];
 
+const STRATEGY_LABELS: Record<string, string> = {
+  trend_following_enabled: "趋势跟随",
+  mean_reversion_enabled: "均值回归",
+  breakout_enabled: "突破",
+  scalping_enabled: "剥头皮",
+  momentum_enabled: "动量",
+};
+
+// --- Component ---
+
 export default function SymbolsPage() {
-  const [data, setData] = useState<SymbolsData>({ available: [], enabled: [] });
-  const [enabledSet, setEnabledSet] = useState<Set<string>>(new Set(DEFAULT_SYMBOLS));
+  const [availableSymbols, setAvailableSymbols] = useState<string[]>([]);
+  const [configuredSymbols, setConfiguredSymbols] = useState<Map<string, SymbolConfig>>(new Map());
+  const [presets, setPresets] = useState<PresetOption[]>([]);
+  const [expandedSymbols, setExpandedSymbols] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [search, setSearch] = useState("");
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
 
-  const fetchData = async () => {
+  // Track original configured state for dirty detection
+  const [originalConfigured, setOriginalConfigured] = useState<Map<string, SymbolConfig>>(new Map());
+
+  const fetchData = useCallback(async () => {
     try {
-      const res = await fetch("/api/symbols");
-      const json = await res.json();
-      setData(json);
-      setEnabledSet(new Set(json.enabled));
+      const [symbolsRes, presetsRes] = await Promise.all([
+        fetch("/api/symbols"),
+        fetch("/api/presets-list"),
+      ]);
+      const symbolsJson = await symbolsRes.json();
+      const presetsJson = await presetsRes.json();
+
+      setAvailableSymbols(symbolsJson.available || []);
+      setPresets(presetsJson.presets || []);
+
+      const cfgMap = new Map<string, SymbolConfig>();
+      for (const cfg of symbolsJson.configured || []) {
+        cfgMap.set(cfg.symbol, cfg);
+      }
+      setConfiguredSymbols(cfgMap);
+      setOriginalConfigured(new Map(cfgMap));
     } catch {
       // use defaults
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [fetchData]);
+
+  // Merge available + configured symbols
+  const allSymbols = useMemo(() => {
+    const set = new Set([...availableSymbols, ...configuredSymbols.keys()]);
+    return Array.from(set).sort();
+  }, [availableSymbols, configuredSymbols]);
+
+  const filteredSymbols = useMemo(() => {
+    if (!search.trim()) return allSymbols;
+    const q = search.toUpperCase();
+    return allSymbols.filter((s) => s.toUpperCase().includes(q));
+  }, [allSymbols, search]);
+
+  const hasChanges = useMemo(() => {
+    if (originalConfigured.size !== configuredSymbols.size) return true;
+    for (const [symbol, cfg] of configuredSymbols) {
+      const orig = originalConfigured.get(symbol);
+      if (!orig) return true;
+      if (cfg.preset_name !== orig.preset_name) return true;
+      const oKeys = Object.keys(orig.config_overrides);
+      const cKeys = Object.keys(cfg.config_overrides);
+      if (oKeys.length !== cKeys.length) return true;
+      for (const k of cKeys) {
+        if (cfg.config_overrides[k] !== orig.config_overrides[k]) return true;
+      }
+    }
+    for (const symbol of originalConfigured.keys()) {
+      if (!configuredSymbols.has(symbol)) return true;
+    }
+    return false;
+  }, [originalConfigured, configuredSymbols]);
 
   const toggleSymbol = (symbol: string) => {
-    setEnabledSet((prev) => {
+    setConfiguredSymbols((prev) => {
+      const next = new Map(prev);
+      if (next.has(symbol)) {
+        next.delete(symbol);
+        setExpandedSymbols((es) => {
+          const ns = new Set(es);
+          ns.delete(symbol);
+          return ns;
+        });
+      } else {
+        // Enable: need to select preset, expand the row
+        // Use first preset as default
+        if (presets.length > 0) {
+          const preset = presets[0];
+          next.set(symbol, {
+            symbol,
+            preset_name: preset.name,
+            preset_display_name: preset.displayName,
+            config_overrides: {},
+            preset_config: { ...preset.config },
+          });
+        }
+        setExpandedSymbols((es) => new Set(es).add(symbol));
+      }
+      return next;
+    });
+  };
+
+  const toggleExpand = (symbol: string) => {
+    setExpandedSymbols((prev) => {
       const next = new Set(prev);
       if (next.has(symbol)) {
-        if (next.size <= 1) return prev; // 至少保留一个
         next.delete(symbol);
       } else {
         next.add(symbol);
@@ -60,16 +176,73 @@ export default function SymbolsPage() {
     });
   };
 
+  const changePreset = (symbol: string, presetName: string) => {
+    const preset = presets.find((p) => p.name === presetName);
+    if (!preset) return;
+    setConfiguredSymbols((prev) => {
+      const next = new Map(prev);
+      const existing = next.get(symbol);
+      if (existing) {
+        next.set(symbol, {
+          ...existing,
+          preset_name: preset.name,
+          preset_display_name: preset.displayName,
+          config_overrides: {},
+          preset_config: { ...preset.config },
+        });
+      }
+      return next;
+    });
+  };
+
+  const updateParam = (symbol: string, key: string, value: number) => {
+    setConfiguredSymbols((prev) => {
+      const next = new Map(prev);
+      const cfg = next.get(symbol);
+      if (!cfg) return prev;
+
+      const defaultVal = cfg.preset_config[key];
+      const newOverrides = { ...cfg.config_overrides };
+
+      if (defaultVal !== undefined && Math.abs(value - defaultVal) < 1e-9) {
+        delete newOverrides[key];
+      } else {
+        newOverrides[key] = value;
+      }
+
+      next.set(symbol, { ...cfg, config_overrides: newOverrides });
+      return next;
+    });
+  };
+
+  const resetOverrides = (symbol: string) => {
+    setConfiguredSymbols((prev) => {
+      const next = new Map(prev);
+      const cfg = next.get(symbol);
+      if (!cfg) return prev;
+      next.set(symbol, { ...cfg, config_overrides: {} });
+      return next;
+    });
+  };
+
   const saveSymbols = async () => {
     setSaving(true);
     setMessage(null);
     try {
+      const savePayload = {
+        configured: Array.from(configuredSymbols.values()).map((cfg) => ({
+          symbol: cfg.symbol,
+          preset_name: cfg.preset_name,
+          config_overrides: cfg.config_overrides,
+        })),
+      };
       const res = await fetch("/api/symbols", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled: Array.from(enabledSet) }),
+        body: JSON.stringify(savePayload),
       });
       if (res.ok) {
+        setOriginalConfigured(new Map(configuredSymbols));
         setMessage({ type: "success", text: "交易对配置已保存，将在下一个决策周期生效" });
       } else {
         const err = await res.json();
@@ -82,33 +255,25 @@ export default function SymbolsPage() {
     }
   };
 
-  // 合并可用列表和已启用列表（处理可用列表尚未加载的情况）
-  const allSymbols = useMemo(() => {
-    const set = new Set([...data.available, ...enabledSet]);
-    return Array.from(set).sort();
-  }, [data.available, enabledSet]);
+  const getEffectiveValue = (cfg: SymbolConfig, key: string): number => {
+    if (key in cfg.config_overrides) return cfg.config_overrides[key];
+    return cfg.preset_config[key] ?? 0;
+  };
 
-  const filteredSymbols = useMemo(() => {
-    if (!search.trim()) return allSymbols;
-    const q = search.toUpperCase();
-    return allSymbols.filter((s) => s.toUpperCase().includes(q));
-  }, [allSymbols, search]);
+  const isParamModified = (cfg: SymbolConfig, key: string): boolean => {
+    return key in cfg.config_overrides;
+  };
 
-  const hasChanges = useMemo(() => {
-    const originalSet = new Set(data.enabled);
-    if (originalSet.size !== enabledSet.size) return true;
-    for (const s of enabledSet) {
-      if (!originalSet.has(s)) return true;
-    }
-    return false;
-  }, [data.enabled, enabledSet]);
+  const hasOverrides = (cfg: SymbolConfig): boolean => {
+    return Object.keys(cfg.config_overrides).length > 0;
+  };
 
   if (loading) {
     return <div className="p-8 text-center text-muted-foreground">加载中...</div>;
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-20">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold flex items-center gap-2">
           <Coins className="h-6 w-6" />
@@ -116,7 +281,7 @@ export default function SymbolsPage() {
         </h1>
         <div className="flex items-center gap-2">
           <span className="text-sm text-muted-foreground">
-            已启用 {enabledSet.size} / {allSymbols.length} 个
+            已启用 {configuredSymbols.size} / {allSymbols.length} 个
           </span>
         </div>
       </div>
@@ -138,7 +303,7 @@ export default function SymbolsPage() {
           <CardTitle className="text-base flex items-center justify-between">
             <span className="flex items-center gap-2">
               交易对列表
-              {data.available.length === 0 && (
+              {availableSymbols.length === 0 && (
                 <span className="text-xs text-yellow-500 font-normal">
                   (交易所可用列表尚未加载，请等待 Trader 启动)
                 </span>
@@ -167,7 +332,7 @@ export default function SymbolsPage() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          {/* 搜索框 */}
+          {/* Search */}
           <div className="relative">
             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
             <input
@@ -184,72 +349,229 @@ export default function SymbolsPage() {
             )}
           </div>
 
-          {/* 快捷操作 */}
-          <div className="flex gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setEnabledSet(new Set(DEFAULT_SYMBOLS))}
-            >
-              仅默认 (3个)
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => {
-                const recommended = RECOMMENDED_SYMBOLS.filter((s) => allSymbols.includes(s));
-                setEnabledSet(new Set(recommended));
-              }}
-            >
-              推荐 ({RECOMMENDED_SYMBOLS.length}个)
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setEnabledSet(new Set(allSymbols))}
-            >
-              全选
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setEnabledSet(new Set(DEFAULT_SYMBOLS))}
-            >
-              重置
-            </Button>
-          </div>
-
-          {/* Symbol 列表 */}
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {/* Symbol list */}
+          <div className="flex flex-col gap-2">
             {filteredSymbols.map((symbol) => {
-              const isEnabled = enabledSet.has(symbol);
+              const cfg = configuredSymbols.get(symbol);
+              const isEnabled = !!cfg;
+              const isExpanded = expandedSymbols.has(symbol);
               const displayName = symbol.replace(":USDT", "").replace("/USDT", "");
               const baseSymbol = displayName.split("/")[0] || displayName;
 
               return (
                 <div
                   key={symbol}
-                  className={`flex items-center justify-between rounded-md border px-3 py-2 transition-colors ${
+                  className={`rounded-lg border overflow-hidden transition-colors ${
                     isEnabled
-                      ? "border-primary/30 bg-primary/5"
+                      ? isExpanded
+                        ? "border-primary/50 bg-primary/[0.03]"
+                        : "border-primary/30 bg-primary/[0.03]"
                       : "border-border"
                   }`}
                 >
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={`h-2 w-2 rounded-full ${
-                        isEnabled ? "bg-green-500" : "bg-muted"
-                      }`}
-                    />
-                    <span className="font-mono text-sm font-medium">
-                      {baseSymbol}
-                    </span>
-                    <span className="text-xs text-muted-foreground">/USDT</span>
+                  {/* Symbol header row */}
+                  <div
+                    className="flex items-center justify-between px-4 py-2.5 cursor-pointer"
+                    onClick={() => {
+                      if (isEnabled) toggleExpand(symbol);
+                    }}
+                  >
+                    <div className="flex items-center gap-2.5">
+                      <span
+                        className={`h-2 w-2 rounded-full ${
+                          isEnabled ? "bg-green-500" : "bg-muted"
+                        }`}
+                      />
+                      <span
+                        className={`font-mono text-sm font-semibold ${
+                          isEnabled ? "" : "text-muted-foreground"
+                        }`}
+                      >
+                        {baseSymbol}
+                      </span>
+                      <span className="text-xs text-muted-foreground">/USDT</span>
+                      {cfg && (
+                        <span
+                          className={`text-[11px] px-2 py-0.5 rounded ${
+                            hasOverrides(cfg)
+                              ? "bg-yellow-500/15 text-yellow-400"
+                              : "bg-primary/15 text-blue-400"
+                          }`}
+                        >
+                          {cfg.preset_display_name}
+                          {hasOverrides(cfg) && " \u00b7 已修改"}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-3">
+                      {isEnabled && (
+                        <ChevronDown
+                          className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${
+                            isExpanded ? "rotate-180" : ""
+                          }`}
+                        />
+                      )}
+                      <div onClick={(e) => e.stopPropagation()}>
+                        <Switch
+                          checked={isEnabled}
+                          onCheckedChange={() => toggleSymbol(symbol)}
+                        />
+                      </div>
+                    </div>
                   </div>
-                  <Switch
-                    checked={isEnabled}
-                    onCheckedChange={() => toggleSymbol(symbol)}
-                  />
+
+                  {/* Expanded panel */}
+                  {isEnabled && isExpanded && cfg && (
+                    <div
+                      className="px-4 pb-4 border-t border-border/50"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      {/* Preset selector */}
+                      <div className="mt-3">
+                        <div className="text-[11px] text-muted-foreground uppercase tracking-wider mb-2">
+                          策略预设
+                        </div>
+                        <select
+                          value={cfg.preset_name}
+                          onChange={(e) => changePreset(symbol, e.target.value)}
+                          className="w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary cursor-pointer"
+                        >
+                          {presets.map((p) => (
+                            <option key={p.name} value={p.name}>
+                              {p.displayName} — {p.description}
+                            </option>
+                          ))}
+                        </select>
+
+                        {/* Strategy tags */}
+                        <div className="flex flex-wrap gap-1.5 mt-2">
+                          {STRATEGY_KEYS.map((sk) => {
+                            const active = cfg.preset_config[sk] === true;
+                            return (
+                              <span
+                                key={sk}
+                                className={`text-[11px] px-2 py-0.5 rounded ${
+                                  active
+                                    ? "bg-green-500/15 text-green-400"
+                                    : "bg-muted text-muted-foreground"
+                                }`}
+                              >
+                                {STRATEGY_LABELS[sk] || sk}
+                              </span>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Params grid */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-3">
+                        {/* Weights */}
+                        <div>
+                          <div className="text-xs font-semibold text-muted-foreground mb-2 pb-1 border-b border-border/50">
+                            权重配置
+                          </div>
+                          {TUNABLE_PARAMS.weights.map((param) => {
+                            const val = getEffectiveValue(cfg, param.key);
+                            const modified = isParamModified(cfg, param.key);
+                            const defaultVal = cfg.preset_config[param.key] ?? 0;
+                            return (
+                              <div
+                                key={param.key}
+                                className="flex items-center justify-between py-1.5"
+                              >
+                                <span className="text-xs text-muted-foreground">
+                                  {param.label}
+                                </span>
+                                <div className="flex items-center gap-1.5">
+                                  <input
+                                    type="number"
+                                    value={val}
+                                    min={param.min}
+                                    max={param.max}
+                                    step={param.step}
+                                    onChange={(e) =>
+                                      updateParam(symbol, param.key, parseFloat(e.target.value) || 0)
+                                    }
+                                    className={`w-[72px] px-2 py-1 rounded border text-right font-mono text-xs bg-card text-foreground focus:outline-none focus:border-primary ${
+                                      modified
+                                        ? "border-yellow-500 bg-yellow-500/5"
+                                        : "border-input"
+                                    }`}
+                                  />
+                                  <span
+                                    className={`text-[10px] w-16 ${
+                                      modified ? "text-yellow-500" : "text-muted-foreground/50"
+                                    }`}
+                                  >
+                                    默认 {Number(defaultVal).toFixed(2)}
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+
+                        {/* Risk */}
+                        <div>
+                          <div className="text-xs font-semibold text-muted-foreground mb-2 pb-1 border-b border-border/50">
+                            风控参数
+                          </div>
+                          {TUNABLE_PARAMS.risk.map((param) => {
+                            const val = getEffectiveValue(cfg, param.key);
+                            const modified = isParamModified(cfg, param.key);
+                            const defaultVal = cfg.preset_config[param.key] ?? 0;
+                            return (
+                              <div
+                                key={param.key}
+                                className="flex items-center justify-between py-1.5"
+                              >
+                                <span className="text-xs text-muted-foreground">
+                                  {param.label}
+                                </span>
+                                <div className="flex items-center gap-1.5">
+                                  <input
+                                    type="number"
+                                    value={val}
+                                    min={param.min}
+                                    max={param.max}
+                                    step={param.step}
+                                    onChange={(e) =>
+                                      updateParam(symbol, param.key, parseFloat(e.target.value) || 0)
+                                    }
+                                    className={`w-[72px] px-2 py-1 rounded border text-right font-mono text-xs bg-card text-foreground focus:outline-none focus:border-primary ${
+                                      modified
+                                        ? "border-yellow-500 bg-yellow-500/5"
+                                        : "border-input"
+                                    }`}
+                                  />
+                                  <span
+                                    className={`text-[10px] w-16 ${
+                                      modified ? "text-yellow-500" : "text-muted-foreground/50"
+                                    }`}
+                                  >
+                                    默认 {Number(defaultVal).toFixed(2)}
+                                  </span>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Panel footer */}
+                      <div className="flex justify-end mt-4 pt-3 border-t border-border/50">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => resetOverrides(symbol)}
+                          disabled={!hasOverrides(cfg)}
+                        >
+                          <RotateCcw className="mr-1 h-3 w-3" />
+                          重置为预设默认
+                        </Button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -262,6 +584,28 @@ export default function SymbolsPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Fixed save bar */}
+      {hasChanges && (
+        <div className="fixed bottom-0 left-0 right-0 bg-card border-t border-border px-8 py-3 flex justify-end items-center gap-3 z-50">
+          <span className="text-xs text-muted-foreground">
+            {configuredSymbols.size} 个交易对已配置策略
+          </span>
+          <Button onClick={saveSymbols} disabled={saving}>
+            {saving ? (
+              <>
+                <RefreshCw className="mr-1 h-3 w-3 animate-spin" />
+                保存中...
+              </>
+            ) : (
+              <>
+                <Save className="mr-1 h-3 w-3" />
+                保存所有更改
+              </>
+            )}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

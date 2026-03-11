@@ -489,6 +489,24 @@ export const activeStrategy = pgTable(
   })
 );
 
+export const symbolStrategy = pgTable(
+  "symbol_strategy",
+  {
+    id: integer("id").primaryKey().generatedAlwaysAsIdentity(),
+    symbol: varchar("symbol", { length: 20 }).notNull(),
+    presetId: integer("preset_id")
+      .references(() => strategyPresets.id)
+      .notNull(),
+    configOverrides: jsonb("config_overrides").default({}).notNull(),
+    enabled: boolean("enabled").default(true).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    symbolIdx: uniqueIndex("idx_symbol_strategy_symbol").on(table.symbol),
+  })
+);
+
 // ==================== AI Advisory ====================
 
 export const advisories = pgTable(
