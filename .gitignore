@@ -406,3 +406,4 @@ data/cache/
 data/*.db
 
 .superset/
+.worktrees/
