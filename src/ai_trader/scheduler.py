@@ -370,9 +370,11 @@ class Scheduler:
 
             # Initialize per-symbol EventDetectors
             for symbol in config.symbols_list:
+                symbol_cfg = self._symbol_strategy_configs.get(symbol)
+                enabled_strats = symbol_cfg.merged_config.enabled_strategies if symbol_cfg else config.enabled_strategies
                 self._event_detectors[symbol] = EventDetector(
                     event_config=self._event_trigger_config,
-                    enabled_strategies=config.enabled_strategies,
+                    enabled_strategies=enabled_strats,
                 )
             logger.info(f"EventDetector initialized for {len(config.symbols_list)} symbol(s)")
 
@@ -428,6 +430,8 @@ class Scheduler:
             self._active_preset_name = preset_data.get("name", self._active_preset_name)
             config.apply_preset(preset_config)
 
+            # DEPRECATED: Global preset switching. Per-symbol config now handled by _symbol_engines.
+            # This remains as fallback for symbols without per-symbol config.
             # 重建决策引擎（保留 prompt_enricher 引用）
             old_enricher = getattr(self.decision_engine, "prompt_enricher", None)
             self.decision_engine = HybridDecisionEngine(self.llm)
@@ -455,6 +459,13 @@ class Scheduler:
             self._symbol_strategy_configs = new_configs
             self._symbol_engines = new_engines
             logger.info(f"Loaded per-symbol strategies for {len(new_configs)} symbols")
+            # Rebuild EventDetectors for symbols with per-symbol config
+            for symbol, cfg in self._symbol_strategy_configs.items():
+                if symbol in self._event_detectors:
+                    self._event_detectors[symbol] = EventDetector(
+                        event_config=self._event_trigger_config,
+                        enabled_strategies=cfg.merged_config.enabled_strategies,
+                    )
         except Exception as e:
             logger.error(f"Failed to load symbol strategies: {e}")
 
@@ -699,9 +710,11 @@ class Scheduler:
                                     # 为新增 symbol 创建 EventDetector
                                     for sym in config.symbols_list:
                                         if sym not in self._event_detectors:
+                                            sym_cfg = self._symbol_strategy_configs.get(sym)
+                                            sym_strats = sym_cfg.merged_config.enabled_strategies if sym_cfg else config.enabled_strategies
                                             self._event_detectors[sym] = EventDetector(
                                                 event_config=self._event_trigger_config,
-                                                enabled_strategies=config.enabled_strategies,
+                                                enabled_strategies=sym_strats,
                                             )
                                             logger.info(f"EventDetector created for new symbol: {sym}")
                                     logger.info(f"Trading symbols updated: {config.symbols_list}")
