@@ -336,6 +336,7 @@ class Scheduler:
             if self._redis:
                 self._advisory_tasks.append(asyncio.create_task(self._advisory_manual_trigger_listener()))
                 self._advisory_tasks.append(asyncio.create_task(self._strategy_suggest_listener()))
+                self._advisory_tasks.append(asyncio.create_task(self._symbol_strategy_suggest_listener()))
             logger.info("Advisory system initialized")
         except Exception as e:
             logger.error(f"Failed to initialize advisory system: {e}")
@@ -2017,6 +2018,69 @@ class Scheduler:
             error_result = {"status": "error", "error": str(e)}
             try:
                 await self._redis.set(result_key, json.dumps(error_result, ensure_ascii=False), ex=300)
+            except Exception:
+                pass
+
+    async def _symbol_strategy_suggest_listener(self):
+        """Listen for per-symbol strategy suggestion requests via Redis list (BLPOP)"""
+        if not self._redis or not self._advisory_service:
+            return
+        try:
+            logger.info("Symbol strategy suggest listener started (BLPOP queue)")
+            while True:
+                try:
+                    result = await self._redis.blpop("symbol_strategy:suggest_queue", timeout=5)
+                    if result is None:
+                        continue
+                    _, raw = result
+                    data = json.loads(raw)
+                    task_id = data.get("task_id", "")
+                    target_symbols = data.get("symbols", [])
+                    if task_id and target_symbols:
+                        task = asyncio.create_task(
+                            self._run_symbol_strategy_suggest(task_id, target_symbols)
+                        )
+                        self._advisory_tasks.append(task)
+                        self._advisory_tasks = [t for t in self._advisory_tasks if not t.done()]
+                except asyncio.CancelledError:
+                    raise
+                except Exception as e:
+                    logger.error(f"Symbol strategy suggest listener error: {e}")
+                    await asyncio.sleep(1)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"Symbol strategy suggest listener fatal: {e}")
+
+    async def _run_symbol_strategy_suggest(self, task_id: str, target_symbols: list):
+        """Run per-symbol strategy suggestion and store result in Redis"""
+        if not self._redis or not self._advisory_service:
+            return
+        result_key = f"symbol_strategy:suggest:result:{task_id}"
+        try:
+            ctx = await self._collect_advisory_data()
+            suggestions = await self._advisory_service.engine.suggest_symbol_strategies(
+                target_symbols=target_symbols,
+                symbols=ctx["symbols"],
+                positions=ctx["positions"],
+                market_data=ctx["market_data"],
+                sentiment=None,
+                current_config=ctx["current_config"],
+                account_summary=ctx["account_summary"],
+            )
+            result = {"status": "completed", "suggestions": suggestions}
+            await self._redis.set(result_key, json.dumps(result, ensure_ascii=False), ex=300)
+            logger.info(f"Symbol strategy suggestion completed: task_id={task_id}, symbols={len(suggestions)}")
+        except asyncio.CancelledError:
+            try:
+                await self._redis.set(result_key, json.dumps({"status": "cancelled"}, ensure_ascii=False), ex=300)
+            except Exception:
+                pass
+            raise
+        except Exception as e:
+            logger.error(f"Symbol strategy suggestion failed: {e}")
+            try:
+                await self._redis.set(result_key, json.dumps({"status": "error", "error": str(e)}, ensure_ascii=False), ex=300)
             except Exception:
                 pass
 

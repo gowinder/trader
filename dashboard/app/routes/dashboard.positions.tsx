@@ -17,7 +17,7 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { db } from "db";
-import { positionHistory, decisions as decisionsTable } from "db/schema";
+import { positionHistory, decisions as decisionsTable, symbolStrategy, strategyPresets } from "db/schema";
 import { desc, eq, and, gte, lte, or, sql, inArray } from "drizzle-orm";
 import { createClient } from "redis";
 
@@ -197,6 +197,49 @@ export async function loader(_args: Route.LoaderArgs) {
     }
   }
 
+  // 获取每个持仓 symbol 的策略配置
+  const openSymbols = openPositions.map((p) => p.symbol);
+  let symbolStrategyMap: Record<string, { preset_name: string; preset_display_name: string }> = {};
+  if (openSymbols.length > 0) {
+    try {
+      const ssRows = await db
+        .select({
+          symbol: symbolStrategy.symbol,
+          presetName: strategyPresets.name,
+          presetDisplayName: strategyPresets.displayName,
+        })
+        .from(symbolStrategy)
+        .innerJoin(strategyPresets, eq(symbolStrategy.presetId, strategyPresets.id))
+        .where(and(
+          eq(symbolStrategy.enabled, true),
+          inArray(symbolStrategy.symbol, openSymbols)
+        ));
+      for (const row of ssRows) {
+        symbolStrategyMap[row.symbol] = {
+          preset_name: row.presetName,
+          preset_display_name: row.presetDisplayName,
+        };
+      }
+    } catch (e) {
+      console.error("Failed to query symbol strategies:", e);
+    }
+  }
+
+  // 获取预设列表
+  let presetsList: Array<{ name: string; displayName: string; description: string | null }> = [];
+  try {
+    presetsList = await db
+      .select({
+        name: strategyPresets.name,
+        displayName: strategyPresets.displayName,
+        description: strategyPresets.description,
+      })
+      .from(strategyPresets)
+      .orderBy(strategyPresets.name);
+  } catch (e) {
+    console.error("Failed to query presets:", e);
+  }
+
   const serializePosition = (p: typeof allPositions[0]) => {
     const rt = realtimePositions[p.symbol] || null;
     return {
@@ -221,6 +264,8 @@ export async function loader(_args: Route.LoaderArgs) {
     closedPositions: closedPositions.map(serializePosition),
     positionDecisions: positionDecisionsMap,
     realtimePositions,
+    symbolStrategies: symbolStrategyMap,
+    presets: presetsList,
     stats: {
       totalTrades: Number(stats.totalTrades),
       winningTrades: Number(stats.winningTrades),
@@ -232,8 +277,72 @@ export async function loader(_args: Route.LoaderArgs) {
 }
 
 export default function PositionsPage({ loaderData }: Route.ComponentProps) {
-  const { openPositions, closedPositions, stats, positionDecisions, realtimePositions } = loaderData;
+  const { openPositions, closedPositions, stats, positionDecisions, symbolStrategies, presets } = loaderData;
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [suggesting, setSuggesting] = useState<Record<string, boolean>>({});
+  const [suggestions, setSuggestions] = useState<Record<string, { recommended_preset: string; recommended_display_name: string; reason: string; market_state: string }>>({});
+  const [switchingStrategy, setSwitchingStrategy] = useState<Record<string, boolean>>({});
+
+  const handleSuggest = async (symbol: string) => {
+    setSuggesting((prev) => ({ ...prev, [symbol]: true }));
+    try {
+      const triggerRes = await fetch("/api/symbol-strategy-suggest", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ symbols: [symbol] }),
+      });
+      if (!triggerRes.ok) return;
+      const { taskId } = await triggerRes.json();
+      for (let i = 0; i < 60; i++) {
+        await new Promise((r) => setTimeout(r, 2000));
+        const pollRes = await fetch(`/api/symbol-strategy-suggest?taskId=${taskId}`);
+        if (!pollRes.ok) continue;
+        const result = await pollRes.json();
+        if (result.status === "completed" && result.suggestions?.[symbol]) {
+          setSuggestions((prev) => ({ ...prev, [symbol]: result.suggestions[symbol] }));
+          return;
+        }
+        if (result.status === "error") return;
+      }
+    } catch { /* ignore */ } finally {
+      setSuggesting((prev) => ({ ...prev, [symbol]: false }));
+    }
+  };
+
+  const handleSwitchStrategy = async (symbol: string, presetName: string) => {
+    setSwitchingStrategy((prev) => ({ ...prev, [symbol]: true }));
+    try {
+      // Read current configured symbols, update just this one
+      const symbolsRes = await fetch("/api/symbols");
+      const symbolsJson = await symbolsRes.json();
+      const configured = (symbolsJson.configured || []).map((c: any) => ({
+        symbol: c.symbol,
+        preset_name: c.preset_name,
+        config_overrides: c.config_overrides || {},
+      }));
+      // Update or add the target symbol
+      const idx = configured.findIndex((c: any) => c.symbol === symbol);
+      if (idx >= 0) {
+        configured[idx].preset_name = presetName;
+        configured[idx].config_overrides = {};
+      } else {
+        configured.push({ symbol, preset_name: presetName, config_overrides: {} });
+      }
+      await fetch("/api/symbols", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ configured }),
+      });
+      // Clear suggestion after adopting
+      setSuggestions((prev) => {
+        const next = { ...prev };
+        delete next[symbol];
+        return next;
+      });
+    } catch { /* ignore */ } finally {
+      setSwitchingStrategy((prev) => ({ ...prev, [symbol]: false }));
+    }
+  };
 
   const toggleExpand = (id: string) => {
     setExpandedIds((prev) => {
@@ -292,6 +401,7 @@ export default function PositionsPage({ loaderData }: Route.ComponentProps) {
                   <tr className="border-b text-left text-muted-foreground">
                     <th className="pb-3 pl-1 font-medium w-8"></th>
                     <th className="pb-3 font-medium">交易对</th>
+                    <th className="pb-3 font-medium">策略</th>
                     <th className="pb-3 font-medium">方向</th>
                     <th className="pb-3 font-medium text-right">入场价</th>
                     <th className="pb-3 font-medium text-right">数量</th>
@@ -306,7 +416,8 @@ export default function PositionsPage({ loaderData }: Route.ComponentProps) {
                   {openPositions.map((position) => {
                     const decisions = positionDecisions[position.id] || [];
                     const isExpanded = expandedIds.has(position.id);
-                    const realtime = realtimePositions[position.symbol] || null;
+                    const strategy = symbolStrategies[position.symbol];
+                    const suggestion = suggestions[position.symbol];
                     return (
                       <PositionRow
                         key={position.id}
@@ -315,7 +426,13 @@ export default function PositionsPage({ loaderData }: Route.ComponentProps) {
                         isExpanded={isExpanded}
                         onToggle={() => toggleExpand(position.id)}
                         columns="open"
-                        realtime={realtime}
+                        strategy={strategy}
+                        suggestion={suggestion}
+                        presets={presets}
+                        onSuggest={() => handleSuggest(position.symbol)}
+                        onSwitchStrategy={(presetName) => handleSwitchStrategy(position.symbol, presetName)}
+                        isSuggesting={suggesting[position.symbol] || false}
+                        isSwitching={switchingStrategy[position.symbol] || false}
                       />
                     );
                   })}
@@ -386,16 +503,28 @@ function PositionRow({
   isExpanded,
   onToggle,
   columns,
-  realtime,
+  strategy,
+  suggestion,
+  presets,
+  onSuggest,
+  onSwitchStrategy,
+  isSuggesting,
+  isSwitching,
 }: {
   position: any;
   decisions: DecisionSummary[];
   isExpanded: boolean;
   onToggle: () => void;
   columns: "open" | "closed";
-  realtime?: { mark_price: number; unrealized_pnl: number; roi: number } | null;
+  strategy?: { preset_name: string; preset_display_name: string };
+  suggestion?: { recommended_preset: string; recommended_display_name: string; reason: string; market_state: string };
+  presets?: Array<{ name: string; displayName: string; description: string | null }>;
+  onSuggest?: () => void;
+  onSwitchStrategy?: (presetName: string) => void;
+  isSuggesting?: boolean;
+  isSwitching?: boolean;
 }) {
-  const colSpan = columns === "open" ? 10 : 8;
+  const colSpan = columns === "open" ? 11 : 8;
 
   return (
     <>
@@ -407,7 +536,7 @@ function PositionRow({
         onClick={onToggle}
       >
         <td className="py-3 pl-1">
-          {decisions.length > 0 ? (
+          {(decisions.length > 0 || columns === "open") ? (
             isExpanded ? (
               <ChevronUp className="h-4 w-4 text-muted-foreground" />
             ) : (
@@ -416,6 +545,17 @@ function PositionRow({
           ) : null}
         </td>
         <td className="py-3 font-medium">{position.symbol}</td>
+        {columns === "open" && (
+          <td className="py-3">
+            {strategy ? (
+              <span className="text-[11px] px-2 py-0.5 rounded bg-primary/15 text-blue-400">
+                {strategy.preset_display_name}
+              </span>
+            ) : (
+              <span className="text-[11px] text-muted-foreground">-</span>
+            )}
+          </td>
+        )}
         <td className="py-3">
           <span
             className={cn(
@@ -616,6 +756,75 @@ function PositionRow({
               </div>
             ) : (
               <div className="text-xs text-muted-foreground">暂无关联决策记录</div>
+            )}
+
+            {/* Strategy management - only for open positions */}
+            {columns === "open" && presets && presets.length > 0 && (
+              <div className="mt-3 pt-3 border-t border-border/50">
+                <div className="text-xs font-medium text-muted-foreground mb-2">策略管理</div>
+                <div className="flex items-center gap-3 flex-wrap">
+                  {/* Current strategy */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-muted-foreground">当前:</span>
+                    <span className="text-xs font-medium">
+                      {strategy?.preset_display_name || "未配置"}
+                    </span>
+                  </div>
+
+                  {/* Strategy switch dropdown */}
+                  <select
+                    value={strategy?.preset_name || ""}
+                    onChange={(e) => onSwitchStrategy?.(e.target.value)}
+                    disabled={isSwitching}
+                    className="text-xs rounded border border-input bg-card px-2 py-1 text-foreground focus:outline-none focus:border-primary"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {!strategy && <option value="">选择策略...</option>}
+                    {presets.map((p) => (
+                      <option key={p.name} value={p.name}>
+                        {p.displayName}
+                      </option>
+                    ))}
+                  </select>
+                  {isSwitching && <span className="text-xs text-muted-foreground">切换中...</span>}
+
+                  {/* AI suggest button */}
+                  <button
+                    onClick={(e) => { e.stopPropagation(); onSuggest?.(); }}
+                    disabled={isSuggesting}
+                    className="text-xs px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    {isSuggesting ? "AI 分析中..." : "AI 建议"}
+                  </button>
+
+                  {/* Show suggestion */}
+                  {suggestion && (
+                    <div className="flex items-center gap-2 rounded bg-blue-500/10 border border-blue-500/30 px-2 py-1">
+                      <span className="text-xs text-blue-400">
+                        建议: {suggestion.recommended_display_name}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground">
+                        ({suggestion.market_state})
+                      </span>
+                      {suggestion.recommended_preset !== strategy?.preset_name && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); onSwitchStrategy?.(suggestion.recommended_preset); }}
+                          disabled={isSwitching}
+                          className="text-[11px] px-1.5 py-0.5 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                        >
+                          采纳
+                        </button>
+                      )}
+                      {suggestion.recommended_preset === strategy?.preset_name && (
+                        <span className="text-[10px] text-green-400">已是当前策略</span>
+                      )}
+                    </div>
+                  )}
+                </div>
+                {suggestion?.reason && (
+                  <p className="text-[11px] text-muted-foreground mt-1">{suggestion.reason}</p>
+                )}
+              </div>
             )}
           </td>
         </tr>
