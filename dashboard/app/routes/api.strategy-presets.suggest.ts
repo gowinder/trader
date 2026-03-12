@@ -18,6 +18,16 @@ export async function action({ request }: ActionFunctionArgs) {
   let client: Awaited<ReturnType<typeof getRedisClient>> | null = null;
   try {
     client = await getRedisClient();
+
+    // Check global strategy lock from Redis
+    const activePreset = await client.get("strategy:active_preset");
+    if (activePreset) {
+      const presetData = JSON.parse(activePreset);
+      if (presetData.is_locked) {
+        return Response.json({ error: "策略已锁定，请先解锁再修改" }, { status: 423 });
+      }
+    }
+
     const taskId = `strategy-suggest-${Date.now()}-${randomBytes(4).toString("hex")}`;
 
     // Check if trader consumer is actually online (heartbeat flag with TTL)

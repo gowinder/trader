@@ -25,6 +25,16 @@ export async function action({ request }: { request: Request }) {
       return Response.json({ error: "presetId is required" }, { status: 400 });
     }
 
+    // Check global strategy lock
+    const lockCheck = await sql`
+      SELECT COALESCE(is_locked, false) as is_locked
+      FROM active_strategy WHERE deactivated_at IS NULL
+      ORDER BY activated_at DESC LIMIT 1
+    `;
+    if (lockCheck.length > 0 && lockCheck[0].is_locked) {
+      return Response.json({ error: "策略已锁定，请先解锁再修改" }, { status: 423 });
+    }
+
     // Verify preset exists and is not a system preset
     const preset = await sql`
       SELECT id, name, is_system FROM strategy_presets WHERE id = ${presetId}
