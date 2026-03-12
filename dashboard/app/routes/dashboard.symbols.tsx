@@ -88,22 +88,26 @@ export default function SymbolsPage() {
   const [message, setMessage] = useState<{ type: "success" | "error"; text: string } | null>(null);
   const [batchSuggesting, setBatchSuggesting] = useState(false);
   const [symbolSuggestions, setSymbolSuggestions] = useState<Record<string, { recommended_preset: string; recommended_display_name: string; reason: string; market_state: string }>>({});
+  const [strategyLocked, setStrategyLocked] = useState(false);
 
   // Track original configured state for dirty detection
   const [originalConfigured, setOriginalConfigured] = useState<Map<string, SymbolConfig>>(new Map());
 
   const fetchData = useCallback(async () => {
     try {
-      const [symbolsRes, presetsRes] = await Promise.all([
+      const [symbolsRes, presetsRes, strategyRes] = await Promise.all([
         fetch("/api/symbols"),
         fetch("/api/presets-list"),
+        fetch("/api/strategy-presets"),
       ]);
       const symbolsJson = await symbolsRes.json();
       const presetsJson = await presetsRes.json();
+      const strategyJson = await strategyRes.json();
 
       setAvailableSymbols(symbolsJson.available || []);
       setVolumes(symbolsJson.volumes || {});
       setPresets(presetsJson.presets || []);
+      setStrategyLocked(strategyJson.isLocked === true);
 
       const cfgMap = new Map<string, SymbolConfig>();
       for (const cfg of symbolsJson.configured || []) {
@@ -284,6 +288,11 @@ export default function SymbolsPage() {
         body: JSON.stringify({ symbols: enabledSymbols }),
       });
       if (!triggerRes.ok) {
+        if (triggerRes.status === 423) {
+          setStrategyLocked(true);
+          setMessage({ type: "error", text: "策略已全局锁定，无法执行 AI 建议" });
+          return;
+        }
         const data = await triggerRes.json().catch(() => ({}));
         setMessage({ type: "error", text: data.error || "触发策略建议失败" });
         return;
@@ -365,6 +374,9 @@ export default function SymbolsPage() {
       if (res.ok) {
         setOriginalConfigured(new Map(configuredSymbols));
         setMessage({ type: "success", text: "交易对配置已保存，将在下一个决策周期生效" });
+      } else if (res.status === 423) {
+        setStrategyLocked(true);
+        setMessage({ type: "error", text: "策略已全局锁定，无法保存配置修改" });
       } else {
         const err = await res.json();
         setMessage({ type: "error", text: err.error || "保存失败" });
@@ -419,6 +431,18 @@ export default function SymbolsPage() {
         </div>
       )}
 
+      {strategyLocked && (
+        <div className="mb-4 flex items-center justify-between rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-4 py-3">
+          <div className="flex items-center gap-2 text-sm text-yellow-200">
+            <span>🔒</span>
+            <span>策略已全局锁定 — 所有交易对使用全局策略，配置修改已禁用。</span>
+          </div>
+          <a href="/dashboard/strategy" className="rounded bg-yellow-600 px-3 py-1 text-xs font-medium text-white hover:bg-yellow-500">
+            前往解锁
+          </a>
+        </div>
+      )}
+
       <Card>
         <CardHeader>
           <CardTitle className="text-base flex items-center justify-between">
@@ -435,7 +459,7 @@ export default function SymbolsPage() {
                 variant="outline"
                 size="sm"
                 onClick={saveSymbols}
-                disabled={saving || !hasChanges}
+                disabled={saving || !hasChanges || strategyLocked}
               >
                 {saving ? (
                   <>
@@ -502,6 +526,7 @@ export default function SymbolsPage() {
                   variant="outline"
                   size="sm"
                   onClick={handleBatchAdopt}
+                  disabled={strategyLocked}
                   className="border-blue-500/50 text-blue-400 hover:bg-blue-500/10"
                 >
                   <CheckCheck className="mr-1 h-3 w-3" />
@@ -512,7 +537,7 @@ export default function SymbolsPage() {
                 variant="outline"
                 size="sm"
                 onClick={handleBatchSuggest}
-                disabled={batchSuggesting || configuredSymbols.size === 0}
+                disabled={batchSuggesting || configuredSymbols.size === 0 || strategyLocked}
               >
                 {batchSuggesting ? (
                   <>
@@ -530,7 +555,7 @@ export default function SymbolsPage() {
                 variant="outline"
                 size="sm"
                 onClick={enableRecommended}
-                disabled={presets.length === 0}
+                disabled={presets.length === 0 || strategyLocked}
               >
                 <Star className="mr-1 h-3 w-3" />
                 推荐
@@ -600,6 +625,11 @@ export default function SymbolsPage() {
                           {hasOverrides(cfg) && " \u00b7 已修改"}
                         </span>
                       )}
+                      {strategyLocked && isEnabled && (
+                        <span className="rounded bg-yellow-500/20 px-2 py-0.5 text-[10px] text-yellow-300">
+                          使用全局策略
+                        </span>
+                      )}
                       {symbolSuggestions[symbol] && (
                         <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/15 text-blue-300">
                           AI: {symbolSuggestions[symbol].recommended_display_name}
@@ -619,6 +649,7 @@ export default function SymbolsPage() {
                         <Switch
                           checked={isEnabled}
                           onCheckedChange={() => toggleSymbol(symbol)}
+                          disabled={strategyLocked}
                         />
                       </div>
                     </div>
@@ -638,7 +669,8 @@ export default function SymbolsPage() {
                         <select
                           value={cfg.preset_name}
                           onChange={(e) => changePreset(symbol, e.target.value)}
-                          className="w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary cursor-pointer"
+                          disabled={strategyLocked}
+                          className="w-full rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground focus:outline-none focus:border-primary cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {presets.map((p) => (
                             <option key={p.name} value={p.name}>
@@ -693,10 +725,11 @@ export default function SymbolsPage() {
                                     min={param.min}
                                     max={param.max}
                                     step={param.step}
+                                    disabled={strategyLocked}
                                     onChange={(e) =>
                                       updateParam(symbol, param.key, parseFloat(e.target.value) || 0)
                                     }
-                                    className={`w-[72px] px-2 py-1 rounded border text-right font-mono text-xs bg-card text-foreground focus:outline-none focus:border-primary ${
+                                    className={`w-[72px] px-2 py-1 rounded border text-right font-mono text-xs bg-card text-foreground focus:outline-none focus:border-primary disabled:opacity-50 disabled:cursor-not-allowed ${
                                       modified
                                         ? "border-yellow-500 bg-yellow-500/5"
                                         : "border-input"
@@ -739,10 +772,11 @@ export default function SymbolsPage() {
                                     min={param.min}
                                     max={param.max}
                                     step={param.step}
+                                    disabled={strategyLocked}
                                     onChange={(e) =>
                                       updateParam(symbol, param.key, parseFloat(e.target.value) || 0)
                                     }
-                                    className={`w-[72px] px-2 py-1 rounded border text-right font-mono text-xs bg-card text-foreground focus:outline-none focus:border-primary ${
+                                    className={`w-[72px] px-2 py-1 rounded border text-right font-mono text-xs bg-card text-foreground focus:outline-none focus:border-primary disabled:opacity-50 disabled:cursor-not-allowed ${
                                       modified
                                         ? "border-yellow-500 bg-yellow-500/5"
                                         : "border-input"
@@ -768,7 +802,7 @@ export default function SymbolsPage() {
                           variant="outline"
                           size="sm"
                           onClick={() => resetOverrides(symbol)}
-                          disabled={!hasOverrides(cfg)}
+                          disabled={!hasOverrides(cfg) || strategyLocked}
                         >
                           <RotateCcw className="mr-1 h-3 w-3" />
                           重置为预设默认
@@ -795,7 +829,7 @@ export default function SymbolsPage() {
           <span className="text-xs text-muted-foreground">
             {configuredSymbols.size} 个交易对已配置策略
           </span>
-          <Button onClick={saveSymbols} disabled={saving}>
+          <Button onClick={saveSymbols} disabled={saving || strategyLocked}>
             {saving ? (
               <>
                 <RefreshCw className="mr-1 h-3 w-3 animate-spin" />
