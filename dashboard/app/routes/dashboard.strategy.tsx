@@ -113,10 +113,10 @@ function deepEqual(a: unknown, b: unknown): boolean {
 
 // Number input component
 function NumInput({
-  label, value, onChange, min, max, step = 1, suffix,
+  label, value, onChange, min, max, step = 1, suffix, disabled,
 }: {
   label: string; value: number; onChange: (v: number) => void;
-  min?: number; max?: number; step?: number; suffix?: string;
+  min?: number; max?: number; step?: number; suffix?: string; disabled?: boolean;
 }) {
   return (
     <div>
@@ -127,7 +127,8 @@ function NumInput({
           value={value}
           onChange={(e) => onChange(Number(e.target.value))}
           min={min} max={max} step={step}
-          className="w-full rounded border border-border bg-background px-2 py-1 text-sm"
+          disabled={disabled}
+          className="w-full rounded border border-border bg-background px-2 py-1 text-sm disabled:opacity-50 disabled:cursor-not-allowed"
         />
         {suffix && <span className="text-xs text-muted-foreground whitespace-nowrap">{suffix}</span>}
       </div>
@@ -137,9 +138,9 @@ function NumInput({
 
 // Slider + number input for weights (0-1)
 function WeightInput({
-  label, value, onChange,
+  label, value, onChange, disabled,
 }: {
-  label: string; value: number; onChange: (v: number) => void;
+  label: string; value: number; onChange: (v: number) => void; disabled?: boolean;
 }) {
   return (
     <div>
@@ -148,7 +149,8 @@ function WeightInput({
         <input
           type="range" min={0} max={1} step={0.05} value={value}
           onChange={(e) => onChange(Number(e.target.value))}
-          className="flex-1 h-1.5 rounded-full appearance-none bg-muted accent-primary"
+          disabled={disabled}
+          className="flex-1 h-1.5 rounded-full appearance-none bg-muted accent-primary disabled:opacity-50 disabled:cursor-not-allowed"
         />
         <span className="text-sm font-medium w-12 text-right">{Math.round(value * 100)}%</span>
       </div>
@@ -158,17 +160,18 @@ function WeightInput({
 
 // Toggle switch
 function Toggle({
-  label, checked, onChange,
+  label, checked, onChange, disabled,
 }: {
-  label: string; checked: boolean; onChange: (v: boolean) => void;
+  label: string; checked: boolean; onChange: (v: boolean) => void; disabled?: boolean;
 }) {
   return (
-    <label className="flex items-center justify-between cursor-pointer">
+    <label className={`flex items-center justify-between ${disabled ? "cursor-not-allowed opacity-50" : "cursor-pointer"}`}>
       <span className="text-xs text-muted-foreground">{label}</span>
       <button
         type="button"
         onClick={() => onChange(!checked)}
-        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+        disabled={disabled}
+        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
           checked ? "bg-primary" : "bg-muted"
         }`}
       >
@@ -278,6 +281,10 @@ export default function StrategyPage({ loaderData }: Route.ComponentProps) {
       if (res.ok) {
         cancelEdit();
         await reloadPresets();
+      } else if (res.status === 423) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error || "策略已锁定，无法保存");
+        setLocked(true);
       } else {
         const data = await res.json().catch(() => ({}));
         setError(data.error || "保存失败");
@@ -340,6 +347,10 @@ export default function StrategyPage({ loaderData }: Route.ComponentProps) {
       if (res.ok) {
         cancelEdit();
         await reloadPresets();
+      } else if (res.status === 423) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error || "策略已锁定，无法重置");
+        setLocked(true);
       } else {
         const data = await res.json().catch(() => ({}));
         setError(data.error || "重置失败");
@@ -364,6 +375,11 @@ export default function StrategyPage({ loaderData }: Route.ComponentProps) {
         setShowDeleteConfirm(null);
         cancelEdit();
         await reloadPresets();
+      } else if (res.status === 423) {
+        const data = await res.json().catch(() => ({}));
+        setError(data.error || "策略已锁定，无法删除");
+        setLocked(true);
+        setShowDeleteConfirm(null);
       } else {
         const data = await res.json().catch(() => ({}));
         setError(data.error || "删除失败");
@@ -403,6 +419,13 @@ export default function StrategyPage({ loaderData }: Route.ComponentProps) {
     setSuggestion(null);
     try {
       const triggerRes = await fetch("/api/strategy-presets/suggest", { method: "POST" });
+      if (triggerRes.status === 423) {
+        const data = await triggerRes.json().catch(() => ({}));
+        setError(data.error || "策略已锁定，无法获取建议");
+        setLocked(true);
+        setSuggesting(false);
+        return;
+      }
       if (!triggerRes.ok) {
         const data = await triggerRes.json().catch(() => ({}));
         setError(data.error || "触发策略建议失败");
@@ -467,6 +490,23 @@ export default function StrategyPage({ loaderData }: Route.ComponentProps) {
         <div className="rounded-lg border border-red-500/50 bg-red-500/10 px-4 py-3 text-sm text-red-400">
           {error}
           <button onClick={() => setError(null)} className="ml-2 underline text-xs">关闭</button>
+        </div>
+      )}
+
+      {locked && (
+        <div className="mb-4 flex items-center justify-between rounded-lg border border-yellow-500/30 bg-yellow-500/10 px-4 py-3">
+          <div className="flex items-center gap-2 text-sm text-yellow-200">
+            <span>🔒</span>
+            <span>策略已全局锁定 — 所有交易对使用统一策略，所有修改已禁用。解锁后恢复独立配置。</span>
+          </div>
+          <button
+            type="button"
+            onClick={handleToggleLock}
+            disabled={togglingLock}
+            className="rounded bg-yellow-600 px-3 py-1 text-xs font-medium text-white hover:bg-yellow-500 disabled:opacity-50"
+          >
+            {togglingLock ? "处理中..." : "解锁"}
+          </button>
         </div>
       )}
 
@@ -542,7 +582,7 @@ export default function StrategyPage({ loaderData }: Route.ComponentProps) {
       <div className="space-y-3">
         <button
           onClick={handleSuggest}
-          disabled={suggesting}
+          disabled={suggesting || locked}
           className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-blue-600 text-white text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50"
         >
           {suggesting ? (
@@ -654,7 +694,8 @@ export default function StrategyPage({ loaderData }: Route.ComponentProps) {
                   {!isEditing && (
                     <button
                       onClick={() => startEdit(preset)}
-                      className="text-xs px-2 py-1 rounded border border-border hover:bg-muted transition-colors"
+                      disabled={locked}
+                      className="text-xs px-2 py-1 rounded border border-border hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       编辑
                     </button>
@@ -667,12 +708,12 @@ export default function StrategyPage({ loaderData }: Route.ComponentProps) {
                 <div className="space-y-4">
                   {/* Core params editing */}
                   <div className="grid grid-cols-2 gap-3">
-                    <WeightInput label="AI 权重" value={config.ai_weight} onChange={(v) => updateConfig("ai_weight", v)} />
-                    <WeightInput label="量化权重" value={config.quant_weight} onChange={(v) => updateConfig("quant_weight", v)} />
-                    <NumInput label="止损 ATR 倍数" value={config.stop_loss_atr_multiplier} onChange={(v) => updateConfig("stop_loss_atr_multiplier", v)} min={0.5} step={0.1} />
-                    <NumInput label="止盈 ATR 倍数" value={config.take_profit_atr_multiplier} onChange={(v) => updateConfig("take_profit_atr_multiplier", v)} min={0.5} step={0.1} />
-                    <NumInput label="交易间隔" value={config.min_trade_interval_seconds} onChange={(v) => updateConfig("min_trade_interval_seconds", v)} min={60} step={60} suffix="秒" />
-                    <NumInput label="最大仓位" value={config.max_position_pct} onChange={(v) => updateConfig("max_position_pct", v)} min={1} max={100} step={1} suffix="%" />
+                    <WeightInput label="AI 权重" value={config.ai_weight} onChange={(v) => updateConfig("ai_weight", v)} disabled={locked} />
+                    <WeightInput label="量化权重" value={config.quant_weight} onChange={(v) => updateConfig("quant_weight", v)} disabled={locked} />
+                    <NumInput label="止损 ATR 倍数" value={config.stop_loss_atr_multiplier} onChange={(v) => updateConfig("stop_loss_atr_multiplier", v)} min={0.5} step={0.1} disabled={locked} />
+                    <NumInput label="止盈 ATR 倍数" value={config.take_profit_atr_multiplier} onChange={(v) => updateConfig("take_profit_atr_multiplier", v)} min={0.5} step={0.1} disabled={locked} />
+                    <NumInput label="交易间隔" value={config.min_trade_interval_seconds} onChange={(v) => updateConfig("min_trade_interval_seconds", v)} min={60} step={60} suffix="秒" disabled={locked} />
+                    <NumInput label="最大仓位" value={config.max_position_pct} onChange={(v) => updateConfig("max_position_pct", v)} min={1} max={100} step={1} suffix="%" disabled={locked} />
                   </div>
 
                   {/* Advanced params toggle */}
@@ -698,6 +739,7 @@ export default function StrategyPage({ loaderData }: Route.ComponentProps) {
                               <input
                                 type="checkbox"
                                 checked={config.enabled_strategies.includes(s)}
+                                disabled={locked}
                                 onChange={(e) => {
                                   const newStrategies = e.target.checked
                                     ? [...config.enabled_strategies, s]
@@ -730,6 +772,7 @@ export default function StrategyPage({ loaderData }: Route.ComponentProps) {
                               value={config.strategy_weights[s] ?? 0}
                               onChange={(v) => updateConfig("strategy_weights", { ...config.strategy_weights, [s]: v })}
                               min={0} max={1} step={0.1}
+                              disabled={locked}
                             />
                           ))}
                         </div>
@@ -744,6 +787,7 @@ export default function StrategyPage({ loaderData }: Route.ComponentProps) {
                               <input
                                 type="checkbox"
                                 checked={config.timeframes.includes(tf)}
+                                disabled={locked}
                                 onChange={(e) => {
                                   const newTf = e.target.checked
                                     ? [...config.timeframes, tf]
@@ -760,18 +804,18 @@ export default function StrategyPage({ loaderData }: Route.ComponentProps) {
 
                       {/* Boolean toggles */}
                       <div className="grid grid-cols-2 gap-3">
-                        <Toggle label="允许加仓" checked={config.enable_pyramid} onChange={(v) => updateConfig("enable_pyramid", v)} />
-                        <Toggle label="情感分析" checked={config.enable_sentiment} onChange={(v) => updateConfig("enable_sentiment", v)} />
-                        <Toggle label="仅市价单" checked={config.use_market_order_only} onChange={(v) => updateConfig("use_market_order_only", v)} />
+                        <Toggle label="允许加仓" checked={config.enable_pyramid} onChange={(v) => updateConfig("enable_pyramid", v)} disabled={locked} />
+                        <Toggle label="情感分析" checked={config.enable_sentiment} onChange={(v) => updateConfig("enable_sentiment", v)} disabled={locked} />
+                        <Toggle label="仅市价单" checked={config.use_market_order_only} onChange={(v) => updateConfig("use_market_order_only", v)} disabled={locked} />
                       </div>
 
                       {config.enable_pyramid && (
-                        <NumInput label="最大加仓次数" value={config.max_pyramid_times} onChange={(v) => updateConfig("max_pyramid_times", v)} min={0} max={10} />
+                        <NumInput label="最大加仓次数" value={config.max_pyramid_times} onChange={(v) => updateConfig("max_pyramid_times", v)} min={0} max={10} disabled={locked} />
                       )}
                       {config.enable_sentiment && (
-                        <WeightInput label="情感权重" value={config.sentiment_weight} onChange={(v) => updateConfig("sentiment_weight", v)} />
+                        <WeightInput label="情感权重" value={config.sentiment_weight} onChange={(v) => updateConfig("sentiment_weight", v)} disabled={locked} />
                       )}
-                      <NumInput label="最小盈利阈值" value={config.min_profit_threshold} onChange={(v) => updateConfig("min_profit_threshold", v)} min={0} step={0.01} suffix="%" />
+                      <NumInput label="最小盈利阈值" value={config.min_profit_threshold} onChange={(v) => updateConfig("min_profit_threshold", v)} min={0} step={0.01} suffix="%" disabled={locked} />
                     </div>
                   )}
 
@@ -792,7 +836,7 @@ export default function StrategyPage({ loaderData }: Route.ComponentProps) {
                     </button>
                     <button
                       onClick={handleSave}
-                      disabled={!canSave || saving}
+                      disabled={!canSave || saving || locked}
                       className="px-3 py-1.5 rounded text-sm bg-primary text-primary-foreground font-medium hover:bg-primary/90 disabled:opacity-50 transition-colors"
                     >
                       {saving ? "保存中..." : "保存"}
@@ -807,7 +851,7 @@ export default function StrategyPage({ loaderData }: Route.ComponentProps) {
                     {preset.isSystem && preset.isModified && (
                       <button
                         onClick={() => handleReset(preset.id)}
-                        disabled={saving}
+                        disabled={saving || locked}
                         className="px-3 py-1.5 rounded text-sm border border-amber-500 text-amber-400 hover:bg-amber-500/10 disabled:opacity-50 transition-colors ml-auto"
                       >
                         重置默认
@@ -816,7 +860,7 @@ export default function StrategyPage({ loaderData }: Route.ComponentProps) {
                     {!preset.isSystem && (
                       <button
                         onClick={() => setShowDeleteConfirm(preset.id)}
-                        disabled={saving || isActive}
+                        disabled={saving || isActive || locked}
                         className="px-3 py-1.5 rounded text-sm border border-red-500 text-red-400 hover:bg-red-500/10 disabled:opacity-50 transition-colors ml-auto"
                         title={isActive ? "不能删除当前激活的策略" : ""}
                       >
@@ -873,7 +917,8 @@ export default function StrategyPage({ loaderData }: Route.ComponentProps) {
                     {preset.isSystem && preset.isModified && !isEditing && (
                       <button
                         onClick={() => handleReset(preset.id)}
-                        className="px-3 py-2 rounded-md text-xs border border-amber-500 text-amber-400 hover:bg-amber-500/10 transition-colors"
+                        disabled={locked}
+                        className="px-3 py-2 rounded-md text-xs border border-amber-500 text-amber-400 hover:bg-amber-500/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         重置
                       </button>
@@ -881,7 +926,8 @@ export default function StrategyPage({ loaderData }: Route.ComponentProps) {
                     {!preset.isSystem && !isActive && !isEditing && (
                       <button
                         onClick={() => setShowDeleteConfirm(preset.id)}
-                        className="px-3 py-2 rounded-md text-xs border border-red-500 text-red-400 hover:bg-red-500/10 transition-colors"
+                        disabled={locked}
+                        className="px-3 py-2 rounded-md text-xs border border-red-500 text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         删除
                       </button>
