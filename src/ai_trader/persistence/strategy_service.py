@@ -9,6 +9,11 @@ from ..strategies.presets import SYSTEM_PRESETS, DEFAULT_PRESET_NAME, get_all_sy
 from ..utils.logger import logger
 
 
+class StrategyLockedException(Exception):
+    """Raised when a modification is attempted while strategy is locked."""
+    pass
+
+
 class StrategyPresetService:
     """策略预设的数据库操作"""
 
@@ -94,6 +99,16 @@ class StrategyPresetService:
             ORDER BY a.activated_at DESC LIMIT 1"""
         )
         return dict(row) if row else None
+
+    async def is_strategy_locked(self) -> bool:
+        """Check if the current active strategy is locked."""
+        row = await self.db.fetchval(
+            """SELECT COALESCE(is_locked, FALSE)
+            FROM active_strategy
+            WHERE deactivated_at IS NULL
+            ORDER BY activated_at DESC LIMIT 1"""
+        )
+        return bool(row)
 
     async def activate_preset(self, preset_id: int, is_locked: bool = False) -> bool:
         """Activate a preset. Refuses if current strategy is locked."""
@@ -185,6 +200,8 @@ class StrategyPresetService:
 
     async def update_preset_config(self, preset_id: int, config: dict) -> bool:
         """Update a preset's config. Marks system presets as modified."""
+        if await self.is_strategy_locked():
+            raise StrategyLockedException("策略已锁定，请先解锁再修改")
         preset = await self.get_preset_by_id(preset_id)
         if not preset:
             return False
@@ -238,6 +255,8 @@ class StrategyPresetService:
 
     async def reset_preset(self, preset_id: int) -> bool:
         """Reset a modified system preset to its default config."""
+        if await self.is_strategy_locked():
+            raise StrategyLockedException("策略已锁定，请先解锁再修改")
         preset = await self.get_preset_by_id(preset_id)
         if not preset or not preset["is_system"] or not preset.get("is_modified"):
             return False
@@ -259,6 +278,8 @@ class StrategyPresetService:
 
     async def delete_preset(self, preset_id: int) -> bool:
         """Delete a custom (non-system) preset."""
+        if await self.is_strategy_locked():
+            raise StrategyLockedException("策略已锁定，请先解锁再修改")
         preset = await self.get_preset_by_id(preset_id)
         if not preset or preset["is_system"]:
             return False
