@@ -119,6 +119,7 @@ class Scheduler:
 
         # Strategy preset
         self._active_preset_name: Optional[str] = None
+        self._strategy_locked: bool = False  # Global strategy lock override
         self._strategy_preset_service: Optional[StrategyPresetService] = None
 
         # Per-symbol strategy configs and engines
@@ -431,6 +432,9 @@ class Scheduler:
                         pass
 
         if preset_data:
+            # Sync global lock state
+            self._strategy_locked = preset_data.get("is_locked", False)
+            logger.info(f"Strategy lock state: {self._strategy_locked}")
             preset_config = preset_data.get("config", preset_data)
             self._active_preset_name = preset_data.get("name", self._active_preset_name)
             config.apply_preset(preset_config)
@@ -2568,7 +2572,10 @@ class Scheduler:
         # 2. 决策（含多时间框架数据 + 真实纪律上下文）
         total_daily_pnl = sum(self._daily_pnl.values())
         try:
-            engine = self._symbol_engines.get(symbol, self.decision_engine)
+            if self._strategy_locked:
+                engine = self.decision_engine
+            else:
+                engine = self._symbol_engines.get(symbol, self.decision_engine)
             decision, tech, risk = await engine.analyze_and_decide(
                 market_data, position, balance, equity,
                 mtf_data=mtf_data,
