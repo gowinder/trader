@@ -1827,40 +1827,44 @@ class Scheduler:
         """Listen for strategy suggestion requests via Redis list (BLPOP)"""
         if not self._redis or not self._advisory_service:
             return
-        try:
-            # Set heartbeat flag so dashboard knows consumer is online
-            await self._redis.set("strategy:suggest:consumer_alive", "1", ex=30)
-            logger.info("Strategy suggest listener started (BLPOP queue)")
-            while True:
-                try:
-                    # Refresh heartbeat every BLPOP cycle
-                    await self._redis.set("strategy:suggest:consumer_alive", "1", ex=30)
-                    result = await self._redis.blpop("strategy:suggest_queue", timeout=5)
-                    if result is None:
-                        continue
-                    _, raw = result
-                    data = json.loads(raw)
-                    task_id = data.get("task_id", "")
-                    if task_id:
-                        task = asyncio.create_task(self._run_strategy_suggest(task_id))
-                        self._advisory_tasks.append(task)
-                        self._advisory_tasks = [t for t in self._advisory_tasks if not t.done()]
-                except asyncio.CancelledError:
-                    raise
-                except Exception as e:
-                    logger.error(f"Strategy suggest listener error: {e}")
-                    await asyncio.sleep(1)
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            logger.error(f"Strategy suggest listener error: {e}")
-        finally:
-            # Clear heartbeat on exit
+        logger.info("Strategy suggest listener started (BLPOP queue)")
+        while True:
             try:
-                if self._redis:
+                # Set heartbeat flag so dashboard knows consumer is online
+                await self._redis.set("strategy:suggest:consumer_alive", "1", ex=30)
+                while True:
+                    try:
+                        # Refresh heartbeat every BLPOP cycle
+                        await self._redis.set("strategy:suggest:consumer_alive", "1", ex=30)
+                        result = await self._redis.blpop("strategy:suggest_queue", timeout=5)
+                        if result is None:
+                            continue
+                        _, raw = result
+                        data = json.loads(raw)
+                        task_id = data.get("task_id", "")
+                        if task_id:
+                            task = asyncio.create_task(self._run_strategy_suggest(task_id))
+                            self._advisory_tasks.append(task)
+                            self._advisory_tasks = [t for t in self._advisory_tasks if not t.done()]
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as e:
+                        logger.error(f"Strategy suggest listener error: {e}")
+                        await asyncio.sleep(1)
+            except asyncio.CancelledError:
+                # Clear heartbeat on exit
+                try:
                     await self._redis.delete("strategy:suggest:consumer_alive")
-            except Exception:
-                pass
+                except Exception:
+                    pass
+                return
+            except Exception as e:
+                logger.warning(f"Strategy suggest listener disconnected: {e}, reconnecting in 5s...")
+                try:
+                    await self._redis.delete("strategy:suggest:consumer_alive")
+                except Exception:
+                    pass
+                await asyncio.sleep(5)
 
     async def _collect_advisory_data(self) -> dict:
         """Collect market data, positions, config, and account info for advisory/suggestion use."""
@@ -2029,32 +2033,34 @@ class Scheduler:
         """Listen for per-symbol strategy suggestion requests via Redis list (BLPOP)"""
         if not self._redis or not self._advisory_service:
             return
-        try:
-            logger.info("Symbol strategy suggest listener started (BLPOP queue)")
-            while True:
-                try:
-                    result = await self._redis.blpop("symbol_strategy:suggest_queue", timeout=5)
-                    if result is None:
-                        continue
-                    _, raw = result
-                    data = json.loads(raw)
-                    task_id = data.get("task_id", "")
-                    target_symbols = data.get("symbols", [])
-                    if task_id and target_symbols:
-                        task = asyncio.create_task(
-                            self._run_symbol_strategy_suggest(task_id, target_symbols)
-                        )
-                        self._advisory_tasks.append(task)
-                        self._advisory_tasks = [t for t in self._advisory_tasks if not t.done()]
-                except asyncio.CancelledError:
-                    raise
-                except Exception as e:
-                    logger.error(f"Symbol strategy suggest listener error: {e}")
-                    await asyncio.sleep(1)
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            logger.error(f"Symbol strategy suggest listener fatal: {e}")
+        logger.info("Symbol strategy suggest listener started (BLPOP queue)")
+        while True:
+            try:
+                while True:
+                    try:
+                        result = await self._redis.blpop("symbol_strategy:suggest_queue", timeout=5)
+                        if result is None:
+                            continue
+                        _, raw = result
+                        data = json.loads(raw)
+                        task_id = data.get("task_id", "")
+                        target_symbols = data.get("symbols", [])
+                        if task_id and target_symbols:
+                            task = asyncio.create_task(
+                                self._run_symbol_strategy_suggest(task_id, target_symbols)
+                            )
+                            self._advisory_tasks.append(task)
+                            self._advisory_tasks = [t for t in self._advisory_tasks if not t.done()]
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as e:
+                        logger.error(f"Symbol strategy suggest listener error: {e}")
+                        await asyncio.sleep(1)
+            except asyncio.CancelledError:
+                return
+            except Exception as e:
+                logger.warning(f"Symbol strategy suggest listener disconnected: {e}, reconnecting in 5s...")
+                await asyncio.sleep(5)
 
     async def _run_symbol_strategy_suggest(self, task_id: str, target_symbols: list):
         """Run per-symbol strategy suggestion and store result in Redis"""
@@ -2617,9 +2623,11 @@ class Scheduler:
         # 3d. SignalFilter (anti-overtrading)
         if decision.action in ("open_long", "open_short"):
             if symbol not in self._signal_filters:
+                # Stock symbols: disable reverse cooldown (long-only, no direction flip)
+                reverse_cd = 0.0 if config.is_stock_symbol(symbol) else _cfg["signal_reverse_cooldown_hours"]
                 self._signal_filters[symbol] = SignalFilter(
                     min_interval_hours=_cfg["signal_min_interval_hours"],
-                    reverse_cooldown_hours=_cfg["signal_reverse_cooldown_hours"],
+                    reverse_cooldown_hours=reverse_cd,
                 )
             sf = self._signal_filters[symbol]
             action_map = {"open_long": SignalAction.LONG, "open_short": SignalAction.SHORT}
