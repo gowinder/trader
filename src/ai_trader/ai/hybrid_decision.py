@@ -572,8 +572,19 @@ class HybridDecisionEngine(DecisionEngine):
             f"- Action: {action}"
         )
 
+        # ── Stock (spot) symbol filtering: long-only, no leverage ──
+        symbol = market_data.symbol
+        if config.is_stock_symbol(symbol):
+            # Force leverage to 1 for spot trading
+            decision.leverage = 1
+            # Filter out any short actions
+            if decision.action in ("open_short", "close_short", "reduce_short"):
+                decision.action = "hold"
+                decision.reasoning += "\n[StockFilter] short action filtered to hold (long-only spot)"
+                logger.info(f"Stock filter: open_short/close_short -> hold for {symbol}")
+
         logger.info(
-            f"Hybrid decision: {action} "
+            f"Hybrid decision: {decision.action} "
             f"(score: {final_score:+.2f}, confidence: {final_confidence:.2f})"
         )
 
