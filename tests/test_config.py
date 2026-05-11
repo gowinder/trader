@@ -43,3 +43,31 @@ def test_advisory_config_defaults():
     assert not hasattr(cfg, "advisory_llm_provider")
     assert cfg.telegram_bot_token == ""
     assert cfg.telegram_chat_id == ""
+
+
+def test_kraken_stock_config(monkeypatch):
+    """Test Kraken exchange and XStock trading configuration"""
+    monkeypatch.setenv("EXCHANGE_TYPE", "kraken")
+    monkeypatch.setenv("KRAKEN_API_KEY", "test_key")
+    monkeypatch.setenv("KRAKEN_API_SECRET", "test_secret")
+    monkeypatch.setenv("STOCK_TRADING_SYMBOLS", "AAPLx/USD,TSLAx/USD")
+    monkeypatch.setenv("TRADING_SYMBOLS", "BTC/USDT:USDT")
+
+    cfg = TradingConfig(_env_file=None)
+
+    assert cfg.exchange_type == "kraken"
+    assert cfg.kraken_api_key == "test_key"
+    assert cfg.kraken_api_secret == "test_secret"
+
+    creds = cfg.get_exchange_credentials("kraken")
+    assert creds["api_key"] == "test_key"
+    assert creds["api_secret"] == "test_secret"
+
+    symbols = cfg.symbols_list
+    assert "AAPLx/USD" in symbols
+    assert "TSLAx/USD" in symbols
+    assert "BTC/USDT:USDT" in symbols
+
+    assert cfg.is_stock_symbol("AAPLx/USD") is True
+    assert cfg.is_stock_symbol("TSLAx/USD") is True
+    assert cfg.is_stock_symbol("BTC/USDT:USDT") is False

@@ -47,7 +47,7 @@ class TradingConfig(BaseSettings):
     proxy_url: str = Field(default="")
 
     # ============= 交易所配置 =============
-    exchange_type: Literal["weex", "binance", "bybit", "okx"] = Field(
+    exchange_type: Literal["weex", "binance", "bybit", "okx", "kraken"] = Field(
         default="weex", validation_alias="EXCHANGE_TYPE"
     )
     use_ccxt: bool = Field(default=False, validation_alias="USE_CCXT")
@@ -79,6 +79,16 @@ class TradingConfig(BaseSettings):
     okx_api_secret: str = Field(default="", validation_alias="OKX_API_SECRET")
     okx_passphrase: str = Field(default="", validation_alias="OKX_PASSPHRASE")
 
+    # ============= Kraken配置 =============
+    kraken_api_key: str = Field(default="", validation_alias="KRAKEN_API_KEY")
+    kraken_api_secret: str = Field(default="", validation_alias="KRAKEN_API_SECRET")
+
+    # ============= 美股交易对配置 (Kraken XStock) =============
+    stock_trading_symbols: str = Field(
+        default="", validation_alias="STOCK_TRADING_SYMBOLS",
+        description="美股交易对，逗号分隔，如 'AAPLx/USD,TSLAx/USD'",
+    )
+
     # 交易对 (支持多个，逗号分隔)
     trading_symbol: str = Field(default="cmt_btcusdt")
     trading_symbols: str = Field(
@@ -89,11 +99,22 @@ class TradingConfig(BaseSettings):
 
     @property
     def symbols_list(self) -> list[str]:
-        """获取交易对列表"""
+        """获取交易对列表（包含美股交易对）"""
+        symbols = []
         if self.trading_symbols:
-            return [s.strip() for s in self.trading_symbols.split(",") if s.strip()]
-        # 兼容旧版单交易对配置
-        return [self.trading_symbol]
+            symbols.extend(s.strip() for s in self.trading_symbols.split(",") if s.strip())
+        if self.stock_trading_symbols:
+            symbols.extend(s.strip() for s in self.stock_trading_symbols.split(",") if s.strip())
+        if not symbols:
+            symbols.append(self.trading_symbol)
+        return symbols
+
+    def is_stock_symbol(self, symbol: str) -> bool:
+        """检查是否为美股交易对"""
+        if not self.stock_trading_symbols:
+            return False
+        stocks = [s.strip() for s in self.stock_trading_symbols.split(",") if s.strip()]
+        return symbol in stocks
 
     # AI 配置 (旧版兼容) - 已废弃，使用 LLMConfig
     openrouter_api_key: str = Field(default="", validation_alias="OPENROUTER_API_KEY")
@@ -320,6 +341,10 @@ class TradingConfig(BaseSettings):
                 "api_key": self.okx_api_key,
                 "api_secret": self.okx_api_secret,
                 "passphrase": self.okx_passphrase,
+            },
+            "kraken": {
+                "api_key": self.kraken_api_key,
+                "api_secret": self.kraken_api_secret,
             },
         }
         creds = credentials_map.get(exchange_type)
