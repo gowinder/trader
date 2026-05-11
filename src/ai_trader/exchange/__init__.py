@@ -3,6 +3,7 @@
 from typing import Optional
 from .base import BaseExchange
 from .ccxt_adapter import CCXTAdapter
+from .ccxt_spot_adapter import CCXTSpotAdapter
 from .weex_client import WeexClient
 from .binance_adapter import BinanceAdapter
 from ..config import config
@@ -80,6 +81,16 @@ def create_exchange_client() -> BaseExchange:
             return WeexClient()
 
     # Other exchanges use CCXT adapter with independent credentials
+    # Kraken XStock uses spot adapter
+    if exchange_type == "kraken":
+        return CCXTSpotAdapter.from_config(
+            exchange_id="kraken",
+            api_key=creds["api_key"],
+            api_secret=creds["api_secret"],
+            testnet=False,
+            proxy=config.proxy_url or None,
+        )
+
     return CCXTAdapter.from_config(
         exchange_id=exchange_type,
         api_key=creds["api_key"],
@@ -94,6 +105,7 @@ def create_exchange_client() -> BaseExchange:
 __all__ = [
     "BaseExchange",
     "CCXTAdapter",
+    "CCXTSpotAdapter",
     "WeexClient",
     "BinanceAdapter",
     "create_exchange_client",
