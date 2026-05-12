@@ -17,8 +17,8 @@ import {
   ExternalLink,
 } from "lucide-react";
 import { db } from "db";
-import { positionHistory, decisions as decisionsTable, symbolStrategy, strategyPresets } from "db/schema";
-import { desc, eq, and, gte, lte, or, sql, inArray } from "drizzle-orm";
+import { positionHistory, decisions as decisionsTable, symbolStrategy, strategyPresets, activeStrategy } from "db/schema";
+import { desc, eq, and, gte, lte, or, sql, inArray, isNull } from "drizzle-orm";
 import { createClient } from "redis";
 
 interface DecisionSummary {
@@ -197,10 +197,43 @@ export async function loader(_args: Route.LoaderArgs) {
     }
   }
 
+  // 查询全局策略锁定状态
+  let globalLock: { isLocked: boolean; presetName: string; presetDisplayName: string } | null = null;
+  try {
+    const lockRow = await db
+      .select({
+        isLocked: activeStrategy.isLocked,
+        presetName: strategyPresets.name,
+        presetDisplayName: strategyPresets.displayName,
+      })
+      .from(activeStrategy)
+      .innerJoin(strategyPresets, eq(activeStrategy.presetId, strategyPresets.id))
+      .where(isNull(activeStrategy.deactivatedAt))
+      .orderBy(desc(activeStrategy.activatedAt))
+      .limit(1);
+    if (lockRow.length > 0 && lockRow[0].isLocked) {
+      globalLock = {
+        isLocked: true,
+        presetName: lockRow[0].presetName,
+        presetDisplayName: lockRow[0].presetDisplayName,
+      };
+    }
+  } catch (e) {
+    console.error("Failed to query global strategy lock:", e);
+  }
+
   // 获取每个持仓 symbol 的策略配置
   const openSymbols = openPositions.map((p) => p.symbol);
   let symbolStrategyMap: Record<string, { preset_name: string; preset_display_name: string }> = {};
-  if (openSymbols.length > 0) {
+  if (globalLock) {
+    // 全局锁定时，所有 symbol 显示锁定的全局策略
+    for (const symbol of openSymbols) {
+      symbolStrategyMap[symbol] = {
+        preset_name: globalLock.presetName,
+        preset_display_name: globalLock.presetDisplayName,
+      };
+    }
+  } else if (openSymbols.length > 0) {
     try {
       const ssRows = await db
         .select({
@@ -266,6 +299,7 @@ export async function loader(_args: Route.LoaderArgs) {
     realtimePositions,
     symbolStrategies: symbolStrategyMap,
     presets: presetsList,
+    globalLock,
     stats: {
       totalTrades: Number(stats.totalTrades),
       winningTrades: Number(stats.winningTrades),
@@ -277,7 +311,7 @@ export async function loader(_args: Route.LoaderArgs) {
 }
 
 export default function PositionsPage({ loaderData }: Route.ComponentProps) {
-  const { openPositions, closedPositions, stats, positionDecisions, symbolStrategies, presets } = loaderData;
+  const { openPositions, closedPositions, stats, positionDecisions, symbolStrategies, presets, globalLock } = loaderData;
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [suggesting, setSuggesting] = useState<Record<string, boolean>>({});
   const [suggestions, setSuggestions] = useState<Record<string, { recommended_preset: string; recommended_display_name: string; reason: string; market_state: string }>>({});
@@ -433,6 +467,7 @@ export default function PositionsPage({ loaderData }: Route.ComponentProps) {
                         onSwitchStrategy={(presetName) => handleSwitchStrategy(position.symbol, presetName)}
                         isSuggesting={suggesting[position.symbol] || false}
                         isSwitching={switchingStrategy[position.symbol] || false}
+                        isGlobalLocked={!!globalLock}
                       />
                     );
                   })}
@@ -510,6 +545,7 @@ function PositionRow({
   onSwitchStrategy,
   isSuggesting,
   isSwitching,
+  isGlobalLocked,
 }: {
   position: any;
   decisions: DecisionSummary[];
@@ -523,6 +559,7 @@ function PositionRow({
   onSwitchStrategy?: (presetName: string) => void;
   isSuggesting?: boolean;
   isSwitching?: boolean;
+  isGlobalLocked?: boolean;
 }) {
   const colSpan = columns === "open" ? 11 : 8;
 
@@ -761,7 +798,14 @@ function PositionRow({
             {/* Strategy management - only for open positions */}
             {columns === "open" && presets && presets.length > 0 && (
               <div className="mt-3 pt-3 border-t border-border/50">
-                <div className="text-xs font-medium text-muted-foreground mb-2">策略管理</div>
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-xs font-medium text-muted-foreground">策略管理</span>
+                  {isGlobalLocked && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-yellow-500/20 text-yellow-400 border border-yellow-500/30">
+                      全局锁定
+                    </span>
+                  )}
+                </div>
                 <div className="flex items-center gap-3 flex-wrap">
                   {/* Current strategy */}
                   <div className="flex items-center gap-2">
@@ -771,12 +815,12 @@ function PositionRow({
                     </span>
                   </div>
 
-                  {/* Strategy switch dropdown */}
+                  {/* Strategy switch dropdown - disabled when globally locked */}
                   <select
                     value={strategy?.preset_name || ""}
                     onChange={(e) => onSwitchStrategy?.(e.target.value)}
-                    disabled={isSwitching}
-                    className="text-xs rounded border border-input bg-card px-2 py-1 text-foreground focus:outline-none focus:border-primary"
+                    disabled={isSwitching || isGlobalLocked}
+                    className="text-xs rounded border border-input bg-card px-2 py-1 text-foreground focus:outline-none focus:border-primary disabled:opacity-50"
                     onClick={(e) => e.stopPropagation()}
                   >
                     {!strategy && <option value="">选择策略...</option>}
@@ -788,10 +832,10 @@ function PositionRow({
                   </select>
                   {isSwitching && <span className="text-xs text-muted-foreground">切换中...</span>}
 
-                  {/* AI suggest button */}
+                  {/* AI suggest button - disabled when globally locked */}
                   <button
                     onClick={(e) => { e.stopPropagation(); onSuggest?.(); }}
-                    disabled={isSuggesting}
+                    disabled={isSuggesting || isGlobalLocked}
                     className="text-xs px-2 py-1 rounded bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
                   >
                     {isSuggesting ? "AI 分析中..." : "AI 建议"}

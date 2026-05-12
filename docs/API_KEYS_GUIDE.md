@@ -270,7 +270,7 @@ TESTNET_API_SECRET=你的_Bybit_Secret
 ```bash
 # ============= LLM 配置 =============
 LLM_PROVIDER=openrouter
-LLM_API_KEY=YOUR_KEY
+LLM_API_KEY=YOUR_OPENROUTER_KEY
 LLM_MODEL=xiaomi/mimo-v2-flash:free
 
 # ============= 交易所配置 =============

@@ -1,0 +1,24 @@
+{
+  "active": false,
+  "project_dir": "/Users/gowinder/code/gowinder/trader/dashboard",
+  "ov_conf": "/Users/gowinder/.config/openviking/ov.conf",
+  "mode": "http",
+  "url": "http://127.0.0.1:1933",
+  "api_key": "openviking-local-dev",
+  "account": "default",
+  "user": "gowinder",
+  "local_data_path": "",
+  "session_id": "bae25310-c13c-4264-a556-c15f33271ebd",
+  "last_turn_uuid": "",
+  "ingested_turns": 0,
+  "started_at": 1774578958,
+  "committed_at": 1774578966,
+  "commit_result": {
+    "session_id": "bae25310-c13c-4264-a556-c15f33271ebd",
+    "status": "committed",
+    "memories_extracted": 0,
+    "active_count_updated": 0,
+    "archived": false,
+    "stats": null
+  }
+}
